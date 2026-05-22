@@ -15,6 +15,7 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 13px;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -197,25 +198,75 @@ header h1 {
 .liq-title { color: #f0a030; font-weight: 800; letter-spacing: 0.6px; white-space: nowrap; text-shadow: 0 0 8px rgba(240,160,48,0.4); }
 .liq-total-l { color: #44dd88; font-weight: 700; white-space: nowrap; }
 .liq-total-s { color: #ff5555; font-weight: 700; white-space: nowrap; }
-#liq-feed { flex: 1; overflow: hidden; white-space: nowrap; color: rgba(255,255,255,0.55); }
+#liq-feed { flex: 1; overflow: hidden; white-space: nowrap; color: rgba(255,255,255,0.75); }
 .liq-ev { margin-right: 20px; font-weight: 600; }
 .liq-ev.ll { color: #ff6666; }
 .liq-ev.ls { color: #44ee99; }
 
 /* ── Mobile ── */
 @media (max-width: 768px) {
-  table { min-width: 480px; }
+  /* Header: 2 filas en móvil */
+  header {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 6px 10px 4px;
+    gap: 5px;
+    row-gap: 4px;
+  }
+  .logo { order: 1; flex-shrink: 0; }
+  .live-dot { order: 2; flex-shrink: 0; }
+  .badge { order: 3; margin-left: auto; }
+  .refresh-btn { order: 4; }
+  .countdown { order: 5; }
+  .meta { display: none; }
+  .tab-nav {
+    order: 6;
+    width: 100%;
+    display: flex;
+    justify-content: stretch;
+  }
+  .tab-btn {
+    flex: 1;
+    text-align: center;
+    padding: 5px 2px;
+    font-size: 9px;
+  }
+
+  /* Tabla: mostrar solo columnas esenciales */
+  table { min-width: 360px; }
   th[data-col="oi15m"], th[data-col="oi4h"], th[data-col="oi24h"],
   th[data-col="vol12hPct"], th[data-col="vol24hPct"],
-  th[data-col="price5mPct"], th[data-col="price4hPct"], th[data-col="price24hPct"],
+  th[data-col="price5mPct"], th[data-col="price4hPct"], th[data-col="price24hPct"]
+  { display: none; }
+  /* ocultar por posicion (columnas sin data-col matching ocultas arriba) */
   td:nth-child(5), td:nth-child(7), td:nth-child(8),
   td:nth-child(10), td:nth-child(11), td:nth-child(13), td:nth-child(15), td:nth-child(16)
   { display: none; }
+  th { font-size: 9px; padding: 0 5px; }
+  td { height: 32px; }
+  .sym-name { font-size: 11px; }
+  .sym-icon { width: 20px; height: 20px; font-size: 6px; }
+  .sym-cell { padding: 0 6px; gap: 5px; }
+  .price-cell { font-size: 10px; padding: 0 6px; }
+
+  /* Estrategia */
   #cards-section { flex-direction: column; }
   .picks-col.short-col { width: 100%; }
-  #chart-section { height: 45vh; min-height: 260px; }
+  #chart-section { height: 42vh; min-height: 240px; }
+
+  /* Scalp 5M */
   .s5m-grid { grid-template-columns: 1fr 1fr; }
   .btip-sym { font-size: 11px; }
+
+  /* Liq bar más alto en móvil */
+  #liq-bar { height: 32px; padding: 0 10px; gap: 8px; font-size: 9px; }
+  body { padding-bottom: 32px; }
+
+  /* Filter bar compacto */
+  #filter-bar { padding: 4px 10px; gap: 6px; flex-wrap: wrap; }
+  #filter-search { width: 100px; font-size: 10px; }
+  .flt-btn { font-size: 9px; padding: 3px 7px; }
+  .flt-sel { font-size: 9px; padding: 2px 4px; }
 }
 
 table { width: 100%; border-collapse: collapse; min-width: 1280px; }
@@ -644,7 +695,7 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
   <span class="liq-title">⚡ LIQ</span>
   <span class="liq-total-l" id="liq-long-total">L $0</span>
   <span class="liq-total-s" id="liq-short-total">S $0</span>
-  <span id="liq-feed" style="color:#1e2838">Conectando websocket...</span>
+  <span id="liq-feed" style="color:rgba(255,255,255,0.75)">Conectando websocket...</span>
 </div>
 <div id="btip"></div>
 <div id="toast-wrap"></div>
