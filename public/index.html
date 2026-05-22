@@ -157,8 +157,65 @@ header h1 {
 }
 @keyframes bar { 100% { left: 150%; } }
 
+/* ── Filter bar ── */
+#filter-bar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+  padding: 5px 14px; border-bottom: 1px solid #0e1218;
+  background: #07090b;
+}
+#filter-search {
+  background: #0c111a; border: 1px solid #181f2c; color: #c8d0e0;
+  font-family: inherit; font-size: 11px; padding: 4px 10px;
+  border-radius: 6px; width: 130px; outline: none;
+}
+#filter-search::placeholder { color: #283040; }
+#filter-search:focus { border-color: #2a3a50; }
+.flt-btn {
+  background: #0c111a; border: 1px solid #181f2c; color: #3a4a60;
+  font-family: inherit; font-size: 10px; font-weight: 600;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: all .15s;
+}
+.flt-btn:hover { color: #7090c0; border-color: #2a3a50; }
+.flt-btn.active { color: #f0b429; border-color: #806020; background: #1a1500; }
+.flt-sel {
+  background: #0c111a; border: 1px solid #181f2c; color: #6080a0;
+  font-family: inherit; font-size: 10px; padding: 3px 6px; border-radius: 5px;
+}
+#filter-count { font-size: 10px; color: #2a3848; margin-left: auto; }
+
 /* ── Screener tab ── */
-#screener-tab { overflow: auto; flex: 1; }
+#screener-tab { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+#table-wrap { flex: 1; overflow: auto; }
+
+/* ── Liquidaciones bar ── */
+#liq-bar {
+  flex-shrink: 0; height: 26px; display: flex; align-items: center; gap: 14px;
+  padding: 0 16px; border-top: 1px solid #0e1218;
+  background: #050709; font-size: 10px; overflow: hidden;
+}
+.liq-title { color: #f0a030; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap; }
+.liq-total-l { color: #55bb88; font-weight: 700; white-space: nowrap; }
+.liq-total-s { color: #ee6666; font-weight: 700; white-space: nowrap; }
+#liq-feed { flex: 1; overflow: hidden; white-space: nowrap; color: #2a3848; }
+.liq-ev { margin-right: 20px; }
+.liq-ev.ll { color: #ee6666; }
+.liq-ev.ls { color: #55dd99; }
+
+/* ── Mobile ── */
+@media (max-width: 768px) {
+  table { min-width: 480px; }
+  th[data-col="oi15m"], th[data-col="oi4h"], th[data-col="oi24h"],
+  th[data-col="vol12hPct"], th[data-col="vol24hPct"],
+  th[data-col="price5mPct"], th[data-col="price4hPct"], th[data-col="price24hPct"],
+  td:nth-child(5), td:nth-child(7), td:nth-child(8),
+  td:nth-child(10), td:nth-child(11), td:nth-child(13), td:nth-child(15), td:nth-child(16)
+  { display: none; }
+  #cards-section { flex-direction: column; }
+  .picks-col.short-col { width: 100%; }
+  #chart-section { height: 45vh; min-height: 260px; }
+  .s5m-grid { grid-template-columns: 1fr 1fr; }
+  .btip-sym { font-size: 11px; }
+}
 
 table { width: 100%; border-collapse: collapse; min-width: 1280px; }
 
@@ -482,6 +539,20 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
 
 <!-- ── Screener tab ── -->
 <div id="screener-tab">
+<div id="filter-bar">
+  <input id="filter-search" placeholder="🔍 Buscar..." oninput="render()">
+  <button class="flt-btn" id="btn-favs" onclick="toggleFavFilter()">★ Favoritos</button>
+  <span style="font-size:10px;color:#283040">OI 5m mín:</span>
+  <select class="flt-sel" id="filter-oi" onchange="render()">
+    <option value="0">Todos</option>
+    <option value="0.3">+0.3%</option>
+    <option value="0.5">+0.5%</option>
+    <option value="1">+1%</option>
+    <option value="2">+2%</option>
+  </select>
+  <span id="filter-count"></span>
+</div>
+<div id="table-wrap">
 <table id="tbl">
 <thead id="thead">
 <tr>
@@ -507,6 +578,7 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
   <tr class="state-row"><td colspan="16">Cargando datos...</td></tr>
 </tbody>
 </table>
+</div><!-- table-wrap -->
 </div>
 
 <!-- ── Strategy tab ── -->
@@ -567,6 +639,12 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
   </div>
 </div>
 
+<div id="liq-bar">
+  <span class="liq-title">⚡ LIQ</span>
+  <span class="liq-total-l" id="liq-long-total">L $0</span>
+  <span class="liq-total-s" id="liq-short-total">S $0</span>
+  <span id="liq-feed" style="color:#1e2838">Conectando websocket...</span>
+</div>
 <div id="btip"></div>
 <div id="toast-wrap"></div>
 
@@ -689,6 +767,10 @@ let chartZoom = { scale: 1, offsetX: 0, offsetY: 0 };
 let chartScoredCache = null;
 let activeQuadrant   = null;
 let prevQuadrants    = new Map();
+let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
+let filterFavOnly    = false;
+let liqEvents        = []; // {symbol,isLong,usdVal,ts}
+let liqLong5m = 0, liqShort5m = 0;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function pctStyle(v) {
@@ -814,7 +896,8 @@ function buildTooltip(r) {
     <div class="btip-row"><span class="btip-lbl">Vol 1h</span><span class="btip-val" style="color:${fc(r.vol1hPct)}">${f(r.vol1hPct)}</span></div>
     <div class="btip-row"><span class="btip-lbl">P   1h</span><span class="btip-val" style="color:${fc(r.price1hPct)}">${f(r.price1hPct)}</span></div>
     <div class="btip-row"><span class="btip-lbl">P   4h</span><span class="btip-val" style="color:${fc(r.price4hPct)}">${f(r.price4hPct)}</span></div>
-    <div class="btip-row"><span class="btip-lbl">Funding</span><span class="btip-val" style="color:${frC}">${frStr}</span></div>`;
+    <div class="btip-row"><span class="btip-lbl">Funding</span><span class="btip-val" style="color:${frC}">${frStr}</span></div>
+    ${getQuadrantHistory(r.symbol) ? `<div style="margin-top:6px;border-top:1px solid #141c28;padding-top:5px"><span style="color:#2a3848;font-size:9px;margin-right:4px">Historial:</span>${getQuadrantHistory(r.symbol)}</div>` : ''}`;
 }
 
 // ── Quadrant change detection ──────────────────────────────────────────────
@@ -824,8 +907,87 @@ function checkQuadrantChanges(rows) {
     const q = r.oi1h >= 0 && r.price1hPct >= 0 ? 'LONG'
             : r.oi1h >= 0                        ? 'SHORT'
             : r.price1hPct >= 0                  ? 'SQUEEZE' : 'LIQ';
+    const prev = prevQuadrants.get(r.symbol);
+    if (prev && prev !== q) {
+      const hist = quadrantHistory.get(r.symbol) || [];
+      hist.unshift({ q, ts: Date.now() });
+      if (hist.length > 8) hist.length = 8;
+      quadrantHistory.set(r.symbol, hist);
+    }
     prevQuadrants.set(r.symbol, q);
   }
+}
+
+// ── Filter helpers ─────────────────────────────────────────────────────────
+function toggleFavFilter() {
+  filterFavOnly = !filterFavOnly;
+  document.getElementById('btn-favs').classList.toggle('active', filterFavOnly);
+  render();
+}
+
+function getFilteredRows() {
+  const search = (document.getElementById('filter-search')?.value || '').toUpperCase();
+  const minOI  = parseFloat(document.getElementById('filter-oi')?.value || 0);
+  return allRows.filter(r => {
+    if (search && !r.symbol.includes(search)) return false;
+    if (filterFavOnly && !favorites.has(r.symbol)) return false;
+    if (minOI > 0 && (r.oi5m ?? -Infinity) < minOI) return false;
+    return true;
+  });
+}
+
+// ── Liquidaciones WebSocket ─────────────────────────────────────────────────
+function fmtUSD(v) {
+  if (v >= 1e6) return '$' + (v/1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return '$' + (v/1e3).toFixed(0) + 'K';
+  return '$' + v.toFixed(0);
+}
+
+function updateLiqBar() {
+  const cut = Date.now() - 5*60_000;
+  const rec = liqEvents.filter(e => e.ts > cut);
+  liqLong5m  = rec.filter(e => e.isLong).reduce((a,b) => a+b.usdVal, 0);
+  liqShort5m = rec.filter(e => !e.isLong).reduce((a,b) => a+b.usdVal, 0);
+  document.getElementById('liq-long-total').textContent  = 'L ' + fmtUSD(liqLong5m);
+  document.getElementById('liq-short-total').textContent = 'S ' + fmtUSD(liqShort5m);
+  const feed = liqEvents.slice(0,10).map(e =>
+    `<span class="liq-ev ${e.isLong?'ll':'ls'}">${e.symbol} ${e.isLong?'↓LONG':'↑SHORT'} ${fmtUSD(e.usdVal)}</span>`
+  ).join('');
+  document.getElementById('liq-feed').innerHTML = feed || '<span style="color:#1e2838">Sin liquidaciones recientes</span>';
+}
+
+function connectLiqWS(symbols) {
+  const topics = symbols.slice(0,30).map(s => `liquidation.${s}USDT`);
+  let ws;
+  function connect() {
+    ws = new WebSocket('wss://stream.bybit.com/v5/public/linear');
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ op: 'subscribe', args: topics }));
+      document.getElementById('liq-feed').textContent = 'Sin liquidaciones recientes';
+    };
+    ws.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (!msg.data || !msg.topic?.startsWith('liquidation')) return;
+        const d = msg.data;
+        const usdVal = parseFloat(d.size) * parseFloat(d.price);
+        if (usdVal < 1000) return;
+        liqEvents.unshift({ symbol: d.symbol.replace('USDT',''), isLong: d.side==='Buy', usdVal, ts: Date.now() });
+        if (liqEvents.length > 100) liqEvents.length = 100;
+        updateLiqBar();
+      } catch(_) {}
+    };
+    ws.onclose = () => setTimeout(connect, 4000);
+    ws.onerror = () => {};
+  }
+  connect();
+}
+
+// ── Quadrant history ────────────────────────────────────────────────────────
+function getQuadrantHistory(symbol) {
+  const h = quadrantHistory.get(symbol) || [];
+  const colors = { LONG:'#00c878', SHORT:'#ee4444', SQUEEZE:'#2090c0', LIQ:'#882020' };
+  return h.slice(0,8).map(e => `<span style="color:${colors[e.q]};font-size:9px" title="${e.q}">■</span>`).join(' ');
 }
 
 // ── Screener render ────────────────────────────────────────────────────────
@@ -836,7 +998,10 @@ function pctCell(v) {
 }
 
 function render() {
-  const sorted = [...allRows].sort((a, b) => {
+  const rows = getFilteredRows();
+  const fc = document.getElementById('filter-count');
+  if (fc) fc.textContent = rows.length + ' / ' + allRows.length + ' pares';
+  const sorted = [...rows].sort((a, b) => {
     const av = a[sortCol] ?? (sortDir < 0 ? -Infinity : Infinity);
     const bv = b[sortCol] ?? (sortDir < 0 ? -Infinity : Infinity);
     if (typeof av === 'string') return sortDir * av.localeCompare(bv);
@@ -1575,9 +1740,11 @@ async function load() {
   try {
     const json = await loadData();
 
+    const firstLoad = allRows.length === 0;
     allRows = json.symbols || [];
     checkQuadrantChanges(allRows);
     updateMarketSentiment(allRows);
+    if (firstLoad && allRows.length) connectLiqWS(allRows.map(r => r.symbol));
     countdownVal = 10;
 
     const ts = new Date(json.ts);
