@@ -1,0 +1,1530 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scalp Screener</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #07090b;
+  color: #c8d0e0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid #131820;
+  background: linear-gradient(180deg, #0d1018 0%, #0a0d12 100%);
+  flex-shrink: 0;
+  height: 46px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.logo-icon {
+  width: 26px; height: 26px;
+  background: linear-gradient(135deg, #00c878 0%, #0088ff 100%);
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+  box-shadow: 0 0 12px rgba(0,200,120,0.25);
+}
+header h1 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e8edf8;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+}
+
+/* live dot */
+.live-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #00c878;
+  box-shadow: 0 0 6px #00c878;
+  animation: pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0%,100% { opacity: 1; box-shadow: 0 0 6px #00c878; }
+  50%      { opacity: .5; box-shadow: 0 0 2px #00c878; }
+}
+
+/* ── Tab nav ── */
+.tab-nav {
+  display: flex;
+  gap: 1px;
+  background: #0c0f14;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid #181e28;
+}
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: #3a4558;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .18s;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: #7888aa; background: #141c28; }
+.tab-btn.active {
+  color: #c8d8ff;
+  background: linear-gradient(135deg, #1a2540 0%, #162038 100%);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(0,200,120,0.1);
+  color: #00c878;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid rgba(0,200,120,0.2);
+}
+
+.refresh-btn {
+  background: #0f1520;
+  border: 1px solid #1e2a3a;
+  color: #4a6080;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.refresh-btn:hover { background: #162030; color: #7090c0; border-color: #2a3a50; }
+.refresh-btn:disabled { opacity: .4; cursor: default; }
+
+.countdown {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #1e5030;
+  min-width: 26px;
+}
+
+.meta {
+  font-size: 11px;
+  color: #283040;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* ── Loading bar ── */
+.loading-bar {
+  height: 2px;
+  background: #0e1218;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.loading-bar.active::after {
+  content: '';
+  position: absolute;
+  left: -50%;
+  top: 0; width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, #00c878, #0088ff, transparent);
+  animation: bar .9s ease-in-out infinite;
+}
+@keyframes bar { 100% { left: 150%; } }
+
+/* ── Screener tab ── */
+#screener-tab { overflow: auto; flex: 1; }
+
+table { width: 100%; border-collapse: collapse; min-width: 1280px; }
+
+thead { position: sticky; top: 0; z-index: 20; }
+
+th {
+  background: #0a0d14;
+  border-bottom: 1px solid #131820;
+  padding: 0 10px;
+  height: 32px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  color: #384258;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+th:hover { color: #6878a0; }
+th.active { color: #88a8d8; }
+th.left-align { text-align: left; }
+th .sort-arrow { font-size: 8px; margin-left: 3px; vertical-align: middle; color: #4488cc; }
+
+td {
+  padding: 0;
+  border-bottom: 1px solid #0e1016;
+  text-align: right;
+  height: 36px;
+}
+td.left-align { text-align: left; }
+
+tr { transition: filter .1s; }
+tr:hover td { filter: brightness(1.35); }
+tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
+
+/* ── Rank cell ── */
+.rank-cell {
+  display: flex; align-items: center; justify-content: flex-end;
+  height: 100%; padding: 0 8px; gap: 6px;
+}
+.rank-num { color: #283040; font-size: 11px; font-variant-numeric: tabular-nums; min-width: 20px; text-align: right; }
+.star { cursor: pointer; font-size: 13px; color: #1e2430; transition: color .15s, transform .12s; line-height: 1; }
+.star:hover { color: #806010; transform: scale(1.2); }
+.star.on { color: #f0b429; filter: drop-shadow(0 0 4px rgba(240,180,40,0.5)); }
+
+/* ── Symbol cell ── */
+.sym-cell { display: flex; align-items: center; height: 100%; padding: 0 10px; gap: 8px; }
+.sym-icon {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 7px; font-weight: 800;
+  color: rgba(255,255,255,0.95); flex-shrink: 0; letter-spacing: -0.5px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+.sym-name { font-weight: 700; color: #d8e2f5; font-size: 13px; letter-spacing: -0.2px; }
+
+/* ── Price cell ── */
+.price-cell {
+  display: flex; align-items: center; justify-content: flex-end;
+  height: 100%; padding: 0 12px;
+  font-variant-numeric: tabular-nums; color: #9aaccc; font-size: 12px; font-weight: 500;
+}
+
+/* ── Pct cells — full height fill like CoinGlass ── */
+.pct-wrap {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+}
+.pct-val {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 9px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+}
+.null-val {
+  color: #1e2530;
+  font-size: 11px;
+  justify-content: center;
+}
+
+.state-row td { text-align: center; padding: 60px; color: #283040; font-size: 14px; }
+
+/* ── Strategy tab ── */
+#strategy-tab { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+
+#chart-section {
+  flex-shrink: 0; height: 62vh;
+  min-height: 380px;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid #101418;
+  background: #06080b;
+}
+.chart-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 7px; flex-wrap: wrap;
+}
+.chart-title {
+  font-size: 11px; color: #4a5870; font-weight: 700;
+  letter-spacing: 0.8px; text-transform: uppercase; white-space: nowrap;
+}
+.chart-legend {
+  display: flex; align-items: center; gap: 10px; flex: 1;
+}
+.leg-item { display: flex; align-items: center; gap: 4px; }
+.leg-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.leg-label { font-size: 10px; color: #2e3c50; font-weight: 500; white-space: nowrap; }
+.chart-hint {
+  font-size: 9px; color: #1e2a3a; margin-left: auto; white-space: nowrap;
+}
+#bubble-chart { display: block; cursor: crosshair; }
+
+#cards-section {
+  flex: 1; overflow-y: auto; padding: 14px 16px;
+  display: flex; gap: 16px;
+  background: #07090b;
+}
+
+.picks-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1; }
+
+.picks-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; padding-bottom: 8px;
+  border-bottom: 1px solid #101418; flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+}
+.picks-title.long-title { color: #00a060; }
+.picks-title.short-title { color: #aa2828; }
+
+.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; align-content: start; }
+
+/* ── Momentum cards ── */
+.sc-card {
+  background: linear-gradient(160deg, #0d1117 0%, #090c12 100%);
+  border: 1px solid #181f2c;
+  border-radius: 12px;
+  padding: 13px 15px;
+  cursor: pointer;
+  transition: transform .15s, box-shadow .15s, border-color .15s;
+  position: relative;
+  overflow: hidden;
+}
+.sc-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  opacity: 0;
+  transition: opacity .15s;
+  pointer-events: none;
+}
+.sc-card:hover { transform: translateY(-2px); border-color: #242e3e; }
+.sc-card:hover::before { opacity: 1; }
+.sc-card.sc-long {
+  border-left: 3px solid #00a060;
+  box-shadow: -2px 0 10px rgba(0,160,96,0.14);
+}
+.sc-card.sc-long:hover { box-shadow: -2px 0 16px rgba(0,210,120,0.22), 0 6px 20px rgba(0,0,0,0.45); }
+.sc-card.sc-short {
+  border-left: 3px solid #a02020;
+  box-shadow: -2px 0 10px rgba(160,32,32,0.14);
+}
+.sc-card.sc-short:hover { box-shadow: -2px 0 16px rgba(230,60,60,0.22), 0 6px 20px rgba(0,0,0,0.45); }
+.sc-card.highlighted {
+  border-color: #2a4070;
+  background: linear-gradient(160deg, #101828 0%, #0c1420 100%);
+  box-shadow: 0 0 0 1px #2a4878, 0 4px 20px rgba(40,100,200,0.15);
+}
+
+.sc-header { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+.sc-icon {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 7px; font-weight: 800;
+  color: rgba(255,255,255,0.95); flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
+.sc-name { font-size: 15px; font-weight: 700; color: #dde8ff; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.3px; }
+.sc-badge { font-size: 8px; font-weight: 800; padding: 3px 7px; border-radius: 5px; letter-spacing: 0.8px; flex-shrink: 0; }
+.sc-score-num { font-size: 13px; font-weight: 700; color: #5a6880; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+.sc-score-bar { height: 3px; background: #0c111a; border-radius: 2px; margin: 7px 0 10px; overflow: hidden; }
+.sc-score-fill { height: 100%; border-radius: 2px; transition: width .4s ease; }
+
+.sc-metrics { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.sc-metric { display: flex; align-items: center; gap: 6px; }
+.sc-metric-label { font-size: 9px; color: #2e3c52; font-family: 'SF Mono', monospace; width: 38px; flex-shrink: 0; letter-spacing: 0.2px; }
+.sc-bar-wrap { flex: 1; height: 4px; background: #0e1420; border-radius: 2px; overflow: hidden; }
+.sc-bar { height: 100%; border-radius: 2px; min-width: 1px; transition: width .4s ease; }
+.sc-metric-val { font-size: 11px; font-variant-numeric: tabular-nums; font-weight: 600; width: 56px; text-align: right; flex-shrink: 0; }
+
+.sc-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid #111820; }
+.sc-price { font-size: 11px; font-variant-numeric: tabular-nums; color: #3a4a60; font-weight: 500; }
+
+/* ── Scalp 5M tab ── */
+#scalp5m-tab { display: none; flex: 1; flex-direction: column; overflow: hidden; background: #07090b; }
+#s5m-header {
+  padding: 9px 16px 8px; border-bottom: 1px solid #101418;
+  background: #06080b; flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+}
+.s5m-section-title { font-size: 11px; font-weight: 700; letter-spacing: 0.6px; color: #ffffff; white-space: nowrap; }
+.s5m-desc { font-size: 10px; color: rgba(255,255,255,0.40); }
+#s5m-body { display: flex; gap: 16px; padding: 12px 16px; flex: 1; overflow-y: auto; min-height: 0; }
+.s5m-col { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.s5m-col-title { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding-bottom: 8px; border-bottom: 1px solid #101418; }
+.s5m-long-title { color: #00e070; }
+.s5m-short-title { color: #ff4444; }
+.s5m-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px,1fr)); gap: 10px; align-content: start; }
+.s5m-empty { color: rgba(255,255,255,0.25); font-size: 12px; padding: 18px 0; text-align: center; }
+
+.s5m-card {
+  background: linear-gradient(150deg,#0d1117 0%,#090c12 100%);
+  border: 1px solid #181f2c; border-radius: 12px; padding: 12px 14px;
+  cursor: pointer; transition: transform .15s, box-shadow .15s;
+}
+.s5m-card:hover { transform: translateY(-2px); }
+.s5m-card.s5m-long { border-left: 3px solid #00a060; box-shadow: -2px 0 10px rgba(0,160,96,.14); }
+.s5m-card.s5m-long:hover { box-shadow: -2px 0 16px rgba(0,210,120,.22), 0 6px 20px rgba(0,0,0,.4); }
+.s5m-card.s5m-short { border-left: 3px solid #a02020; box-shadow: -2px 0 10px rgba(160,32,32,.14); }
+.s5m-card.s5m-short:hover { box-shadow: -2px 0 16px rgba(230,60,60,.22), 0 6px 20px rgba(0,0,0,.4); }
+
+.s5m-card-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.s5m-sym { font-size: 14px; font-weight: 700; color: #dde8ff; flex: 1; }
+.s5m-sc  { font-size: 12px; font-weight: 700; color: #5a6880; font-variant-numeric: tabular-nums; }
+.s5m-metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin: 8px 0; }
+.s5m-mrow { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.s5m-mlbl { font-size: 9px; color: #2e3c52; font-family: 'SF Mono',monospace; }
+.s5m-mval { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.s5m-card-foot { display: flex; justify-content: space-between; padding-top: 7px; border-top: 1px solid #111820; font-size: 10px; }
+
+#s5m-funding {
+  flex-shrink: 0; display: flex; gap: 20px;
+  padding: 10px 16px 12px; border-top: 1px solid #101418;
+  background: #06080b; overflow-x: auto;
+}
+.s5m-fund-col { flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 7px; }
+.s5m-fund-title { font-size: 9px; font-weight: 700; letter-spacing: 0.7px; text-transform: uppercase; color: rgba(255,255,255,0.45); margin-bottom: 2px; }
+.s5m-fund-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.fund-pill {
+  display: flex; align-items: center; gap: 9px;
+  background: #0c111a; border: 1px solid #161e28; border-radius: 8px;
+  padding: 6px 10px; cursor: pointer; transition: background .15s;
+}
+.fund-pill:hover { background: #101620; }
+
+/* ── Market bias bar ── */
+#market-bias {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 0 2px; flex-wrap: wrap;
+}
+.bias-tag {
+  font-size: 10px; font-weight: 800; padding: 3px 9px;
+  border-radius: 6px; letter-spacing: 0.6px; white-space: nowrap;
+}
+.bias-bar-wrap { width: 120px; height: 4px; background: #0c111a; border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+.bias-bar-fill { height: 100%; border-radius: 2px; transition: width .6s ease; }
+.bias-counts { font-size: 10px; white-space: nowrap; }
+.bias-detail { font-size: 9px; color: rgba(255,255,255,0.30); white-space: nowrap; }
+
+/* ── Bubble tooltip ── */
+#btip {
+  position: fixed; display: none;
+  background: rgba(6,9,14,0.97); border: 1px solid #1e2a3c;
+  border-radius: 9px; padding: 10px 13px;
+  pointer-events: none; z-index: 100; min-width: 172px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.7);
+}
+.btip-sym { font-size: 13px; font-weight: 700; color: #dde8ff; margin-bottom: 8px; }
+.btip-row { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 3px; font-size: 10px; }
+.btip-lbl { color: #2e3c52; font-family: 'SF Mono', monospace; }
+.btip-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ── Toast alerts ── */
+#toast-wrap {
+  position: fixed; top: 52px; right: 12px;
+  z-index: 200; display: flex; flex-direction: column; gap: 6px;
+  pointer-events: none;
+}
+.toast {
+  background: #0c111c; border: 1px solid #1a2538;
+  border-radius: 8px; padding: 7px 13px;
+  font-size: 11px; font-weight: 600; color: #c0ccdf;
+  animation: tIn .25s ease; white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  transition: opacity .3s;
+}
+.toast.t-long  { border-left: 3px solid #00a060; color: #88ddbb; }
+.toast.t-short { border-left: 3px solid #a02020; color: #ee9090; }
+@keyframes tIn { from { opacity:0; transform:translateX(16px); } to { opacity:1; transform:translateX(0); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <h1>Scalp Screener</h1>
+  </div>
+  <div class="live-dot"></div>
+  <div class="tab-nav">
+    <button class="tab-btn active" id="tab-screener" onclick="switchTab('screener')">Screener</button>
+    <button class="tab-btn" id="tab-strategy" onclick="switchTab('strategy')">Estrategia</button>
+    <button class="tab-btn" id="tab-scalp5m" onclick="switchTab('scalp5m')">Scalp 5M</button>
+  </div>
+  <span class="badge" id="sym-count">—</span>
+  <button class="refresh-btn" id="refresh-btn" onclick="forceRefresh()">↻ Refresh</button>
+  <span class="countdown" id="countdown">10s</span>
+  <span class="meta" id="meta">Cargando...</span>
+</header>
+
+<div class="loading-bar" id="loading-bar"></div>
+
+<!-- ── Screener tab ── -->
+<div id="screener-tab">
+<table id="tbl">
+<thead id="thead">
+<tr>
+  <th class="left-align" style="min-width:68px;padding-left:10px" data-col="rank">#</th>
+  <th class="left-align" style="min-width:120px" data-col="symbol">Símbolo</th>
+  <th style="min-width:100px" data-col="price">Precio</th>
+  <th style="min-width:88px" data-col="fundingRate">Funding</th>
+  <th style="min-width:82px" data-col="oi5m">OI (5m%)</th>
+  <th style="min-width:82px" data-col="oi15m">OI (15m%)</th>
+  <th style="min-width:82px" data-col="oi1h">OI (1h%)</th>
+  <th style="min-width:82px" data-col="oi4h">OI (4h%)</th>
+  <th style="min-width:82px" data-col="oi24h">OI (24h%)</th>
+  <th style="min-width:90px" data-col="vol1hPct">Vol (1h%)</th>
+  <th style="min-width:90px" data-col="vol12hPct">Vol (12h%)</th>
+  <th style="min-width:90px" data-col="vol24hPct">Vol (24h%)</th>
+  <th style="min-width:82px" data-col="price5mPct">Precio (5m%)</th>
+  <th style="min-width:82px" data-col="price1hPct">Precio (1h%)</th>
+  <th style="min-width:82px" data-col="price4hPct">Precio (4h%)</th>
+  <th style="min-width:82px" data-col="price24hPct">Precio (24h%)</th>
+</tr>
+</thead>
+<tbody id="tbody">
+  <tr class="state-row"><td colspan="16">Cargando datos...</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ── Strategy tab ── -->
+<div id="strategy-tab">
+  <div id="chart-section">
+    <div class="chart-header">
+      <span class="chart-title">Mapa de Momentum</span>
+      <div id="market-bias"></div>
+      <div class="chart-legend">
+        <div class="leg-item"><div class="leg-dot" style="background:#00b870;box-shadow:0 0 5px #00b870"></div><span class="leg-label">OI↑ P↑ Long</span></div>
+        <div class="leg-item"><div class="leg-dot" style="background:#dd3333;box-shadow:0 0 5px #dd3333"></div><span class="leg-label">OI↑ P↓ Short</span></div>
+        <div class="leg-item"><div class="leg-dot" style="background:#2090c0;box-shadow:0 0 5px #2090c0"></div><span class="leg-label">OI↓ P↑ Squeeze</span></div>
+        <div class="leg-item"><div class="leg-dot" style="background:#882020"></div><span class="leg-label">OI↓ P↓ Liq</span></div>
+      </div>
+      <span class="chart-hint">scroll: zoom · arrastrar: mover · doble-clic: reset</span>
+    </div>
+    <canvas id="bubble-chart"></canvas>
+  </div>
+  <div id="cards-section">
+    <div class="picks-col long-col">
+      <div class="picks-title long-title">🚀 Long momentum — Top 5</div>
+      <div class="cards-grid" id="long-cards"></div>
+    </div>
+    <div class="picks-col short-col">
+      <div class="picks-title short-title">📉 Short momentum — Top 5</div>
+      <div class="cards-grid" id="short-cards"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Scalp 5M tab ── -->
+<div id="scalp5m-tab">
+  <div id="s5m-header">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <span class="s5m-section-title">⚡ Scalp 5M — Señales de entrada inmediata</span>
+      <span class="s5m-desc">Basado en OI 5m + Price 5m + confirmación 15m · mín $300k vol/h</span>
+    </div>
+  </div>
+  <div id="s5m-body">
+    <div class="s5m-col">
+      <div class="s5m-col-title s5m-long-title">▲ Long 5M — Top 5</div>
+      <div id="s5m-long-cards" class="s5m-grid"></div>
+    </div>
+    <div class="s5m-col">
+      <div class="s5m-col-title s5m-short-title">▼ Short 5M — Top 5</div>
+      <div id="s5m-short-cards" class="s5m-grid"></div>
+    </div>
+  </div>
+  <div id="s5m-funding">
+    <div class="s5m-fund-col">
+      <div class="s5m-fund-title">💧 Funding negativo — Shorts pagando → Long</div>
+      <div id="s5m-fund-long" class="s5m-fund-grid"></div>
+    </div>
+    <div class="s5m-fund-col">
+      <div class="s5m-fund-title">🔥 Funding positivo — Longs pagando → Short</div>
+      <div id="s5m-fund-short" class="s5m-fund-grid"></div>
+    </div>
+  </div>
+</div>
+
+<div id="btip"></div>
+<div id="toast-wrap"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let allRows = [];
+let sortCol = 'oi5m';
+let sortDir = -1;
+let favorites = new Set(JSON.parse(localStorage.getItem('scalp_favs') || '[]'));
+let countdownVal = 10;
+let isLoading = false;
+let activeTab = 'screener';
+let bubbleHitTargets = [];
+let badgeHitTargets  = [];
+let chartZoom = { scale: 1, offsetX: 0, offsetY: 0 };
+let chartScoredCache = null;
+let activeQuadrant   = null;
+let prevQuadrants    = new Map();
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function pctStyle(v) {
+  if (v == null) return null;
+  const a = Math.abs(v);
+  if (v >= 0) {
+    if (a >= 100) return { bg: '#00d48c', text: '#000', fw: '700' };
+    if (a >= 50)  return { bg: '#00b87a', text: '#000', fw: '600' };
+    if (a >= 20)  return { bg: '#009060', text: '#fff', fw: '600' };
+    if (a >= 10)  return { bg: '#007048', text: '#fff', fw: '500' };
+    if (a >= 5)   return { bg: '#004e32', text: '#aae8c8', fw: '500' };
+    if (a >= 2)   return { bg: '#003220', text: '#88c4a8', fw: '500' };
+    if (a >= 0.5) return { bg: '#001e12', text: '#5a9870', fw: '500' };
+    return { bg: '#0e1610', text: '#3a5e48', fw: '500' };
+  } else {
+    if (a >= 100) return { bg: '#ff1744', text: '#fff', fw: '700' };
+    if (a >= 50)  return { bg: '#d32f2f', text: '#fff', fw: '600' };
+    if (a >= 20)  return { bg: '#a81a1a', text: '#fff', fw: '600' };
+    if (a >= 10)  return { bg: '#7a1010', text: '#ffb0b0', fw: '500' };
+    if (a >= 5)   return { bg: '#500808', text: '#e09090', fw: '500' };
+    if (a >= 2)   return { bg: '#320505', text: '#c07070', fw: '500' };
+    if (a >= 0.5) return { bg: '#1e0303', text: '#a05060', fw: '500' };
+    return { bg: '#140202', text: '#603040', fw: '500' };
+  }
+}
+
+function fmtPct(v) {
+  if (v == null) return null;
+  const sign = v >= 0 ? '+' : '';
+  const digits = Math.abs(v) >= 100 ? 1 : 2;
+  return `${sign}${v.toFixed(digits)}%`;
+}
+
+function fmtPrice(p) {
+  if (p >= 10000) return '$' + p.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (p >= 1000)  return '$' + p.toLocaleString('en-US', { maximumFractionDigits: 1 });
+  if (p >= 100)   return '$' + p.toFixed(2);
+  if (p >= 1)     return '$' + p.toFixed(4);
+  if (p >= 0.01)  return '$' + p.toFixed(5);
+  if (p >= 0.001) return '$' + p.toFixed(6);
+  return '$' + p.toFixed(8);
+}
+
+function symColor(sym) {
+  let h = 5381;
+  for (let i = 0; i < sym.length; i++) h = ((h << 5) + h) ^ sym.charCodeAt(i);
+  return `hsl(${Math.abs(h) % 360},55%,42%)`;
+}
+
+// ── OI formatter ──────────────────────────────────────────────────────────
+function fmtOI(v) {
+  if (!v) return '—';
+  if (v >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return '$' + (v / 1e6).toFixed(0) + 'M';
+  return '$' + (v / 1e3).toFixed(0) + 'K';
+}
+
+// ── Market sentiment ───────────────────────────────────────────────────────
+function updateMarketSentiment(rows) {
+  const el = document.getElementById('market-bias');
+  if (!el) return;
+  const valid = rows.filter(r => r.oi1h != null && r.price1hPct != null);
+  if (!valid.length) return;
+
+  const longQ   = valid.filter(r => r.oi1h >= 0 && r.price1hPct >= 0).length;
+  const shortQ  = valid.filter(r => r.oi1h >= 0 && r.price1hPct <  0).length;
+  const squeeze = valid.filter(r => r.oi1h <  0 && r.price1hPct >= 0).length;
+  const liq     = valid.filter(r => r.oi1h <  0 && r.price1hPct <  0).length;
+
+  const bull = longQ + squeeze;
+  const bear = shortQ + liq;
+  const total = bull + bear;
+  const bullPct = Math.round((bull / total) * 100);
+  const neutral = Math.abs(bull - bear) <= total * 0.06;
+  const isBull  = !neutral && bull > bear;
+  const isBear  = !neutral && bear > bull;
+
+  const color = neutral ? '#4a5870' : isBull ? '#00a060' : '#cc2828';
+  const label = neutral ? '◆ NEUTRAL' : isBull ? '▲ ALCISTA' : '▼ BAJISTA';
+  const pct   = isBull ? bullPct : 100 - bullPct;
+
+  el.innerHTML = `
+    <span class="bias-tag" style="background:${color}20;color:${color};border:1px solid ${color}50">${label}</span>
+    <div class="bias-bar-wrap"><div class="bias-bar-fill" style="width:${isBull||neutral?bullPct:100-bullPct}%;background:${color}"></div></div>
+    <span class="bias-counts">
+      <span style="color:#55dd99">▲ ${bull}</span>
+      <span style="color:rgba(255,255,255,0.35)"> vs </span>
+      <span style="color:#ee6666">▼ ${bear}</span>
+      <span style="color:rgba(255,255,255,0.45)"> · ${pct}%</span>
+    </span>
+    <span class="bias-detail">LONG ${longQ} · SQUEEZE ${squeeze} · SHORT ${shortQ} · LIQ ${liq}</span>`;
+}
+
+// ── Funding cell ──────────────────────────────────────────────────────────
+function fundingCell(v) {
+  if (v == null) return `<div class="pct-wrap"><span class="pct-val null-val">—</span></div>`;
+  const str = (v >= 0 ? '+' : '') + v.toFixed(4) + '%';
+  let bg, text;
+  if      (v > 0.05)  { bg = '#3a2000'; text = '#e09030'; }
+  else if (v > 0.01)  { bg = '#281800'; text = '#c07820'; }
+  else if (v >= 0)    { bg = '#181000'; text = '#705030'; }
+  else if (v > -0.01) { bg = '#001020'; text = '#305a70'; }
+  else if (v > -0.05) { bg = '#001828'; text = '#3090c0'; }
+  else                { bg = '#001e32'; text = '#40a8e0'; }
+  return `<div class="pct-wrap"><span class="pct-val" style="background:${bg};color:${text};font-weight:500">${str}</span></div>`;
+}
+
+// ── Bubble tooltip ─────────────────────────────────────────────────────────
+function buildTooltip(r) {
+  const f  = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  const fc = v => v == null ? '#3a4a60' : v >= 0 ? '#55bb88' : '#ee6666';
+  const fr = r.fundingRate;
+  const frStr = fr == null ? '—' : (fr >= 0 ? '+' : '') + fr.toFixed(4) + '%';
+  const frC = fr == null ? '#3a4a60' : fr > 0.01 ? '#e09030' : fr < -0.01 ? '#3090d0' : '#4a5a70';
+  const delta = (r.oi5m != null && r.oi15m != null) ? r.oi5m - r.oi15m / 3 : null;
+  const deltaStr = delta == null ? '—' : delta > 0.05 ? '▲ acelerando' : delta < -0.05 ? '▼ desacelerando' : '→ estable';
+  const deltaC = delta == null ? '#3a4a60' : delta > 0.05 ? '#55bb88' : delta < -0.05 ? '#ee6666' : '#4a5870';
+  return `<div class="btip-sym">${r.symbol} <span style="color:#3a4a60;font-weight:400;font-size:10px">${fmtPrice(r.price)}</span></div>
+    <div class="btip-row"><span class="btip-lbl">OI total</span><span class="btip-val" style="color:#6080a0">${fmtOI(r.oiUSD)}</span></div>
+    <div class="btip-row"><span class="btip-lbl">OI  1h</span><span class="btip-val" style="color:${fc(r.oi1h)}">${f(r.oi1h)}</span></div>
+    <div class="btip-row"><span class="btip-lbl">OI  4h</span><span class="btip-val" style="color:${fc(r.oi4h)}">${f(r.oi4h)}</span></div>
+    <div class="btip-row"><span class="btip-lbl">OI delta</span><span class="btip-val" style="color:${deltaC}">${deltaStr}</span></div>
+    <div class="btip-row"><span class="btip-lbl">Vol 1h</span><span class="btip-val" style="color:${fc(r.vol1hPct)}">${f(r.vol1hPct)}</span></div>
+    <div class="btip-row"><span class="btip-lbl">P   1h</span><span class="btip-val" style="color:${fc(r.price1hPct)}">${f(r.price1hPct)}</span></div>
+    <div class="btip-row"><span class="btip-lbl">P   4h</span><span class="btip-val" style="color:${fc(r.price4hPct)}">${f(r.price4hPct)}</span></div>
+    <div class="btip-row"><span class="btip-lbl">Funding</span><span class="btip-val" style="color:${frC}">${frStr}</span></div>`;
+}
+
+// ── Quadrant change detection ──────────────────────────────────────────────
+function checkQuadrantChanges(rows) {
+  for (const r of rows) {
+    if (r.oi1h == null || r.price1hPct == null) continue;
+    const q = r.oi1h >= 0 && r.price1hPct >= 0 ? 'LONG'
+            : r.oi1h >= 0                        ? 'SHORT'
+            : r.price1hPct >= 0                  ? 'SQUEEZE' : 'LIQ';
+    prevQuadrants.set(r.symbol, q);
+  }
+}
+
+// ── Screener render ────────────────────────────────────────────────────────
+function pctCell(v) {
+  if (v == null) return `<div class="pct-wrap"><span class="pct-val null-val">—</span></div>`;
+  const s = pctStyle(v);
+  return `<div class="pct-wrap"><span class="pct-val" style="background:${s.bg};color:${s.text};font-weight:${s.fw}">${fmtPct(v)}</span></div>`;
+}
+
+function render() {
+  const sorted = [...allRows].sort((a, b) => {
+    const av = a[sortCol] ?? (sortDir < 0 ? -Infinity : Infinity);
+    const bv = b[sortCol] ?? (sortDir < 0 ? -Infinity : Infinity);
+    if (typeof av === 'string') return sortDir * av.localeCompare(bv);
+    return sortDir * (bv - av);
+  });
+
+  document.querySelectorAll('#thead th').forEach(th => {
+    th.classList.toggle('active', th.dataset.col === sortCol);
+    const ex = th.querySelector('.sort-arrow');
+    if (ex) ex.remove();
+    if (th.dataset.col === sortCol) {
+      const sp = document.createElement('span');
+      sp.className = 'sort-arrow';
+      sp.textContent = sortDir < 0 ? '▼' : '▲';
+      th.appendChild(sp);
+    }
+  });
+
+  const tbody = document.getElementById('tbody');
+  if (!sorted.length) {
+    tbody.innerHTML = `<tr class="state-row"><td colspan="16">Sin datos</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = sorted.map((row, i) => {
+    const isFav = favorites.has(row.symbol);
+    const icon = `<div class="sym-icon" style="background:${symColor(row.symbol)}">${row.symbol.slice(0,3)}</div>`;
+    return `<tr>
+      <td class="left-align"><div class="rank-cell">
+        <span class="rank-num">${i+1}</span>
+        <span class="star${isFav?' on':''}" onclick="toggleFav('${row.symbol}')">★</span>
+      </div></td>
+      <td class="left-align"><div class="sym-cell">${icon}<span class="sym-name">${row.symbol}</span></div></td>
+      <td><div class="price-cell">${fmtPrice(row.price)}</div></td>
+      <td>${fundingCell(row.fundingRate)}</td>
+      <td>${pctCell(row.oi5m)}</td>
+      <td>${pctCell(row.oi15m)}</td>
+      <td>${pctCell(row.oi1h)}</td>
+      <td>${pctCell(row.oi4h)}</td>
+      <td>${pctCell(row.oi24h)}</td>
+      <td>${pctCell(row.vol1hPct)}</td>
+      <td>${pctCell(row.vol12hPct)}</td>
+      <td>${pctCell(row.vol24hPct)}</td>
+      <td>${pctCell(row.price5mPct)}</td>
+      <td>${pctCell(row.price1hPct)}</td>
+      <td>${pctCell(row.price4hPct)}</td>
+      <td>${pctCell(row.price24hPct)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Scoring algorithm ──────────────────────────────────────────────────────
+function scoreSymbol(row) {
+  const n = v => v ?? 0;
+  let L = 0, S = 0;
+
+  // ── LONG ──────────────────────────────────────────────────────────────────
+  // OI + precio ambos positivos en 5m (mínimos reales, no cualquier +0.001%)
+  if      (n(row.oi5m) > 0.3  && n(row.price5mPct) > 0.15) L += 3;
+  else if (n(row.oi5m) > 0.1  && n(row.price5mPct) > 0.05) L += 2;
+  else if (n(row.oi5m) > 0    && n(row.price5mPct) > 0)    L += 1;
+
+  // OI acumulando en 1h — la magnitud importa
+  if      (n(row.oi1h) > 1.5) L += 3;
+  else if (n(row.oi1h) > 0.5) L += 2;
+  else if (n(row.oi1h) > 0.2) L += 1;
+
+  // OI 4h alineado (tendencia de fondo confirma)
+  if (n(row.oi4h) > 0.5) L += 1;
+
+  // Volumen elevado sobre la media
+  if      (n(row.vol1hPct) > 50) L += 2;
+  else if (n(row.vol1hPct) > 15) L += 1;
+
+  // Precio confirmando en 1h y 4h
+  if (n(row.price1hPct) > 0.3) L += 1;
+  if (n(row.price4hPct) > 0)   L += 1;
+
+  // Funding negativo = shorts pagando = sesgo alcista
+  if (n(row.fundingRate) < -0.01) L += 1;
+  if (n(row.fundingRate) >  0.05) L -= 1; // longs sobreextendidos
+
+  // Penalización dura si precio 1h va en contra (OI sube pero precio baja)
+  if (n(row.price1hPct) < 0) L = Math.floor(L * 0.35);
+
+  // ── SHORT ─────────────────────────────────────────────────────────────────
+  // OI subiendo + precio bajando en 5m (shorts entrando ahora)
+  if      (n(row.oi5m) > 0.3  && n(row.price5mPct) < -0.15) S += 3;
+  else if (n(row.oi5m) > 0.1  && n(row.price5mPct) < -0.05) S += 2;
+  else if (n(row.oi5m) > 0    && n(row.price5mPct) < 0)     S += 1;
+
+  // OI acumulando en 1h (nuevos shorts entrando)
+  if      (n(row.oi1h) > 1.5) S += 3;
+  else if (n(row.oi1h) > 0.5) S += 2;
+  else if (n(row.oi1h) > 0.2) S += 1;
+
+  // OI 4h sosteniendo presión bajista
+  if (n(row.oi4h) > 0.5) S += 1;
+
+  // Volumen elevado acompañando la caída
+  if      (n(row.vol1hPct) > 50) S += 2;
+  else if (n(row.vol1hPct) > 15) S += 1;
+
+  // Precio bajando confirmado en 1h y 4h
+  if (n(row.price1hPct) < -0.3) S += 1;
+  if (n(row.price4hPct) < 0)    S += 1;
+
+  // Funding positivo = longs pagando = sesgo bajista
+  if (n(row.fundingRate) >  0.01) S += 1;
+  if (n(row.fundingRate) < -0.05) S -= 1; // shorts sobreextendidos
+
+  // Penalización dura si precio 1h sube (OI sube + precio sube = LONG, no SHORT)
+  if (n(row.price1hPct) > 0) S = Math.floor(S * 0.35);
+
+  // Volumen mínimo: si < $300k en 1h, cap en 4 (señal no confiable)
+  if ((row.vol1hUSD ?? 0) < 300_000) { L = Math.min(L, 4); S = Math.min(S, 4); }
+
+  const tipo = L >= S ? 'LONG' : 'SHORT';
+  return { tipo, score: Math.min(10, Math.max(L, S)), longScore: Math.min(10, Math.max(0, L)), shortScore: Math.min(10, Math.max(0, S)) };
+}
+
+// ── Momentum card ──────────────────────────────────────────────────────────
+function makeCard(row, isLong) {
+  const sc = isLong ? row.longScore : row.shortScore;
+  const score = Math.min(sc, 10);
+  const fillPct    = score * 10;
+  const badgeColor = isLong ? '#00cc88' : '#ff5555';
+  const badgeBg    = isLong ? '#002e1a' : '#2e0a0a';
+  const barFill    = isLong ? '#00804a' : '#992020';
+
+  const metrics = [
+    { label: 'OI  1h', val: row.oi1h,       max: 2   },
+    { label: 'Vol 1h', val: row.vol1hPct,    max: 60  },
+    { label: 'P   1h', val: row.price1hPct,  max: 2   },
+  ];
+
+  const bars = metrics.map(({ label, val, max }) => {
+    const v = val ?? 0;
+    const pct = Math.min(100, (Math.abs(v) / max) * 100);
+    const barC = v >= 0 ? '#005e38' : '#7a1818';
+    const txtC = v >= 0 ? '#55bb88' : '#ee6666';
+    return `<div class="sc-metric">
+      <span class="sc-metric-label">${label}</span>
+      <div class="sc-bar-wrap"><div class="sc-bar" style="width:${pct}%;background:${barC}"></div></div>
+      <span class="sc-metric-val" style="color:${txtC}">${fmtPct(v) ?? '—'}</span>
+    </div>`;
+  }).join('');
+
+  const tvUrl = `https://www.tradingview.com/chart/?symbol=BYBIT:${row.symbol}USDT.P`;
+  const p1h = row.price1hPct ?? 0;
+  const p1hColor = p1h >= 0 ? '#55bb88' : '#ee6666';
+
+  return `<div class="sc-card ${isLong ? 'sc-long' : 'sc-short'}"
+    onclick="window.open('${tvUrl}','_blank')"
+    data-sym="${row.symbol}">
+    <div class="sc-header">
+      <div class="sc-icon" style="background:${symColor(row.symbol)}">${row.symbol.slice(0,3)}</div>
+      <div class="sc-name">${row.symbol}</div>
+      <div class="sc-badge" style="background:${badgeBg};color:${badgeColor}">${isLong?'LONG':'SHORT'}</div>
+      <div class="sc-score-num">${score}/10</div>
+    </div>
+    <div class="sc-score-bar"><div class="sc-score-fill" style="width:${fillPct}%;background:${barFill}"></div></div>
+    <div class="sc-metrics">${bars}</div>
+    <div class="sc-footer">
+      <span class="sc-price">${fmtPrice(row.price)}</span>
+      <span style="color:${p1hColor};font-size:11px;font-weight:600">${fmtPct(p1h) ?? '—'} (1h)</span>
+    </div>
+  </div>`;
+}
+
+// ── Bubble chart ───────────────────────────────────────────────────────────
+function pillRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function drawBubbleChart(scored) {
+  if (scored) chartScoredCache = scored;
+  if (!chartScoredCache) return;
+
+  const canvas = document.getElementById('bubble-chart');
+  const section = document.getElementById('chart-section');
+  if (!canvas || !section) return;
+
+  const W = section.clientWidth - 32;
+  const H = section.clientHeight - 42;
+  if (canvas.width !== W) canvas.width = W;
+  if (canvas.height !== H) canvas.height = H;
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const valid = chartScoredCache.filter(d => d.oi1h != null && d.price1hPct != null);
+  if (!valid.length) return;
+
+  const PAD = { top: 18, right: 22, bottom: 34, left: 52 };
+  const pW = W - PAD.left - PAD.right;
+  const pH = H - PAD.top - PAD.bottom;
+
+  const xs = valid.map(d => d.oi1h);
+  const ys = valid.map(d => d.price1hPct);
+  const xMax = Math.max(Math.abs(Math.min(...xs)), Math.abs(Math.max(...xs)), 1) * 1.12;
+  const yMax = Math.max(Math.abs(Math.min(...ys)), Math.abs(Math.max(...ys)), 0.5) * 1.12;
+
+  const toX = v => PAD.left + (v + xMax) / (2 * xMax) * pW;
+  const toY = v => PAD.top + pH - (v + yMax) / (2 * yMax) * pH;
+  const ox = toX(0), oy = toY(0);
+
+  const z = chartZoom;
+  const s = z.scale;
+
+  ctx.save();
+  ctx.setTransform(s, 0, 0, s, z.offsetX, z.offsetY);
+
+  // ── Background fill ──────────────────────────────────────────────────────
+  ctx.fillStyle = '#06080b';
+  ctx.fillRect(PAD.left, PAD.top, pW, pH);
+
+  // Grid alineado con ticks
+  const nX = 4, nY = 4;
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 1 / s;
+  for (let i = -nX; i <= nX; i++) {
+    if (i === 0) continue;
+    const x = toX((i / nX) * xMax);
+    ctx.beginPath(); ctx.moveTo(x, PAD.top); ctx.lineTo(x, PAD.top + pH); ctx.stroke();
+  }
+  for (let i = -nY; i <= nY; i++) {
+    if (i === 0) continue;
+    const y = toY((i / nY) * yMax);
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + pW, y); ctx.stroke();
+  }
+
+  // ── Quadrant shading with radial gradients ───────────────────────────────
+  // Q1: top-right — green glow
+  const gQ1 = ctx.createRadialGradient(PAD.left + pW, PAD.top, 0, PAD.left + pW, PAD.top, Math.max(pW, pH) * 0.7);
+  gQ1.addColorStop(0, 'rgba(0,180,100,0.10)');
+  gQ1.addColorStop(1, 'rgba(0,180,100,0)');
+  ctx.fillStyle = gQ1;
+  ctx.fillRect(ox, PAD.top, pW - (ox - PAD.left), oy - PAD.top);
+
+  // Q4: bottom-right — red glow
+  const gQ4 = ctx.createRadialGradient(PAD.left + pW, PAD.top + pH, 0, PAD.left + pW, PAD.top + pH, Math.max(pW, pH) * 0.7);
+  gQ4.addColorStop(0, 'rgba(200,40,40,0.09)');
+  gQ4.addColorStop(1, 'rgba(200,40,40,0)');
+  ctx.fillStyle = gQ4;
+  ctx.fillRect(ox, oy, pW - (ox - PAD.left), pH - (oy - PAD.top));
+
+  // Q2: top-left — blue glow
+  const gQ2 = ctx.createRadialGradient(PAD.left, PAD.top, 0, PAD.left, PAD.top, Math.max(pW, pH) * 0.5);
+  gQ2.addColorStop(0, 'rgba(30,140,200,0.07)');
+  gQ2.addColorStop(1, 'rgba(30,140,200,0)');
+  ctx.fillStyle = gQ2;
+  ctx.fillRect(PAD.left, PAD.top, ox - PAD.left, oy - PAD.top);
+
+  // Q3: bottom-left — dark red glow
+  const gQ3 = ctx.createRadialGradient(PAD.left, PAD.top + pH, 0, PAD.left, PAD.top + pH, Math.max(pW, pH) * 0.5);
+  gQ3.addColorStop(0, 'rgba(150,30,30,0.08)');
+  gQ3.addColorStop(1, 'rgba(150,30,30,0)');
+  ctx.fillStyle = gQ3;
+  ctx.fillRect(PAD.left, oy, ox - PAD.left, pH - (oy - PAD.top));
+
+  // ── Center lines with glow ───────────────────────────────────────────────
+  ctx.save();
+  ctx.shadowColor = 'rgba(80,140,220,0.2)';
+  ctx.shadowBlur = 6 / s;
+  ctx.strokeStyle = 'rgba(50,90,150,0.45)';
+  ctx.lineWidth = 1 / s;
+  ctx.beginPath(); ctx.moveTo(ox, PAD.top); ctx.lineTo(ox, PAD.top + pH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD.left, oy); ctx.lineTo(PAD.left + pW, oy); ctx.stroke();
+  ctx.restore();
+
+  // ── Axis labels ──────────────────────────────────────────────────────────
+  ctx.fillStyle = '#304050';
+  ctx.font = `500 ${10 / s}px Inter,system-ui`;
+  ctx.textAlign = 'center';
+  ctx.fillText('OI (1h%)', W / 2, H - 4 / s);
+  ctx.save();
+  ctx.translate(13 / s, H / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('Precio (1h%)', 0, 0);
+  ctx.restore();
+
+  // ── Tick marks + escala ───────────────────────────────────────────────────
+  ctx.font = `${9 / s}px Inter,system-ui`;
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  const tk = v => v === 0 ? '0' : (v > 0 ? '+' : '') + v.toFixed(1) + '%';
+
+  ctx.textAlign = 'center';
+  for (let i = -nX; i <= nX; i++) {
+    const v = (i / nX) * xMax;
+    const x = toX(v);
+    ctx.fillText(tk(v), x, PAD.top + pH + 13 / s);
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 0.7 / s;
+    ctx.beginPath(); ctx.moveTo(x, PAD.top + pH); ctx.lineTo(x, PAD.top + pH + 4 / s); ctx.stroke();
+  }
+
+  ctx.textAlign = 'right';
+  for (let i = -nY; i <= nY; i++) {
+    const v = (i / nY) * yMax;
+    const y = toY(v);
+    ctx.fillText(tk(v), PAD.left - 5 / s, y + 3 / s);
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 0.7 / s;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left - 4 / s, y); ctx.stroke();
+  }
+
+  // ── Bubbles ──────────────────────────────────────────────────────────────
+  bubbleHitTargets = [];
+  const labelFs = 9.5 / s;
+  ctx.font = `700 ${labelFs}px Inter,system-ui`;
+
+  for (const d of valid) {
+    const bx = toX(d.oi1h);
+    const by = toY(d.price1hPct);
+    const r  = Math.min(24, Math.max(5, Math.sqrt(Math.abs(d.vol1hPct ?? 1)) * 1.9));
+
+    const oiPos = d.oi1h >= 0, pricePos = d.price1hPct >= 0;
+    const bQuad = oiPos && pricePos ? 'LONG' : oiPos ? 'SHORT' : pricePos ? 'SQUEEZE' : 'LIQ';
+    ctx.globalAlpha = (activeQuadrant && bQuad !== activeQuadrant) ? 0.12 : 1.0;
+
+    // Alineación total: OI 5m+1h+4h positivos + precio 5m+1h+4h en misma dirección + volumen
+    const nv = v => v ?? 0;
+    const longAligned  = oiPos && pricePos
+      && nv(d.oi5m) > 0 && nv(d.oi1h) > 0.2 && nv(d.oi4h) > 0
+      && nv(d.price5mPct) > 0 && nv(d.price4hPct) > 0 && nv(d.vol1hPct) > 5;
+    const shortAligned = oiPos && !pricePos
+      && nv(d.oi5m) > 0 && nv(d.oi1h) > 0.2 && nv(d.oi4h) > 0
+      && nv(d.price5mPct) < 0 && nv(d.price4hPct) < 0 && nv(d.vol1hPct) > 5;
+    const aligned = longAligned || shortAligned;
+
+    let fillC, strokeC, glowC, labelC;
+    if (oiPos && pricePos) {
+      if (longAligned) { fillC='rgba(0,230,145,0.82)'; strokeC='rgba(80,255,190,1)'; glowC='rgba(0,255,170,0.75)'; labelC='#ccffee'; }
+      else             { fillC='rgba(0,170,105,0.52)'; strokeC='rgba(0,240,155,0.80)'; glowC='rgba(0,220,140,0.35)'; labelC='#7eeebb'; }
+    } else if (oiPos) {
+      if (shortAligned){ fillC='rgba(255,45,45,0.82)'; strokeC='rgba(255,110,110,1)'; glowC='rgba(255,60,60,0.75)'; labelC='#ffdddd'; }
+      else             { fillC='rgba(215,50,50,0.52)'; strokeC='rgba(255,95,95,0.80)'; glowC='rgba(255,80,80,0.35)'; labelC='#ffaaaa'; }
+    } else if (pricePos){ fillC='rgba(28,138,185,0.48)'; strokeC='rgba(55,200,240,0.75)'; glowC='rgba(40,180,230,0.30)'; labelC='#88ccee'; }
+    else               { fillC='rgba(155,30,30,0.48)'; strokeC='rgba(210,58,58,0.70)'; glowC='rgba(200,50,50,0.25)'; labelC='#ee9090'; }
+
+    // Outer glow
+    ctx.save();
+    ctx.shadowColor = glowC;
+    ctx.shadowBlur = (aligned ? r * 2.8 : r * 0.8) / s;
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fillStyle = fillC; ctx.fill();
+    ctx.restore();
+
+    // Stroke
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.strokeStyle = strokeC; ctx.lineWidth = 1 / s; ctx.stroke();
+
+    // Inner highlight
+    const hl = ctx.createRadialGradient(bx - r * 0.35, by - r * 0.35, 0, bx, by, r);
+    hl.addColorStop(0, 'rgba(255,255,255,0.18)');
+    hl.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+    hl.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fillStyle = hl; ctx.fill();
+
+    // Label pill
+    const label = d.symbol;
+    const tw = ctx.measureText(label).width;
+    const lx = bx;
+    const ly = by - r - 4 / s;
+    const pH2 = labelFs + 5 / s;
+    const pW2 = tw + 10 / s;
+    const pr  = 3 / s;
+
+    ctx.save();
+    ctx.shadowColor = glowC;
+    ctx.shadowBlur = 4 / s;
+    pillRect(ctx, lx - pW2 / 2, ly - pH2 + 1/s, pW2, pH2, pr);
+    ctx.fillStyle = 'rgba(5,7,11,0.90)'; ctx.fill();
+    ctx.strokeStyle = strokeC.replace('0.80', '0.35'); ctx.lineWidth = 0.6 / s; ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = labelC;
+    ctx.textAlign = 'center';
+    ctx.fillText(label, lx, ly);
+
+    // Anillo exterior para burbujas totalmente alineadas
+    if (aligned) {
+      ctx.save();
+      ctx.shadowColor = glowC;
+      ctx.shadowBlur = 14 / s;
+      ctx.strokeStyle = strokeC;
+      ctx.lineWidth = 1.4 / s;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.arc(bx, by, r + 6 / s, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath(); ctx.arc(bx, by, r + 11 / s, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+
+    bubbleHitTargets.push({ symbol: d.symbol, bx, by, r });
+  }
+
+  ctx.globalAlpha = 1.0;
+
+  // ── Quadrant badges with stats (drawn on top of bubbles) ─────────────────
+  badgeHitTargets = [];
+  const _q1 = valid.filter(d => d.oi1h >= 0 && d.price1hPct >= 0);
+  const _q2 = valid.filter(d => d.oi1h <  0 && d.price1hPct >= 0);
+  const _q3 = valid.filter(d => d.oi1h <  0 && d.price1hPct <  0);
+  const _q4 = valid.filter(d => d.oi1h >= 0 && d.price1hPct <  0);
+  const _qavg = (arr, k) => arr.length ? arr.reduce((a, b) => a + (b[k] || 0), 0) / arr.length : 0;
+  const _fmtA = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+
+  const _qDefs = [
+    { data: _q1, label: 'LONG',    dir: 'OI↑  P↑', rgb: '0,210,130',  px: PAD.left+pW-6/s, py: PAD.top+8/s,    ax:'right', ay:'top'    },
+    { data: _q2, label: 'SQUEEZE', dir: 'OI↓  P↑', rgb: '50,185,235', px: PAD.left+6/s,    py: PAD.top+8/s,    ax:'left',  ay:'top'    },
+    { data: _q3, label: 'LIQ',     dir: 'OI↓  P↓', rgb: '210,70,70',  px: PAD.left+6/s,    py: PAD.top+pH-8/s, ax:'left',  ay:'bottom' },
+    { data: _q4, label: 'SHORT',   dir: 'OI↑  P↓', rgb: '255,90,90',  px: PAD.left+pW-6/s, py: PAD.top+pH-8/s, ax:'right', ay:'bottom' },
+  ];
+
+  const _lfs = 10/s, _sfs = 8.5/s, _lp = 6/s;
+
+  for (const q of _qDefs) {
+    const oiA = _qavg(q.data, 'oi1h');
+    const prA = _qavg(q.data, 'price1hPct');
+    const cnt = q.data.length;
+    const ln1 = `${q.dir}  ${q.label}`;
+    const ln2 = `OI ${_fmtA(oiA)}   P ${_fmtA(prA)}`;
+    const ln3 = `${cnt} símbolos`;
+
+    ctx.font = `700 ${_lfs}px Inter,system-ui`;
+    const w1 = ctx.measureText(ln1).width;
+    ctx.font = `500 ${_sfs}px Inter,system-ui`;
+    const w2 = Math.max(ctx.measureText(ln2).width, ctx.measureText(ln3).width);
+
+    const boxW = Math.max(w1, w2) + _lp * 2.4;
+    const boxH = _lfs + _sfs * 2 + _lp * 2.2;
+    const bx = q.ax === 'right' ? q.px - boxW : q.px;
+    const by = q.ay === 'bottom' ? q.py - boxH : q.py;
+
+    badgeHitTargets.push({ quad: q.label, bx, by, boxW, boxH });
+    const isActiveQ = activeQuadrant === q.label;
+
+    ctx.save();
+    pillRect(ctx, bx, by, boxW, boxH, 4/s);
+    ctx.fillStyle   = `rgba(${q.rgb},${isActiveQ ? 0.30 : 0.18})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${q.rgb},${isActiveQ ? 0.85 : 0.45})`;
+    ctx.lineWidth   = (isActiveQ ? 1.5 : 0.8) / s;
+    ctx.stroke();
+    ctx.restore();
+
+    const tx = q.ax === 'right' ? q.px - _lp : q.px + _lp;
+    ctx.textAlign = q.ax === 'right' ? 'right' : 'left';
+
+    ctx.font      = `700 ${_lfs}px Inter,system-ui`;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fillText(ln1, tx, by + _lfs + _lp * 0.5);
+
+    ctx.font      = `500 ${_sfs}px Inter,system-ui`;
+    ctx.fillStyle = 'rgba(255,255,255,0.70)';
+    ctx.fillText(ln2, tx, by + _lfs + _sfs + _lp * 1.1);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.38)';
+    ctx.fillText(ln3, tx, by + _lfs + _sfs * 2 + _lp * 1.65);
+  }
+
+  ctx.restore();
+}
+
+// ── Scalp 5M scoring ──────────────────────────────────────────────────────
+function score5m(row) {
+  const n = v => v ?? 0;
+  let L = 0, S = 0;
+
+  // Core: OI 5m + Precio 5m misma dirección con mínimos reales
+  if      (n(row.oi5m) > 0.5 && n(row.price5mPct) > 0.20) L += 4;
+  else if (n(row.oi5m) > 0.2 && n(row.price5mPct) > 0.10) L += 3;
+  else if (n(row.oi5m) > 0.1 && n(row.price5mPct) > 0.05) L += 2;
+  else if (n(row.oi5m) > 0   && n(row.price5mPct) > 0)    L += 1;
+
+  // 15m confirmando acumulación
+  if      (n(row.oi15m) > 0.5) L += 2;
+  else if (n(row.oi15m) > 0.2) L += 1;
+
+  // Volumen elevado
+  if      (n(row.vol1hPct) > 50) L += 2;
+  else if (n(row.vol1hPct) > 15) L += 1;
+
+  // Tendencia 1h alineada
+  if (n(row.price1hPct) > 0.3) L += 1;
+
+  // Funding negativo = sesgo alcista
+  if (n(row.fundingRate) < -0.01) L += 1;
+
+  // Penalización si tendencia 1h opuesta
+  if (n(row.price1hPct) < -0.5) L = Math.floor(L * 0.5);
+
+  // SHORT
+  if      (n(row.oi5m) > 0.5 && n(row.price5mPct) < -0.20) S += 4;
+  else if (n(row.oi5m) > 0.2 && n(row.price5mPct) < -0.10) S += 3;
+  else if (n(row.oi5m) > 0.1 && n(row.price5mPct) < -0.05) S += 2;
+  else if (n(row.oi5m) > 0   && n(row.price5mPct) < 0)     S += 1;
+
+  if      (n(row.oi15m) > 0.5) S += 2;
+  else if (n(row.oi15m) > 0.2) S += 1;
+
+  if      (n(row.vol1hPct) > 50) S += 2;
+  else if (n(row.vol1hPct) > 15) S += 1;
+
+  if (n(row.price1hPct) < -0.3) S += 1;
+  if (n(row.fundingRate) >  0.01) S += 1;
+  if (n(row.price1hPct) >  0.5) S = Math.floor(S * 0.5);
+
+  if ((row.vol1hUSD ?? 0) < 300_000) { L = Math.min(L, 3); S = Math.min(S, 3); }
+
+  return { longScore5m: Math.min(10, Math.max(0, L)), shortScore5m: Math.min(10, Math.max(0, S)) };
+}
+
+// ── Scalp 5M card ─────────────────────────────────────────────────────────
+function make5mCard(row, isLong) {
+  const score = isLong ? row.longScore5m : row.shortScore5m;
+  const barFill    = isLong ? '#00804a' : '#992020';
+  const badgeColor = isLong ? '#00cc88' : '#ff5555';
+  const badgeBg    = isLong ? '#002e1a' : '#2e0a0a';
+  const f  = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  const fc = v => v == null ? '#3a4a60' : v >= 0 ? '#55bb88' : '#ee6666';
+  const fr = row.fundingRate;
+  const frStr = fr == null ? '—' : (fr >= 0 ? '+' : '') + fr.toFixed(4) + '%';
+  const frC = fr == null ? '#3a4a60' : fr > 0.01 ? '#e09030' : fr < -0.01 ? '#3090d0' : '#4a5a70';
+  const tvUrl = `https://www.tradingview.com/chart/?symbol=BYBIT:${row.symbol}USDT.P`;
+
+  return `<div class="s5m-card ${isLong?'s5m-long':'s5m-short'}" onclick="window.open('${tvUrl}','_blank')">
+    <div class="s5m-card-hdr">
+      <div class="sc-icon" style="background:${symColor(row.symbol)};width:28px;height:28px;font-size:7px">${row.symbol.slice(0,3)}</div>
+      <div class="s5m-sym">${row.symbol}</div>
+      <div class="sc-badge" style="background:${badgeBg};color:${badgeColor}">${isLong?'LONG':'SHORT'}</div>
+      <div class="s5m-sc">${score}/10</div>
+    </div>
+    <div class="sc-score-bar"><div class="sc-score-fill" style="width:${score*10}%;background:${barFill}"></div></div>
+    <div class="s5m-metrics-grid">
+      <div class="s5m-mrow"><span class="s5m-mlbl">OI  5m</span><span class="s5m-mval" style="color:${fc(row.oi5m)}">${f(row.oi5m)}</span></div>
+      <div class="s5m-mrow"><span class="s5m-mlbl">OI 15m</span><span class="s5m-mval" style="color:${fc(row.oi15m)}">${f(row.oi15m)}</span></div>
+      <div class="s5m-mrow"><span class="s5m-mlbl">P   5m</span><span class="s5m-mval" style="color:${fc(row.price5mPct)}">${f(row.price5mPct)}</span></div>
+      <div class="s5m-mrow"><span class="s5m-mlbl">Vol 1h</span><span class="s5m-mval" style="color:${fc(row.vol1hPct)}">${f(row.vol1hPct)}</span></div>
+    </div>
+    <div class="s5m-card-foot">
+      <span style="color:#3a4a60">${fmtPrice(row.price)}</span>
+      <span style="color:${frC}">Fund ${frStr}</span>
+    </div>
+  </div>`;
+}
+
+// ── Funding pill ───────────────────────────────────────────────────────────
+function makeFundingPill(row, isLong) {
+  const fr = row.fundingRate ?? 0;
+  const frStr = (fr >= 0 ? '+' : '') + fr.toFixed(4) + '%';
+  const frC = isLong ? '#3090d0' : '#e09030';
+  const p1h = row.price1hPct ?? 0;
+  const pC = p1h >= 0 ? '#55bb88' : '#ee6666';
+  const tvUrl = `https://www.tradingview.com/chart/?symbol=BYBIT:${row.symbol}USDT.P`;
+  return `<div class="fund-pill" onclick="window.open('${tvUrl}','_blank')">
+    <div class="sc-icon" style="background:${symColor(row.symbol)};width:24px;height:24px;font-size:6px;flex-shrink:0">${row.symbol.slice(0,3)}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;font-size:12px;color:#dde8ff;line-height:1.2">${row.symbol}</div>
+      <div style="font-size:10px;color:${frC};font-weight:600">${frStr}</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:10px;color:${pC};font-weight:600">${(p1h>=0?'+':'')+p1h.toFixed(2)}%</div>
+      <div style="font-size:9px;color:#2e3c52">${fmtPrice(row.price)}</div>
+    </div>
+  </div>`;
+}
+
+// ── Scalp 5M render ────────────────────────────────────────────────────────
+function renderScalp5m() {
+  if (!allRows.length) return;
+  const scored = allRows.map(r => ({ ...r, ...score5m(r) }));
+
+  const longs5m  = scored.filter(r => r.longScore5m  >= 4).sort((a,b) => b.longScore5m  - a.longScore5m ).slice(0,5);
+  const shorts5m = scored.filter(r => r.shortScore5m >= 4).sort((a,b) => b.shortScore5m - a.shortScore5m).slice(0,5);
+
+  const fundLong  = allRows.filter(r => (r.fundingRate??0) < -0.03).sort((a,b) => (a.fundingRate??0)-(b.fundingRate??0)).slice(0,6);
+  const fundShort = allRows.filter(r => (r.fundingRate??0) >  0.03).sort((a,b) => (b.fundingRate??0)-(a.fundingRate??0)).slice(0,6);
+
+  const empty = `<div class="s5m-empty">Sin señales — mercado lateral</div>`;
+  document.getElementById('s5m-long-cards').innerHTML  = longs5m.map(r => make5mCard(r,true)).join('')  || empty;
+  document.getElementById('s5m-short-cards').innerHTML = shorts5m.map(r => make5mCard(r,false)).join('') || empty;
+  document.getElementById('s5m-fund-long').innerHTML   = fundLong.map(r => makeFundingPill(r,true)).join('')  || `<span style="color:#1e2838;font-size:11px">Ninguna</span>`;
+  document.getElementById('s5m-fund-short').innerHTML  = fundShort.map(r => makeFundingPill(r,false)).join('') || `<span style="color:#1e2838;font-size:11px">Ninguna</span>`;
+}
+
+// ── Strategy render ────────────────────────────────────────────────────────
+function renderStrategy() {
+  if (!allRows.length) return;
+
+  const scored = allRows.map(r => ({ ...r, ...scoreSymbol(r) }));
+
+  const longs  = scored.filter(r => r.tipo === 'LONG'  && r.longScore  >= 4)
+    .sort((a, b) => b.longScore  - a.longScore ).slice(0, 5);
+  const shorts = scored.filter(r => r.tipo === 'SHORT' && r.shortScore >= 4)
+    .sort((a, b) => b.shortScore - a.shortScore).slice(0, 5);
+
+  document.getElementById('long-cards').innerHTML  = longs.map(r => makeCard(r, true)).join('');
+  document.getElementById('short-cards').innerHTML = shorts.map(r => makeCard(r, false)).join('');
+
+  requestAnimationFrame(() => { chartZoom = { scale: 1, offsetX: 0, offsetY: 0 }; drawBubbleChart(scored); });
+}
+
+// ── Bubble chart interactions (zoom, pan, click) ───────────────────────────
+(function () {
+  const canvas = document.getElementById('bubble-chart');
+  let dragging = false, dragDist = 0, lastX = 0, lastY = 0;
+
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    const rect = this.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.22 : 0.82;
+    const ns = Math.max(0.35, Math.min(20, chartZoom.scale * factor));
+    // Zoom centered on mouse: keep the point under cursor fixed
+    chartZoom.offsetX = mx * (1 - ns / chartZoom.scale) + chartZoom.offsetX * (ns / chartZoom.scale);
+    chartZoom.offsetY = my * (1 - ns / chartZoom.scale) + chartZoom.offsetY * (ns / chartZoom.scale);
+    chartZoom.scale = ns;
+    drawBubbleChart(null);
+  }, { passive: false });
+
+  canvas.addEventListener('mousedown', function (e) {
+    dragging = true; dragDist = 0;
+    lastX = e.clientX; lastY = e.clientY;
+    this.style.cursor = 'grabbing';
+  });
+
+  canvas.addEventListener('mousemove', function (e) {
+    const rect = this.getBoundingClientRect();
+    if (dragging) {
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      dragDist += Math.abs(dx) + Math.abs(dy);
+      chartZoom.offsetX += dx; chartZoom.offsetY += dy;
+      lastX = e.clientX; lastY = e.clientY;
+      drawBubbleChart(null);
+      return;
+    }
+    const mx = (e.clientX - rect.left - chartZoom.offsetX) / chartZoom.scale;
+    const my = (e.clientY - rect.top  - chartZoom.offsetY) / chartZoom.scale;
+    let closest = null, minDist = Infinity;
+    for (const b of bubbleHitTargets) {
+      const ddx = mx - b.bx, ddy = my - b.by;
+      const d = Math.sqrt(ddx*ddx + ddy*ddy);
+      if (d <= b.r + 10/chartZoom.scale && d < minDist) { minDist = d; closest = b; }
+    }
+    const tip = document.getElementById('btip');
+    if (closest) {
+      const row = allRows.find(r => r.symbol === closest.symbol);
+      if (row) {
+        tip.innerHTML = buildTooltip(row);
+        tip.style.display = 'block';
+        const tipW = 186;
+        tip.style.left = (e.clientX + tipW + 14 > window.innerWidth ? e.clientX - tipW - 6 : e.clientX + 14) + 'px';
+        tip.style.top  = Math.min(e.clientY - 10, window.innerHeight - 180) + 'px';
+      }
+    } else {
+      tip.style.display = 'none';
+    }
+  });
+
+  canvas.addEventListener('mouseup', function (e) {
+    const wasDrag = dragDist > 5;
+    dragging = false;
+    this.style.cursor = 'crosshair';
+    if (wasDrag) return;
+    const rect = this.getBoundingClientRect();
+    const mx = (e.clientX - rect.left  - chartZoom.offsetX) / chartZoom.scale;
+    const my = (e.clientY - rect.top   - chartZoom.offsetY) / chartZoom.scale;
+    // Badge click → toggle quadrant filter
+    for (const b of badgeHitTargets) {
+      if (mx >= b.bx && mx <= b.bx + b.boxW && my >= b.by && my <= b.by + b.boxH) {
+        activeQuadrant = activeQuadrant === b.quad ? null : b.quad;
+        drawBubbleChart(null);
+        return;
+      }
+    }
+    // Bubble click → highlight card
+    for (const b of bubbleHitTargets) {
+      const dx = mx - b.bx, dy = my - b.by;
+      if (Math.sqrt(dx * dx + dy * dy) <= b.r + 6 / chartZoom.scale) {
+        document.querySelectorAll('.sc-card').forEach(c => c.classList.remove('highlighted'));
+        const card = document.querySelector(`.sc-card[data-sym="${b.symbol}"]`);
+        if (card) { card.classList.add('highlighted'); card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+        return;
+      }
+    }
+  });
+
+  canvas.addEventListener('mouseleave', function () {
+    dragging = false; this.style.cursor = 'crosshair';
+    document.getElementById('btip').style.display = 'none';
+  });
+
+  canvas.addEventListener('dblclick', function () {
+    chartZoom = { scale: 1, offsetX: 0, offsetY: 0 };
+    drawBubbleChart(null);
+  });
+})();
+
+window.addEventListener('resize', () => {
+  if (activeTab === 'strategy') drawBubbleChart(null);
+});
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('screener-tab').style.display  = tab === 'screener'  ? ''     : 'none';
+  document.getElementById('strategy-tab').style.display  = tab === 'strategy'  ? 'flex' : 'none';
+  document.getElementById('scalp5m-tab').style.display   = tab === 'scalp5m'   ? 'flex' : 'none';
+  document.getElementById('tab-screener').classList.toggle('active', tab === 'screener');
+  document.getElementById('tab-strategy').classList.toggle('active', tab === 'strategy');
+  document.getElementById('tab-scalp5m').classList.toggle('active',  tab === 'scalp5m');
+  if (tab === 'strategy' && allRows.length) renderStrategy();
+  if (tab === 'scalp5m'  && allRows.length) renderScalp5m();
+}
+
+// ── Data loading ───────────────────────────────────────────────────────────
+async function load() {
+  if (isLoading) return;
+  isLoading = true;
+  document.getElementById('loading-bar').classList.add('active');
+  document.getElementById('refresh-btn').disabled = true;
+
+  try {
+    const res = await fetch('/api/screener');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+
+    allRows = json.symbols || [];
+    checkQuadrantChanges(allRows);
+    updateMarketSentiment(allRows);
+    countdownVal = 10;
+
+    const ts = new Date(json.ts);
+    const timeStr = ts.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('meta').textContent = `Actualizado ${timeStr}`;
+    document.getElementById('sym-count').textContent = allRows.length + ' pares';
+
+    render();
+    if (activeTab === 'strategy') renderStrategy();
+    if (activeTab === 'scalp5m')  renderScalp5m();
+  } catch (e) {
+    document.getElementById('meta').textContent = 'Error: ' + e.message;
+  } finally {
+    isLoading = false;
+    document.getElementById('loading-bar').classList.remove('active');
+    document.getElementById('refresh-btn').disabled = false;
+  }
+}
+
+function forceRefresh() { countdownVal = 0; load(); }
+
+function toggleFav(sym) {
+  if (favorites.has(sym)) favorites.delete(sym);
+  else favorites.add(sym);
+  localStorage.setItem('scalp_favs', JSON.stringify([...favorites]));
+  render();
+}
+
+// ── Sort ───────────────────────────────────────────────────────────────────
+document.querySelectorAll('#thead th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) sortDir *= -1;
+    else { sortCol = col; sortDir = -1; }
+    render();
+  });
+});
+
+// ── Countdown ─────────────────────────────────────────────────────────────
+function tick() {
+  countdownVal--;
+  const el = document.getElementById('countdown');
+  if (countdownVal <= 0) { el.textContent = '↻'; load(); }
+  else el.textContent = countdownVal + 's';
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+load();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
