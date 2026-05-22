@@ -18,6 +18,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-bottom: 28px;
 }
 
 /* ── Header ── */
@@ -189,7 +190,8 @@ header h1 {
 
 /* ── Liquidaciones bar ── */
 #liq-bar {
-  flex-shrink: 0; height: 28px; display: flex; align-items: center; gap: 14px;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+  height: 28px; display: flex; align-items: center; gap: 14px;
   padding: 0 16px; border-top: 1px solid #181f2c;
   background: #07090d; font-size: 10px; overflow: hidden;
 }
