@@ -571,6 +571,110 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
 <div id="toast-wrap"></div>
 
 <script>
+// ── Cliente Bybit API (browser llama directamente, evita bloqueos cloud) ───
+const BYBIT_BASE = 'https://api.bybit.com';
+
+async function bybitGet(endpoint) {
+  const res = await fetch(BYBIT_BASE + endpoint, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+const pctCalc = (curr, prev) =>
+  prev && prev !== 0 ? ((curr - prev) / Math.abs(prev)) * 100 : null;
+const sumArr = arr => arr.reduce((a, b) => a + b, 0);
+
+const oiSnaps = new Map();
+
+async function pollSnapshots() {
+  try {
+    const res = await bybitGet('/v5/market/tickers?category=linear');
+    const now = Date.now();
+    for (const t of res.result.list) {
+      if (!t.symbol.endsWith('USDT')) continue;
+      const oiUSD = parseFloat(t.openInterestValue);
+      if (!oiSnaps.has(t.symbol)) oiSnaps.set(t.symbol, []);
+      const arr = oiSnaps.get(t.symbol);
+      arr.unshift({ ts: now, oiUSD });
+      if (arr.length > 1500) arr.length = 1500;
+    }
+  } catch(e) { console.error('snapshot poll error:', e.message); }
+}
+
+function snapAt(symbol, msAgo) {
+  const arr = oiSnaps.get(symbol);
+  if (!arr?.length) return null;
+  const target = Date.now() - msAgo;
+  const best = arr.reduce((b, s) =>
+    Math.abs(s.ts - target) < Math.abs(b.ts - target) ? s : b);
+  if (Math.abs(best.ts - target) > 90_000) return null;
+  return best.oiUSD;
+}
+
+async function fetchSymbolData(symbol, currentOIusd, currentPrice) {
+  const [oiRes, k1hRes, k5mRes] = await Promise.all([
+    bybitGet(`/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=290`),
+    bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=60&limit=50`),
+    bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=5&limit=4`),
+  ]);
+  const oiList = oiRes.result?.list;
+  const k1h = k1hRes.result?.list;
+  const k5m = k5mRes.result?.list;
+  if (!oiList?.length || !k1h?.length || !k5m?.length) return null;
+
+  const oi_usd = oiList.map(x => parseFloat(x.openInterest) * currentPrice);
+  const oi5m  = pctCalc(currentOIusd, snapAt(symbol, 5*60_000)       ?? oi_usd[1]);
+  const oi15m = pctCalc(currentOIusd, snapAt(symbol, 15*60_000)      ?? oi_usd[3]);
+  const oi1h  = pctCalc(currentOIusd, snapAt(symbol, 60*60_000)      ?? oi_usd[12]);
+  const oi4h  = pctCalc(currentOIusd, snapAt(symbol, 4*60*60_000)    ?? oi_usd[48]);
+  const oi24h = pctCalc(currentOIusd, snapAt(symbol, 24*60*60_000)   ?? oi_usd[288]);
+
+  const vol1h = k1h.map(k => parseFloat(k[6]));
+  const cls1h = k1h.map(k => parseFloat(k[4]));
+  const vol1hPct  = k1h.length > 2  ? pctCalc(vol1h[1], vol1h[2]) : null;
+  const vol12hPct = k1h.length > 24 ? pctCalc(sumArr(vol1h.slice(1,13)), sumArr(vol1h.slice(13,25))) : null;
+  const vol24hPct = k1h.length > 48 ? pctCalc(sumArr(vol1h.slice(1,25)), sumArr(vol1h.slice(25,49))) : null;
+  const cls5m = k5m.map(k => parseFloat(k[4]));
+  const price5mPct = k5m.length > 2 ? pctCalc(cls5m[1], cls5m[2]) : null;
+  const price1hPct = cls1h.length > 1 ? pctCalc(cls1h[0], cls1h[1]) : null;
+  const price4hPct = cls1h.length > 4 ? pctCalc(cls1h[0], cls1h[4]) : null;
+
+  return { oi5m, oi15m, oi1h, oi4h, oi24h, vol1hPct, vol12hPct, vol24hPct,
+           price5mPct, price1hPct, price4hPct, vol1hUSD: vol1h[1] ?? 0 };
+}
+
+async function loadData() {
+  const tickRes = await bybitGet('/v5/market/tickers?category=linear');
+  const tickers = tickRes.result.list
+    .filter(t => t.symbol.endsWith('USDT') && parseFloat(t.turnover24h) > 500_000)
+    .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
+    .slice(0, 100);
+
+  const rows = [];
+  for (let i = 0; i < tickers.length; i += 8) {
+    const batch = tickers.slice(i, i + 8);
+    const settled = await Promise.allSettled(batch.map(async t => {
+      const d = await fetchSymbolData(t.symbol, parseFloat(t.openInterestValue), parseFloat(t.lastPrice));
+      if (!d) return null;
+      return {
+        symbol: t.symbol.replace('USDT', ''),
+        price: parseFloat(t.lastPrice),
+        price24hPct: parseFloat(t.price24hPcnt) * 100,
+        fundingRate: parseFloat(t.fundingRate) * 100,
+        oiUSD: parseFloat(t.openInterestValue),
+        ...d,
+      };
+    }));
+    for (const s of settled) if (s.status === 'fulfilled' && s.value) rows.push(s.value);
+  }
+  rows.sort((a, b) => (b.oi5m ?? -Infinity) - (a.oi5m ?? -Infinity));
+  rows.forEach((r, i) => { r.rank = i + 1; });
+  return { ts: Date.now(), symbols: rows };
+}
+
+pollSnapshots();
+setInterval(pollSnapshots, 60_000);
+
 // ── State ──────────────────────────────────────────────────────────────────
 let allRows = [];
 let sortCol = 'oi5m';
@@ -1469,9 +1573,7 @@ async function load() {
   document.getElementById('refresh-btn').disabled = true;
 
   try {
-    const res = await fetch('/api/screener');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
+    const json = await loadData();
 
     allRows = json.symbols || [];
     checkQuadrantChanges(allRows);
