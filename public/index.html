@@ -189,17 +189,17 @@ header h1 {
 
 /* ── Liquidaciones bar ── */
 #liq-bar {
-  flex-shrink: 0; height: 26px; display: flex; align-items: center; gap: 14px;
-  padding: 0 16px; border-top: 1px solid #0e1218;
-  background: #050709; font-size: 10px; overflow: hidden;
+  flex-shrink: 0; height: 28px; display: flex; align-items: center; gap: 14px;
+  padding: 0 16px; border-top: 1px solid #181f2c;
+  background: #07090d; font-size: 10px; overflow: hidden;
 }
-.liq-title { color: #f0a030; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap; }
-.liq-total-l { color: #55bb88; font-weight: 700; white-space: nowrap; }
-.liq-total-s { color: #ee6666; font-weight: 700; white-space: nowrap; }
-#liq-feed { flex: 1; overflow: hidden; white-space: nowrap; color: #2a3848; }
-.liq-ev { margin-right: 20px; }
-.liq-ev.ll { color: #ee6666; }
-.liq-ev.ls { color: #55dd99; }
+.liq-title { color: #f0a030; font-weight: 800; letter-spacing: 0.6px; white-space: nowrap; text-shadow: 0 0 8px rgba(240,160,48,0.4); }
+.liq-total-l { color: #44dd88; font-weight: 700; white-space: nowrap; }
+.liq-total-s { color: #ff5555; font-weight: 700; white-space: nowrap; }
+#liq-feed { flex: 1; overflow: hidden; white-space: nowrap; color: rgba(255,255,255,0.55); }
+.liq-ev { margin-right: 20px; font-weight: 600; }
+.liq-ev.ll { color: #ff6666; }
+.liq-ev.ls { color: #44ee99; }
 
 /* ── Mobile ── */
 @media (max-width: 768px) {
@@ -1343,13 +1343,13 @@ function drawBubbleChart(scored) {
 
     let fillC, strokeC, glowC, labelC;
     if (oiPos && pricePos) {
-      if (longAligned) { fillC='rgba(0,230,145,0.82)'; strokeC='rgba(80,255,190,1)'; glowC='rgba(0,255,170,0.75)'; labelC='#ccffee'; }
-      else             { fillC='rgba(0,170,105,0.52)'; strokeC='rgba(0,240,155,0.80)'; glowC='rgba(0,220,140,0.35)'; labelC='#7eeebb'; }
+      if (longAligned) { fillC='rgba(0,230,145,0.85)'; strokeC='rgba(80,255,190,1)';   glowC='rgba(0,255,170,0.80)'; labelC='#ccffee'; }
+      else             { fillC='rgba(0,120,75,0.28)';  strokeC='rgba(0,180,110,0.40)'; glowC='rgba(0,180,110,0.12)'; labelC='#4a9970'; }
     } else if (oiPos) {
-      if (shortAligned){ fillC='rgba(255,45,45,0.82)'; strokeC='rgba(255,110,110,1)'; glowC='rgba(255,60,60,0.75)'; labelC='#ffdddd'; }
-      else             { fillC='rgba(215,50,50,0.52)'; strokeC='rgba(255,95,95,0.80)'; glowC='rgba(255,80,80,0.35)'; labelC='#ffaaaa'; }
-    } else if (pricePos){ fillC='rgba(28,138,185,0.48)'; strokeC='rgba(55,200,240,0.75)'; glowC='rgba(40,180,230,0.30)'; labelC='#88ccee'; }
-    else               { fillC='rgba(155,30,30,0.48)'; strokeC='rgba(210,58,58,0.70)'; glowC='rgba(200,50,50,0.25)'; labelC='#ee9090'; }
+      if (shortAligned){ fillC='rgba(255,45,45,0.85)'; strokeC='rgba(255,110,110,1)';  glowC='rgba(255,60,60,0.80)'; labelC='#ffdddd'; }
+      else             { fillC='rgba(160,35,35,0.28)'; strokeC='rgba(220,70,70,0.40)'; glowC='rgba(200,50,50,0.12)'; labelC='#aa6060'; }
+    } else if (pricePos){ fillC='rgba(20,100,140,0.28)'; strokeC='rgba(40,160,200,0.40)'; glowC='rgba(30,150,200,0.12)'; labelC='#5090aa'; }
+    else               { fillC='rgba(100,20,20,0.28)';  strokeC='rgba(170,45,45,0.40)'; glowC='rgba(160,40,40,0.10)'; labelC='#886060'; }
 
     // Outer glow
     ctx.save();
