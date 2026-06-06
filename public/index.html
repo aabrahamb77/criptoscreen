@@ -684,6 +684,52 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .conf-short .conf-dir { color: #ee5555; }
 .conf-count { font-size: 9px; color: #3a5070; }
 
+/* ── Paper Trading Bot ── */
+#lab-paper {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px; overflow: hidden;
+}
+.pt-header {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid #141e2e; background: #0a0f1a;
+}
+.pt-title { font-size: 13px; font-weight: 700; color: #c0cce0; }
+.pt-stats-bar { display: flex; gap: 14px; font-size: 11px; color: #4a6080; flex: 1; flex-wrap: wrap; }
+.pt-stats-bar b { color: #8090b0; }
+.pt-btn {
+  font-size: 10px; padding: 3px 10px; border-radius: 5px; cursor: pointer;
+  background: #0d1117; border: 1px solid #1e2530; color: #3a4a60;
+  margin-left: auto; transition: all .12s;
+}
+.pt-btn:hover { border-color: #445570; color: #8090b0; }
+.pt-btn.pt-btn-danger:hover { border-color: #882020; color: #ee5555; }
+.pt-section {
+  padding: 8px 14px 4px; font-size: 9px; font-weight: 700;
+  letter-spacing: 0.6px; text-transform: uppercase; color: #2a3a50; border-bottom: 1px solid #0f1820;
+}
+.pt-table { width: 100%; border-collapse: collapse; }
+.pt-table th {
+  font-size: 9px; color: #2a3a50; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 5px 12px; text-align: left; font-weight: 600; border-bottom: 1px solid #0f1820;
+}
+.pt-table td { padding: 6px 12px; font-size: 11px; border-bottom: 1px solid #0d1218; }
+.pt-table tr:last-child td { border-bottom: none; }
+.pt-table tr:hover td { background: rgba(80,120,200,0.04); }
+.pt-long  { color: #00c878; font-weight: 800; }
+.pt-short { color: #ee5555; font-weight: 800; }
+.pt-sym   { font-weight: 700; color: #9aaabf; }
+.pt-reason-tp    { color: #00c878; }
+.pt-reason-sl    { color: #ee5555; }
+.pt-reason-score { color: #e09030; }
+.pt-reason-time  { color: #4a6080; }
+.pt-empty { padding: 14px 12px; font-size: 11px; color: #1e2e40; }
+.pt-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 700;
+}
+.pt-badge-open { background: rgba(0,150,80,0.15); color: #00a060; border: 1px solid rgba(0,150,80,0.3); }
+.pt-pnl-pos { color: #00c878; font-weight: 700; }
+.pt-pnl-neg { color: #ee5555; font-weight: 700; }
+
 /* Score filter buttons */
 .score-flt-btn {
   background: #0d1117; border: 1px solid #1e2530; color: #4a5a70;
@@ -904,6 +950,39 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   <div id="lab-confluence">
     <div class="lab-conf-title">🎯 Alta confluencia — símbolo aparece en ≥2 estrategias</div>
     <div id="lab-conf-list"><span class="lr-empty">Calculando...</span></div>
+  </div>
+
+  <div id="lab-paper">
+    <div class="pt-header">
+      <span class="pt-title">📊 Paper Trading Bot</span>
+      <div class="pt-stats-bar" id="pt-stats-bar">
+        <span>Abiertos: <b id="pt-stat-open">0/5</b></span>
+        <span>Trades: <b id="pt-stat-total">0</b></span>
+        <span>Win rate: <b id="pt-stat-wr">—</b></span>
+        <span>PnL total: <b id="pt-stat-pnl">$0.00</b></span>
+        <span>Mejor: <b id="pt-stat-best">—</b></span>
+        <span>Peor: <b id="pt-stat-worst">—</b></span>
+      </div>
+      <button class="pt-btn pt-btn-danger" onclick="clearPaperTrades()">Limpiar</button>
+    </div>
+
+    <div class="pt-section">● Posiciones abiertas</div>
+    <table class="pt-table">
+      <thead><tr>
+        <th>Símbolo</th><th>Dir</th><th>Entrada</th><th>Actual</th>
+        <th>PnL %</th><th>PnL $</th><th>Score actual</th><th>Conf</th><th>Tiempo</th>
+      </tr></thead>
+      <tbody id="pt-open-body"><tr><td colspan="9" class="pt-empty">Esperando señales...</td></tr></tbody>
+    </table>
+
+    <div class="pt-section" style="margin-top:4px">◎ Historial de trades</div>
+    <table class="pt-table">
+      <thead><tr>
+        <th>Símbolo</th><th>Dir</th><th>Entrada</th><th>Salida</th>
+        <th>PnL %</th><th>PnL $</th><th>Razón</th><th>Duración</th>
+      </tr></thead>
+      <tbody id="pt-closed-body"><tr><td colspan="8" class="pt-empty">Sin trades cerrados aún</td></tr></tbody>
+    </table>
   </div>
 </div>
 
@@ -2365,6 +2444,197 @@ async function load() {
 
 function forceRefresh() { countdownVal = 0; load(); }
 
+// ── Paper Trading Bot ──────────────────────────────────────────────────────
+
+const PT = { tp: 3, sl: 2, maxPos: 5, minConf: 3, minScore: 6, minPctScore: 7, timeout: 4 * 3600_000 };
+
+let paperTrades = JSON.parse(localStorage.getItem('scalp_pt') || '[]');
+
+function savePT() { localStorage.setItem('scalp_pt', JSON.stringify(paperTrades)); }
+function ptOpen()   { return paperTrades.filter(t => t.status === 'open'); }
+function ptClosed() { return paperTrades.filter(t => t.status === 'closed'); }
+
+function fmtDur(ms) {
+  const h = Math.floor(ms / 3600_000), m = Math.floor((ms % 3600_000) / 60_000);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function ptPnl(pos, currentPrice) {
+  const dir = pos.direction === 'L' ? 1 : -1;
+  return dir * (currentPrice - pos.entryPrice) / pos.entryPrice * 100;
+}
+
+function closePT(trade, reason, currentPrice) {
+  trade.exitPrice  = currentPrice;
+  trade.exitTime   = Date.now();
+  trade.exitReason = reason;
+  trade.pnlPct     = ptPnl(trade, currentPrice);
+  trade.pnlUSD     = trade.pnlPct / 100 * 100;
+  trade.status     = 'closed';
+  savePT();
+  if (soundEnabled) beep(reason === 'TP' ? 880 : 440, 'sine', 120);
+  showToast(
+    `${trade.symbol} ${trade.direction} cerrado · ${trade.pnlPct >= 0 ? '+' : ''}${trade.pnlPct.toFixed(2)}% (${reason})`,
+    trade.pnlPct >= 0 ? 'long' : 'short'
+  );
+}
+
+function checkPTExits() {
+  const now = Date.now();
+  for (const pos of ptOpen()) {
+    const row = allRows.find(r => r.symbol === pos.symbol);
+    if (!row) continue;
+    const curr   = row.price;
+    const pnlPct = ptPnl(pos, curr);
+    if (pnlPct >= PT.tp)                     { closePT(pos, 'TP',    curr); continue; }
+    if (pnlPct <= -PT.sl)                    { closePT(pos, 'SL',    curr); continue; }
+    if (now - pos.entryTime > PT.timeout)    { closePT(pos, 'TIME',  curr); continue; }
+    const sc = scoreSymbol(row);
+    const cs = pos.direction === 'L' ? sc.longScore : sc.shortScore;
+    if (cs < 3)                              { closePT(pos, 'SCORE', curr); }
+  }
+}
+
+function checkPTEntries(scored) {
+  const open = ptOpen();
+  if (open.length >= PT.maxPos) return;
+
+  // Construir mapa de confluencia igual que renderLab
+  const confMap = new Map();
+  const strats = ['cur','pct','reg','z'];
+  for (const key of strats) {
+    for (const side of ['l','s']) {
+      const top = [...scored].filter(r => r[key] && r[key][side] >= 2)
+        .sort((a,b) => b[key][side] - a[key][side]).slice(0, 6);
+      for (const r of top) {
+        const k = r.symbol + side;
+        confMap.set(k, (confMap.get(k) || 0) + 1);
+      }
+    }
+  }
+
+  const candidates = [...confMap.entries()]
+    .filter(([, cnt]) => cnt >= PT.minConf)
+    .sort((a, b) => b[1] - a[1]);
+
+  for (const [k, conf] of candidates) {
+    if (ptOpen().length >= PT.maxPos) break;
+    const sym = k.slice(0, -1), side = k.slice(-1);
+    const dir = side === 'l' ? 'L' : 'S';
+    if (ptOpen().some(p => p.symbol === sym && p.direction === dir)) continue;
+
+    const sc = scored.find(r => r.symbol === sym);
+    if (!sc) continue;
+    const curScore = side === 'l' ? sc.cur.l : sc.cur.s;
+    const pctScore = side === 'l' ? sc.pct.l : sc.pct.s;
+    if (curScore < PT.minScore || pctScore < PT.minPctScore) continue;
+
+    const row = allRows.find(r => r.symbol === sym);
+    if (!row?.price) continue;
+
+    const trade = {
+      id: Date.now() + Math.random(),
+      symbol: sym, direction: dir,
+      entryPrice: row.price, entryTime: Date.now(),
+      entryScore: { cur: curScore, pct: pctScore, conf },
+      status: 'open',
+    };
+    paperTrades.push(trade);
+    savePT();
+    showToast(`${sym} ${dir} abierto · Conf ${conf}/4 Score ${curScore}`, dir === 'L' ? 'long' : 'short');
+    if (soundEnabled) beep(dir === 'L' ? 660 : 440, 'square', 80);
+  }
+}
+
+function clearPaperTrades() {
+  if (!confirm('¿Borrar todo el historial de paper trading?')) return;
+  paperTrades = [];
+  savePT();
+  renderPaperTrading([]);
+}
+
+function renderPaperTrading(scored) {
+  const now    = Date.now();
+  const open   = ptOpen();
+  const closed = ptClosed();
+
+  // Stats bar
+  const winners  = closed.filter(t => t.pnlPct > 0);
+  const winRate  = closed.length ? (winners.length / closed.length * 100).toFixed(0) + '%' : '—';
+  const totalPnl = closed.reduce((a,t) => a + (t.pnlUSD ?? 0), 0);
+  const pnls     = closed.map(t => t.pnlPct ?? 0);
+  const best     = pnls.length ? Math.max(...pnls) : null;
+  const worst    = pnls.length ? Math.min(...pnls) : null;
+
+  const set = (id, html, color) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = html;
+    if (color) el.style.color = color;
+  };
+  set('pt-stat-open',  `${open.length}/${PT.maxPos}`);
+  set('pt-stat-total', closed.length);
+  set('pt-stat-wr',    winRate, closed.length ? (parseFloat(winRate) >= 50 ? '#00c878' : '#ee5555') : '');
+  set('pt-stat-pnl',   `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? '#00c878' : '#ee5555');
+  set('pt-stat-best',  best != null ? `+${best.toFixed(2)}%` : '—', '#00c878');
+  set('pt-stat-worst', worst != null ? `${worst.toFixed(2)}%` : '—', '#ee5555');
+
+  // Open positions
+  const openBody = document.getElementById('pt-open-body');
+  if (openBody) {
+    if (!open.length) {
+      openBody.innerHTML = `<tr><td colspan="9" class="pt-empty">Sin posiciones abiertas · esperando señales (conf ≥${PT.minConf}/4, score ≥${PT.minScore})</td></tr>`;
+    } else {
+      openBody.innerHTML = open.map(pos => {
+        const row    = allRows.find(r => r.symbol === pos.symbol);
+        const curr   = row?.price ?? pos.entryPrice;
+        const pnlPct = ptPnl(pos, curr);
+        const pnlUSD = pnlPct / 100 * 100;
+        const pnlC   = pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
+        const sc     = row ? scoreSymbol(row) : null;
+        const cs     = sc ? (pos.direction === 'L' ? sc.longScore : sc.shortScore) : '—';
+        const csC    = cs >= 6 ? '#00c878' : cs >= 3 ? '#e09030' : '#ee5555';
+        return `<tr>
+          <td class="pt-sym">${pos.symbol}</td>
+          <td class="pt-${pos.direction === 'L' ? 'long' : 'short'}">${pos.direction}</td>
+          <td style="color:#4a6080">$${fmtPrice(pos.entryPrice)}</td>
+          <td style="color:#8090b0">$${fmtPrice(curr)}</td>
+          <td class="${pnlC}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</td>
+          <td class="${pnlC}">${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(2)}</td>
+          <td style="color:${csC};font-weight:700">${cs}</td>
+          <td style="color:#4a6080">${pos.entryScore?.conf ?? '—'}/4</td>
+          <td style="color:#3a4a60">${fmtDur(now - pos.entryTime)}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  // Closed trades (last 20, newest first)
+  const closedBody = document.getElementById('pt-closed-body');
+  if (closedBody) {
+    const recent = [...closed].reverse().slice(0, 20);
+    if (!recent.length) {
+      closedBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin trades cerrados aún</td></tr>`;
+    } else {
+      const reasonMap = { TP:'🎯 TP', SL:'🛑 SL', SCORE:'📉 Score', TIME:'⏱ Tiempo' };
+      const reasonClass = { TP:'pt-reason-tp', SL:'pt-reason-sl', SCORE:'pt-reason-score', TIME:'pt-reason-time' };
+      closedBody.innerHTML = recent.map(t => {
+        const pnlC = t.pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
+        return `<tr>
+          <td class="pt-sym">${t.symbol}</td>
+          <td class="pt-${t.direction === 'L' ? 'long' : 'short'}">${t.direction}</td>
+          <td style="color:#4a6080">$${fmtPrice(t.entryPrice)}</td>
+          <td style="color:#4a6080">$${fmtPrice(t.exitPrice)}</td>
+          <td class="${pnlC}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct?.toFixed(2)}%</td>
+          <td class="${pnlC}">${t.pnlUSD >= 0 ? '+' : ''}$${t.pnlUSD?.toFixed(2)}</td>
+          <td class="${reasonClass[t.exitReason] ?? ''}">${reasonMap[t.exitReason] ?? t.exitReason}</td>
+          <td style="color:#3a4a60">${fmtDur(t.exitTime - t.entryTime)}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+}
+
 // ── Laboratorio de estrategias ──────────────────────────────────────────────
 
 function buildPercentileFns(rows) {
@@ -2555,6 +2825,11 @@ function renderLab() {
       </div>`;
     });
   if (confEl) confEl.innerHTML = confItems.join('') || '<span class="lr-empty">Sin confluencia aún</span>';
+
+  // Paper trading: revisar salidas y entradas con los datos actuales
+  checkPTExits();
+  checkPTEntries(scored);
+  renderPaperTrading(scored);
 }
 
 function toggleFav(sym) {
