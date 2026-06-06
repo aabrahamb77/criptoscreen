@@ -952,9 +952,41 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
     <div id="lab-conf-list"><span class="lr-empty">Calculando...</span></div>
   </div>
 
+  <div id="lab-paper2">
+    <div class="pt-header">
+      <span class="pt-title">📊 Bot 2 — Régimen</span>
+      <span id="pt2-regime-tag" style="font-size:9px;color:#3a5070;padding:2px 8px;border:1px solid #1a2535;border-radius:4px">—</span>
+      <div class="pt-stats-bar">
+        <span>Abiertos: <b id="pt2-stat-open">0/5</b></span>
+        <span>Trades: <b id="pt2-stat-total">0</b></span>
+        <span>Win rate: <b id="pt2-stat-wr">—</b></span>
+        <span>PnL total: <b id="pt2-stat-pnl">$0.00</b></span>
+        <span>Mejor: <b id="pt2-stat-best">—</b></span>
+        <span>Peor: <b id="pt2-stat-worst">—</b></span>
+      </div>
+      <button class="pt-btn pt-btn-danger" onclick="clearPaperTrades2()">Limpiar</button>
+    </div>
+    <div class="pt-section">● Posiciones abiertas</div>
+    <table class="pt-table">
+      <thead><tr>
+        <th>Símbolo</th><th>Dir</th><th>Entrada</th><th>Actual</th>
+        <th>PnL %</th><th>PnL $</th><th>Score actual</th><th>Conf</th><th>Tiempo</th>
+      </tr></thead>
+      <tbody id="pt2-open-body"><tr><td colspan="9" class="pt-empty">Esperando régimen claro...</td></tr></tbody>
+    </table>
+    <div class="pt-section" style="margin-top:4px">◎ Historial de trades</div>
+    <table class="pt-table">
+      <thead><tr>
+        <th>Símbolo</th><th>Dir</th><th>Entrada</th><th>Salida</th>
+        <th>PnL %</th><th>PnL $</th><th>Razón</th><th>Duración</th>
+      </tr></thead>
+      <tbody id="pt2-closed-body"><tr><td colspan="8" class="pt-empty">Sin trades cerrados aún</td></tr></tbody>
+    </table>
+  </div>
+
   <div id="lab-paper">
     <div class="pt-header">
-      <span class="pt-title">📊 Paper Trading Bot</span>
+      <span class="pt-title">📊 Bot 1 — Confluencia</span>
       <div class="pt-stats-bar" id="pt-stats-bar">
         <span>Abiertos: <b id="pt-stat-open">0/5</b></span>
         <span>Trades: <b id="pt-stat-total">0</b></span>
@@ -2553,6 +2585,190 @@ function clearPaperTrades() {
   renderPaperTrading([]);
 }
 
+// ── Paper Trading Bot 2 — Alineado con Régimen ─────────────────────────────
+
+const PT2 = { tp: 3, sl: 2, maxPos: 5, minConf: 3, minScore: 5, timeout: 4 * 3600_000 };
+
+let paperTrades2 = JSON.parse(localStorage.getItem('scalp_pt2') || '[]');
+
+function savePT2() { localStorage.setItem('scalp_pt2', JSON.stringify(paperTrades2)); }
+function pt2Open()   { return paperTrades2.filter(t => t.status === 'open'); }
+function pt2Closed() { return paperTrades2.filter(t => t.status === 'closed'); }
+
+function closePT2(trade, reason, currentPrice) {
+  trade.exitPrice  = currentPrice;
+  trade.exitTime   = Date.now();
+  trade.exitReason = reason;
+  trade.pnlPct     = ptPnl(trade, currentPrice);
+  trade.pnlUSD     = trade.pnlPct / 100 * 100;
+  trade.status     = 'closed';
+  savePT2();
+}
+
+function checkPT2Exits() {
+  const now = Date.now();
+  for (const pos of pt2Open()) {
+    const row = allRows.find(r => r.symbol === pos.symbol);
+    if (!row) continue;
+    const curr   = row.price;
+    const pnlPct = ptPnl(pos, curr);
+    if (pnlPct >= PT2.tp)                  { closePT2(pos, 'TP',    curr); continue; }
+    if (pnlPct <= -PT2.sl)                 { closePT2(pos, 'SL',    curr); continue; }
+    if (now - pos.entryTime > PT2.timeout) { closePT2(pos, 'TIME',  curr); continue; }
+    const sc = scoreSymbol(row);
+    const cs = pos.direction === 'L' ? sc.longScore : sc.shortScore;
+    if (cs < 3)                            { closePT2(pos, 'SCORE', curr); }
+  }
+}
+
+function checkPT2Entries(scored, regime) {
+  // Solo entra cuando el régimen tiene dirección clara
+  const allowedSide = regime.regime === 'ALCISTA' ? 'l'
+                    : regime.regime === 'BAJISTA' ? 's'
+                    : null;
+
+  // Actualizar tag de régimen
+  const tag = document.getElementById('pt2-regime-tag');
+  if (tag) {
+    if (!allowedSide) {
+      tag.textContent = `${regime.regime} — sin entradas`;
+      tag.style.color = regime.color;
+      tag.style.borderColor = regime.color + '60';
+    } else {
+      const dir = allowedSide === 'l' ? 'solo LONGS ▲' : 'solo SHORTS ▼';
+      tag.textContent = `${regime.regime} — ${dir}`;
+      tag.style.color = regime.color;
+      tag.style.borderColor = regime.color + '60';
+    }
+  }
+
+  if (!allowedSide) return; // LATERAL o VOLÁTIL: no abrir posiciones
+
+  const open = pt2Open();
+  if (open.length >= PT2.maxPos) return;
+
+  const dir = allowedSide === 'l' ? 'L' : 'S';
+
+  // Contar en cuántas estrategias aparece cada símbolo para la dirección permitida
+  const confMap = new Map();
+  for (const key of ['cur','pct','reg','z']) {
+    const top = [...scored]
+      .filter(r => r[key] && r[key][allowedSide] >= 2)
+      .sort((a,b) => b[key][allowedSide] - a[key][allowedSide])
+      .slice(0, 6);
+    for (const r of top) confMap.set(r.symbol, (confMap.get(r.symbol) || 0) + 1);
+  }
+
+  const candidates = [...confMap.entries()]
+    .filter(([, cnt]) => cnt >= PT2.minConf)
+    .sort((a, b) => b[1] - a[1]);
+
+  for (const [sym, conf] of candidates) {
+    if (pt2Open().length >= PT2.maxPos) break;
+    if (pt2Open().some(p => p.symbol === sym && p.direction === dir)) continue;
+
+    const sc = scored.find(r => r.symbol === sym);
+    if (!sc) continue;
+    const curScore = allowedSide === 'l' ? sc.cur.l : sc.cur.s;
+    if (curScore < PT2.minScore) continue;
+
+    const row = allRows.find(r => r.symbol === sym);
+    if (!row?.price) continue;
+
+    paperTrades2.push({
+      id: Date.now() + Math.random(),
+      symbol: sym, direction: dir,
+      entryPrice: row.price, entryTime: Date.now(),
+      entryScore: { cur: curScore, conf, regime: regime.regime },
+      status: 'open',
+    });
+    savePT2();
+    showToast(`Bot2 ${sym} ${dir} · ${regime.regime} · Conf ${conf}/4`, dir === 'L' ? 'long' : 'short');
+  }
+}
+
+function clearPaperTrades2() {
+  if (!confirm('¿Borrar historial del Bot 2?')) return;
+  paperTrades2 = [];
+  savePT2();
+  renderPaperTrading2();
+}
+
+function renderPaperTrading2() {
+  const now    = Date.now();
+  const open   = pt2Open();
+  const closed = pt2Closed();
+
+  const winners  = closed.filter(t => t.pnlPct > 0);
+  const winRate  = closed.length ? (winners.length / closed.length * 100).toFixed(0) + '%' : '—';
+  const totalPnl = closed.reduce((a,t) => a + (t.pnlUSD ?? 0), 0);
+  const pnls     = closed.map(t => t.pnlPct ?? 0);
+  const best     = pnls.length ? Math.max(...pnls) : null;
+  const worst    = pnls.length ? Math.min(...pnls) : null;
+
+  const set = (id, v, c) => { const el = document.getElementById(id); if (!el) return; el.innerHTML = v; if (c) el.style.color = c; };
+  set('pt2-stat-open',  `${open.length}/${PT2.maxPos}`);
+  set('pt2-stat-total', closed.length);
+  set('pt2-stat-wr',    winRate, closed.length ? (parseFloat(winRate) >= 50 ? '#00c878' : '#ee5555') : '');
+  set('pt2-stat-pnl',   `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? '#00c878' : '#ee5555');
+  set('pt2-stat-best',  best != null ? `+${best.toFixed(2)}%` : '—', '#00c878');
+  set('pt2-stat-worst', worst != null ? `${worst.toFixed(2)}%` : '—', '#ee5555');
+
+  const reasonMap   = { TP:'🎯 TP', SL:'🛑 SL', SCORE:'📉 Score', TIME:'⏱ Tiempo' };
+  const reasonClass = { TP:'pt-reason-tp', SL:'pt-reason-sl', SCORE:'pt-reason-score', TIME:'pt-reason-time' };
+
+  const openBody = document.getElementById('pt2-open-body');
+  if (openBody) {
+    if (!open.length) {
+      openBody.innerHTML = `<tr><td colspan="9" class="pt-empty">Sin posiciones · solo entra con régimen ALCISTA o BAJISTA</td></tr>`;
+    } else {
+      openBody.innerHTML = open.map(pos => {
+        const row    = allRows.find(r => r.symbol === pos.symbol);
+        const curr   = row?.price ?? pos.entryPrice;
+        const pnlPct = ptPnl(pos, curr);
+        const pnlUSD = pnlPct / 100 * 100;
+        const pnlC   = pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
+        const sc     = row ? scoreSymbol(row) : null;
+        const cs     = sc ? (pos.direction === 'L' ? sc.longScore : sc.shortScore) : '—';
+        const csC    = cs >= 6 ? '#00c878' : cs >= 3 ? '#e09030' : '#ee5555';
+        return `<tr>
+          <td class="pt-sym">${pos.symbol}</td>
+          <td class="pt-${pos.direction === 'L' ? 'long' : 'short'}">${pos.direction}</td>
+          <td style="color:#4a6080">$${fmtPrice(pos.entryPrice)}</td>
+          <td style="color:#8090b0">$${fmtPrice(curr)}</td>
+          <td class="${pnlC}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</td>
+          <td class="${pnlC}">${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(2)}</td>
+          <td style="color:${csC};font-weight:700">${cs}</td>
+          <td style="color:#4a6080">${pos.entryScore?.conf ?? '—'}/4</td>
+          <td style="color:#3a4a60">${fmtDur(now - pos.entryTime)}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  const closedBody = document.getElementById('pt2-closed-body');
+  if (closedBody) {
+    const recent = [...closed].reverse().slice(0, 20);
+    if (!recent.length) {
+      closedBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin trades cerrados aún</td></tr>`;
+    } else {
+      closedBody.innerHTML = recent.map(t => {
+        const pnlC = t.pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
+        return `<tr>
+          <td class="pt-sym">${t.symbol}</td>
+          <td class="pt-${t.direction === 'L' ? 'long' : 'short'}">${t.direction}</td>
+          <td style="color:#4a6080">$${fmtPrice(t.entryPrice)}</td>
+          <td style="color:#4a6080">$${fmtPrice(t.exitPrice)}</td>
+          <td class="${pnlC}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct?.toFixed(2)}%</td>
+          <td class="${pnlC}">${t.pnlUSD >= 0 ? '+' : ''}$${t.pnlUSD?.toFixed(2)}</td>
+          <td class="${reasonClass[t.exitReason] ?? ''}">${reasonMap[t.exitReason] ?? t.exitReason}</td>
+          <td style="color:#3a4a60">${fmtDur(t.exitTime - t.entryTime)}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+}
+
 function renderPaperTrading(scored) {
   const now    = Date.now();
   const open   = ptOpen();
@@ -2826,10 +3042,15 @@ function renderLab() {
     });
   if (confEl) confEl.innerHTML = confItems.join('') || '<span class="lr-empty">Sin confluencia aún</span>';
 
-  // Paper trading: revisar salidas y entradas con los datos actuales
+  // Bot 1 — Confluencia libre
   checkPTExits();
   checkPTEntries(scored);
   renderPaperTrading(scored);
+
+  // Bot 2 — Solo dirección del régimen
+  checkPT2Exits();
+  checkPT2Entries(scored, regime);
+  renderPaperTrading2();
 }
 
 function toggleFav(sym) {
