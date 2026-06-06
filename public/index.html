@@ -236,8 +236,11 @@ header h1 {
   table { min-width: 360px; }
   th[data-col="oi15m"], th[data-col="oi4h"], th[data-col="oi24h"],
   th[data-col="vol12hPct"], th[data-col="vol24hPct"],
-  th[data-col="price5mPct"], th[data-col="price4hPct"], th[data-col="price24hPct"]
+  th[data-col="price5mPct"], th[data-col="price4hPct"], th[data-col="price24hPct"],
+  th[data-col="score"]
   { display: none; }
+  td:nth-child(17) { display: none; }
+  .quad-flt-btn { display: none; }
   /* ocultar por posicion (columnas sin data-col matching ocultas arriba) */
   td:nth-child(5), td:nth-child(7), td:nth-child(8),
   td:nth-child(10), td:nth-child(11), td:nth-child(13), td:nth-child(15), td:nth-child(16)
@@ -581,6 +584,24 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
 .toast.t-long  { border-left: 3px solid #00a060; color: #88ddbb; }
 .toast.t-short { border-left: 3px solid #a02020; color: #ee9090; }
 @keyframes tIn { from { opacity:0; transform:translateX(16px); } to { opacity:1; transform:translateX(0); } }
+
+/* Score column */
+.score-pill { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 5px; }
+
+/* Sound button */
+#sound-btn.snd-on { color: #f0b429; border-color: #806020; background: #1a1500; }
+
+/* Quadrant filter buttons */
+.quad-flt-btn {
+  background: #0c111a; border: 1px solid #181f2c; color: #3a4a60;
+  font-family: inherit; font-size: 10px; font-weight: 700;
+  padding: 3px 8px; border-radius: 5px; cursor: pointer; transition: all .15s;
+}
+.quad-flt-btn:hover { color: #7090c0; border-color: #2a3a50; }
+.quad-flt-btn[data-quad="LONG"].active   { color: #55ffbb; border-color: #00a060; background: #001a10; }
+.quad-flt-btn[data-quad="SHORT"].active  { color: #ff8888; border-color: #aa2020; background: #1a0000; }
+.quad-flt-btn[data-quad="SQUEEZE"].active{ color: #88ccff; border-color: #2080c0; background: #001020; }
+.quad-flt-btn[data-quad="LIQ"].active    { color: #cc8888; border-color: #882020; background: #100000; }
 </style>
 </head>
 <body>
@@ -598,6 +619,7 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
   </div>
   <span class="badge" id="sym-count">—</span>
   <button class="refresh-btn" id="refresh-btn" onclick="forceRefresh()">↻ Refresh</button>
+  <button class="refresh-btn" id="sound-btn" onclick="toggleSound()" title="Alertas sonoras OFF">🔕</button>
   <span class="countdown" id="countdown">10s</span>
   <span class="meta" id="meta">Cargando...</span>
 </header>
@@ -618,6 +640,11 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
     <option value="2">+2%</option>
   </select>
   <span id="filter-count"></span>
+  <span style="font-size:10px;color:#283040;margin-left:4px">Cuadrante:</span>
+  <button class="quad-flt-btn" data-quad="LONG"   onclick="toggleQuadFilter('LONG')">▲L</button>
+  <button class="quad-flt-btn" data-quad="SHORT"  onclick="toggleQuadFilter('SHORT')">▼S</button>
+  <button class="quad-flt-btn" data-quad="SQUEEZE" onclick="toggleQuadFilter('SQUEEZE')">↖Sq</button>
+  <button class="quad-flt-btn" data-quad="LIQ"    onclick="toggleQuadFilter('LIQ')">↙Liq</button>
 </div>
 <div id="table-wrap">
 <table id="tbl">
@@ -639,10 +666,11 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
   <th style="min-width:82px" data-col="price1hPct">Precio (1h%)</th>
   <th style="min-width:82px" data-col="price4hPct">Precio (4h%)</th>
   <th style="min-width:82px" data-col="price24hPct">Precio (24h%)</th>
+  <th style="min-width:70px" data-col="score">Score</th>
 </tr>
 </thead>
 <tbody id="tbody">
-  <tr class="state-row"><td colspan="16">Cargando datos...</td></tr>
+  <tr class="state-row"><td colspan="17">Cargando datos...</td></tr>
 </tbody>
 </table>
 </div><!-- table-wrap -->
@@ -658,6 +686,11 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
         <button class="chart-tf-btn active" data-tf="1h"  onclick="setChartTf('1h')">1h</button>
         <button class="chart-tf-btn" data-tf="4h"  onclick="setChartTf('4h')">4h</button>
         <button class="chart-tf-btn" data-tf="1d"  onclick="setChartTf('1d')">1d</button>
+      </div>
+      <div class="chart-tf-nav" title="Tamaño de burbuja">
+        <button class="chart-tf-btn bubble-size-btn active" data-metric="vol"     onclick="setBubbleSizeMetric('vol')">Vol</button>
+        <button class="chart-tf-btn bubble-size-btn"        data-metric="oi"      onclick="setBubbleSizeMetric('oi')">OI$</button>
+        <button class="chart-tf-btn bubble-size-btn"        data-metric="funding" onclick="setBubbleSizeMetric('funding')">Fund</button>
       </div>
       <div id="market-bias"></div>
       <div class="chart-legend">
@@ -870,6 +903,9 @@ let activeQuadrant   = null;
 let hoveredSymbol    = null;
 let hoverAnimFrame   = null;
 let chartTf          = '1h';
+let soundEnabled     = false;
+let prevAligned      = new Set();
+let bubbleSizeMetric = 'vol'; // 'vol' | 'oi' | 'funding'
 let prevQuadrants    = new Map();
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;
@@ -1005,7 +1041,63 @@ function buildTooltip(r) {
 }
 
 // ── Quadrant change detection ──────────────────────────────────────────────
+// ── Alertas sonoras ────────────────────────────────────────────────────────
+function beep(freq = 880, type = 'sine', dur = 130) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = type; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.10, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur/1000);
+    osc.start(); osc.stop(ctx.currentTime + dur/1000);
+  } catch(_) {}
+}
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  const btn = document.getElementById('sound-btn');
+  btn.textContent = soundEnabled ? '🔔' : '🔕';
+  btn.title = soundEnabled ? 'Alertas sonoras ON' : 'Alertas sonoras OFF';
+  btn.classList.toggle('snd-on', soundEnabled);
+  if (soundEnabled) beep(880, 'sine', 80);
+}
+
+// ── Filtro cuadrante ───────────────────────────────────────────────────────
+function toggleQuadFilter(quad) {
+  activeQuadrant = activeQuadrant === quad ? null : quad;
+  document.querySelectorAll('.quad-flt-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.quad === activeQuadrant)
+  );
+  render();
+  if (activeTab === 'strategy') drawBubbleChart(null);
+}
+
+// ── Score cell ─────────────────────────────────────────────────────────────
+function scoreCell(row) {
+  const sc = scoreSymbol(row);
+  const isLong = sc.longScore >= sc.shortScore;
+  const score  = Math.max(sc.longScore, sc.shortScore);
+  if (score < 2) return `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span style="color:#283040;font-size:10px">—</span></div>`;
+  const t = Math.min(score / 10, 1);
+  const bg = isLong
+    ? `rgba(0,${Math.round(70+t*130)},${Math.round(40+t*80)},0.85)`
+    : `rgba(${Math.round(80+t*140)},${Math.round(t*20)},0,0.85)`;
+  const tc = isLong ? '#aaffdd' : '#ffaaaa';
+  return `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="score-pill" style="background:${bg};color:${tc}">${isLong?'L':'S'}${score}</span></div>`;
+}
+
+// ── Tamaño de burbuja configurable ─────────────────────────────────────────
+function setBubbleSizeMetric(m) {
+  bubbleSizeMetric = m;
+  document.querySelectorAll('.bubble-size-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.metric === m)
+  );
+  drawBubbleChart(null);
+}
+
 function checkQuadrantChanges(rows) {
+  const nv = v => v ?? 0;
   for (const r of rows) {
     if (r.oi1h == null || r.price1hPct == null) continue;
     const q = r.oi1h >= 0 && r.price1hPct >= 0 ? 'LONG'
@@ -1019,6 +1111,20 @@ function checkQuadrantChanges(rows) {
       quadrantHistory.set(r.symbol, hist);
     }
     prevQuadrants.set(r.symbol, q);
+
+    // Detectar alineación total → alerta sonora
+    const oiPos = r.oi1h >= 0, pricePos = r.price1hPct >= 0;
+    const longAl  = oiPos && pricePos
+      && nv(r.oi5m) > 0 && nv(r.oi1h) > 0.2 && nv(r.oi4h) > 0
+      && nv(r.price5mPct) > 0 && nv(r.price4hPct) > 0 && nv(r.vol1hPct) > 5;
+    const shortAl = oiPos && !pricePos
+      && nv(r.oi5m) > 0 && nv(r.oi1h) > 0.2 && nv(r.oi4h) > 0
+      && nv(r.price5mPct) < 0 && nv(r.price4hPct) < 0 && nv(r.vol1hPct) > 5;
+    const isAl = longAl || shortAl;
+    if (isAl && !prevAligned.has(r.symbol) && soundEnabled && prev) {
+      beep(longAl ? 880 : 440, 'sine', 130);
+    }
+    if (isAl) prevAligned.add(r.symbol); else prevAligned.delete(r.symbol);
   }
 }
 
@@ -1036,6 +1142,11 @@ function getFilteredRows() {
     if (search && !r.symbol.includes(search)) return false;
     if (filterFavOnly && !favorites.has(r.symbol)) return false;
     if (minOI > 0 && (r.oi5m ?? -Infinity) < minOI) return false;
+    if (activeQuadrant) {
+      const oiPos = (r.oi1h ?? 0) >= 0, pricePos = (r.price1hPct ?? 0) >= 0;
+      const quad = oiPos && pricePos ? 'LONG' : oiPos ? 'SHORT' : pricePos ? 'SQUEEZE' : 'LIQ';
+      if (quad !== activeQuadrant) return false;
+    }
     return true;
   });
 }
@@ -1056,14 +1167,30 @@ function setLiqDot(state) {
 }
 
 function updateLiqBar() {
-  const cut = Date.now() - 5*60_000;
-  const rec = liqEvents.filter(e => e.ts > cut);
+  const now = Date.now();
+  const cut5m  = now - 5*60_000;
+  const cut30m = now - 30*60_000;
+  const rec = liqEvents.filter(e => e.ts > cut5m);
   liqLong5m  = rec.filter(e =>  e.isLong).reduce((a,b) => a+b.usdVal, 0);
   liqShort5m = rec.filter(e => !e.isLong).reduce((a,b) => a+b.usdVal, 0);
   document.getElementById('liq-long-total').textContent  = 'L ' + fmtUSD(liqLong5m);
   document.getElementById('liq-short-total').textContent = 'S ' + fmtUSD(liqShort5m);
-  const feed = liqEvents.slice(0, 15).map(e =>
-    `<span class="liq-ev ${e.isLong?'ll':'ls'}">${e.symbol} ${e.isLong?'↓L':'↑S'} ${fmtUSD(e.usdVal)}</span>`
+
+  // Agrupar por símbolo (últimos 30 min) y mostrar top 12
+  const symMap = new Map();
+  for (const e of liqEvents) {
+    if (e.ts < cut30m) continue;
+    if (!symMap.has(e.symbol)) symMap.set(e.symbol, { l: 0, s: 0 });
+    const t = symMap.get(e.symbol);
+    if (e.isLong) t.l += e.usdVal; else t.s += e.usdVal;
+  }
+  const top = [...symMap.entries()]
+    .map(([sym, t]) => ({ sym, total: t.l + t.s, isLong: t.l >= t.s }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 12);
+
+  const feed = top.map(x =>
+    `<span class="liq-ev ${x.isLong?'ll':'ls'}">${x.sym} ${x.isLong?'↓L':'↑S'} ${fmtUSD(x.total)}</span>`
   ).join('');
   document.getElementById('liq-feed').innerHTML = feed || '<span style="color:rgba(255,255,255,0.3)">Sin liquidaciones recientes</span>';
 }
@@ -1171,7 +1298,7 @@ function render() {
 
   const tbody = document.getElementById('tbody');
   if (!sorted.length) {
-    tbody.innerHTML = `<tr class="state-row"><td colspan="16">Sin datos</td></tr>`;
+    tbody.innerHTML = `<tr class="state-row"><td colspan="17">Sin datos</td></tr>`;
     return;
   }
 
@@ -1198,6 +1325,7 @@ function render() {
       <td>${pctCell(row.price1hPct)}</td>
       <td>${pctCell(row.price4hPct)}</td>
       <td>${pctCell(row.price24hPct)}</td>
+      <td>${scoreCell(row)}</td>
     </tr>`;
   }).join('');
 }
@@ -1482,7 +1610,10 @@ function drawBubbleChart(scored) {
   for (const d of valid) {
     const bx = toX(d[tf.oiKey]);
     const by = toY(d[tf.priceKey]);
-    const r  = Math.min(24, Math.max(5, Math.sqrt(Math.abs(d.vol1hPct ?? 1)) * 1.9));
+    let r;
+    if      (bubbleSizeMetric === 'oi')      r = Math.min(28, Math.max(5, Math.sqrt((d.oiUSD ?? 0) / 1.5e7) * 4));
+    else if (bubbleSizeMetric === 'funding') r = Math.min(26, Math.max(5, Math.abs(d.fundingRate ?? 0) * 2800 + 6));
+    else                                     r = Math.min(24, Math.max(5, Math.sqrt(Math.abs(d.vol1hPct ?? 1)) * 1.9));
 
     const oiPos = d[tf.oiKey] >= 0, pricePos = d[tf.priceKey] >= 0;
     const bQuad = oiPos && pricePos ? 'LONG' : oiPos ? 'SHORT' : pricePos ? 'SQUEEZE' : 'LIQ';
@@ -1548,6 +1679,20 @@ function drawBubbleChart(scored) {
     ctx.fillStyle = labelC;
     ctx.textAlign = 'center';
     ctx.fillText(label, lx, ly);
+
+    // Flecha de aceleración OI (oi5m acelerando vs oi15m normalizado)
+    const accel = (d.oi5m != null && d.oi15m != null) ? d.oi5m - d.oi15m / 3 : 0;
+    if (Math.abs(accel) > 0.08) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.95, Math.abs(accel) * 4);
+      ctx.fillStyle = accel > 0 ? '#55ee99' : '#ff6655';
+      ctx.font = `900 ${9/s}px Inter,system-ui`;
+      ctx.textAlign = 'center';
+      ctx.shadowColor = accel > 0 ? 'rgba(80,255,150,0.6)' : 'rgba(255,80,60,0.6)';
+      ctx.shadowBlur = 6/s;
+      ctx.fillText(accel > 0 ? '▲' : '▼', bx + r * 0.62, by - r * 0.62);
+      ctx.restore();
+    }
 
     // Anillo exterior para burbujas totalmente alineadas
     if (aligned) {
