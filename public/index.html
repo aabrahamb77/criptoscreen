@@ -276,45 +276,68 @@ table { width: 100%; border-collapse: collapse; min-width: 1280px; }
 
 thead { position: sticky; top: 0; z-index: 20; }
 
+/* Fila de grupos */
+.group-row th {
+  height: 16px; padding: 0 10px;
+  font-size: 9px; font-weight: 800; letter-spacing: 1px;
+  text-transform: uppercase; text-align: center;
+  background: #060810; border-bottom: none; cursor: default;
+  color: rgba(255,255,255,0.12);
+}
+.group-row th.g-oi    { color: rgba(0,190,110,0.55);  border-bottom: 1px solid rgba(0,190,110,0.18); }
+.group-row th.g-vol   { color: rgba(60,130,240,0.55); border-bottom: 1px solid rgba(60,130,240,0.18); }
+.group-row th.g-price { color: rgba(210,170,40,0.55); border-bottom: 1px solid rgba(210,170,40,0.18); }
+.group-row th.g-score { color: rgba(160,100,255,0.55); border-bottom: 1px solid rgba(160,100,255,0.18); }
+
 th {
-  background: #0a0d14;
-  border-bottom: 1px solid #131820;
+  background: #090c14;
+  border-bottom: 1px solid #141c28;
   padding: 0 10px;
-  height: 32px;
+  height: 30px;
   text-align: right;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  color: #384258;
+  color: #2e3c52;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
   letter-spacing: 0.3px;
   text-transform: uppercase;
+  transition: color .15s;
 }
-th:hover { color: #6878a0; }
-th.active { color: #88a8d8; }
+th:hover { color: #5870a0; }
+th.active { color: #7898d8; }
 th.left-align { text-align: left; }
-th .sort-arrow { font-size: 8px; margin-left: 3px; vertical-align: middle; color: #4488cc; }
+th .sort-arrow { font-size: 8px; margin-left: 3px; vertical-align: middle; color: #3a78cc; }
+
+/* Separadores visuales entre grupos */
+th[data-col="oi5m"],      td:nth-child(5)  { border-left: 1px solid rgba(0,190,110,0.12); }
+th[data-col="vol1hPct"],  td:nth-child(10) { border-left: 1px solid rgba(60,130,240,0.12); }
+th[data-col="price5mPct"],td:nth-child(13) { border-left: 1px solid rgba(210,170,40,0.10); }
+th[data-col="score"],     td:nth-child(17) { border-left: 1px solid rgba(160,100,255,0.10); }
 
 td {
   padding: 0;
-  border-bottom: 1px solid #0e1016;
+  border-bottom: 1px solid #0b0e14;
   text-align: right;
-  height: 36px;
+  height: 34px;
 }
 td.left-align { text-align: left; }
 
-tr { transition: filter .1s; }
-tr:hover td { filter: brightness(1.35); }
-tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
+/* Alternado de filas */
+tbody tr:nth-child(even) td { background: rgba(255,255,255,0.010); }
+
+tr { transition: background .08s; }
+tr:hover td { background: rgba(80,120,255,0.065) !important; }
+tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 
 /* ── Rank cell ── */
 .rank-cell {
   display: flex; align-items: center; justify-content: flex-end;
   height: 100%; padding: 0 8px; gap: 6px;
 }
-.rank-num { color: #283040; font-size: 11px; font-variant-numeric: tabular-nums; min-width: 20px; text-align: right; }
-.star { cursor: pointer; font-size: 13px; color: #1e2430; transition: color .15s, transform .12s; line-height: 1; }
+.rank-num { color: #3a4e66; font-size: 10px; font-variant-numeric: tabular-nums; min-width: 20px; text-align: right; }
+.star { cursor: pointer; font-size: 13px; color: #232d3c; transition: color .15s, transform .12s; line-height: 1; }
 .star:hover { color: #806010; transform: scale(1.2); }
 .star.on { color: #f0b429; filter: drop-shadow(0 0 4px rgba(240,180,40,0.5)); }
 
@@ -649,6 +672,14 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
 <div id="table-wrap">
 <table id="tbl">
 <thead id="thead">
+<tr class="group-row">
+  <th colspan="2"></th>
+  <th colspan="2"></th>
+  <th colspan="5" class="g-oi">OI %</th>
+  <th colspan="3" class="g-vol">Vol %</th>
+  <th colspan="4" class="g-price">Precio %</th>
+  <th colspan="1" class="g-score">Score</th>
+</tr>
 <tr>
   <th class="left-align" style="min-width:68px;padding-left:10px" data-col="rank">#</th>
   <th class="left-align" style="min-width:120px" data-col="symbol">Símbolo</th>
@@ -917,23 +948,23 @@ function pctStyle(v) {
   if (v == null) return null;
   const a = Math.abs(v);
   if (v >= 0) {
-    if (a >= 100) return { bg: '#00d48c', text: '#000', fw: '700' };
-    if (a >= 50)  return { bg: '#00b87a', text: '#000', fw: '600' };
-    if (a >= 20)  return { bg: '#009060', text: '#fff', fw: '600' };
-    if (a >= 10)  return { bg: '#007048', text: '#fff', fw: '500' };
-    if (a >= 5)   return { bg: '#004e32', text: '#aae8c8', fw: '500' };
-    if (a >= 2)   return { bg: '#003220', text: '#88c4a8', fw: '500' };
-    if (a >= 0.5) return { bg: '#001e12', text: '#5a9870', fw: '500' };
-    return { bg: '#0e1610', text: '#3a5e48', fw: '500' };
+    if (a >= 100) return { bg: '#00dd90', text: '#002010', fw: '800' };
+    if (a >= 50)  return { bg: '#00bb78', text: '#001810', fw: '700' };
+    if (a >= 20)  return { bg: '#009860', text: '#ccffee', fw: '600' };
+    if (a >= 10)  return { bg: '#007848', text: '#aaeedd', fw: '600' };
+    if (a >= 5)   return { bg: '#005638', text: '#88ddbb', fw: '500' };
+    if (a >= 2)   return { bg: '#003a26', text: '#66bb99', fw: '500' };
+    if (a >= 0.5) return { bg: '#002518', text: '#4a9e78', fw: '500' };
+    return { bg: 'transparent', text: '#2e5040', fw: '400' };
   } else {
-    if (a >= 100) return { bg: '#ff1744', text: '#fff', fw: '700' };
-    if (a >= 50)  return { bg: '#d32f2f', text: '#fff', fw: '600' };
-    if (a >= 20)  return { bg: '#a81a1a', text: '#fff', fw: '600' };
-    if (a >= 10)  return { bg: '#7a1010', text: '#ffb0b0', fw: '500' };
-    if (a >= 5)   return { bg: '#500808', text: '#e09090', fw: '500' };
-    if (a >= 2)   return { bg: '#320505', text: '#c07070', fw: '500' };
-    if (a >= 0.5) return { bg: '#1e0303', text: '#a05060', fw: '500' };
-    return { bg: '#140202', text: '#603040', fw: '500' };
+    if (a >= 100) return { bg: '#ff2244', text: '#fff', fw: '800' };
+    if (a >= 50)  return { bg: '#dd2233', text: '#fff', fw: '700' };
+    if (a >= 20)  return { bg: '#b01c1c', text: '#ffcccc', fw: '600' };
+    if (a >= 10)  return { bg: '#841212', text: '#ffbbbb', fw: '600' };
+    if (a >= 5)   return { bg: '#580a0a', text: '#ee9999', fw: '500' };
+    if (a >= 2)   return { bg: '#380606', text: '#cc7070', fw: '500' };
+    if (a >= 0.5) return { bg: '#240404', text: '#aa5858', fw: '500' };
+    return { bg: 'transparent', text: '#4a2828', fw: '400' };
   }
 }
 
