@@ -736,7 +736,8 @@ const pctCalc = (curr, prev) =>
   prev && prev !== 0 ? ((curr - prev) / Math.abs(prev)) * 100 : null;
 const sumArr = arr => arr.reduce((a, b) => a + b, 0);
 
-const oiSnaps = new Map();
+const oiSnaps  = new Map();
+const oiPrevUSD = new Map(); // para detectar caídas de OI → liquidaciones
 
 async function pollSnapshots() {
   try {
@@ -745,10 +746,35 @@ async function pollSnapshots() {
     for (const t of res.result.list) {
       if (!t.symbol.endsWith('USDT')) continue;
       const oiUSD = parseFloat(t.openInterestValue);
-      if (!oiSnaps.has(t.symbol)) oiSnaps.set(t.symbol, []);
-      const arr = oiSnaps.get(t.symbol);
+      const sym = t.symbol;
+
+      // Guardar snapshot para cálculos de OI%
+      if (!oiSnaps.has(sym)) oiSnaps.set(sym, []);
+      const arr = oiSnaps.get(sym);
       arr.unshift({ ts: now, oiUSD });
       if (arr.length > 1500) arr.length = 1500;
+
+      // Detectar caída de OI >= 0.4% → probable liquidación
+      if (oiPrevUSD.has(sym)) {
+        const prev = oiPrevUSD.get(sym);
+        const drop = prev - oiUSD;
+        const dropPct = prev > 0 ? drop / prev * 100 : 0;
+        if (dropPct >= 0.4 && drop > 1000) {
+          const price = parseFloat(t.lastPrice);
+          const pChg  = parseFloat(t.price24hPcnt ?? 0);
+          // Si precio bajó → longs liquidados; si subió → shorts liquidados
+          liqEvents.unshift({
+            symbol: sym.replace('USDT',''),
+            isLong: pChg < 0,
+            usdVal: drop,
+            ts: now,
+            fromOI: true
+          });
+          if (liqEvents.length > 300) liqEvents.length = 300;
+          updateLiqBar();
+        }
+      }
+      oiPrevUSD.set(sym, oiUSD);
     }
   } catch(e) { console.error('snapshot poll error:', e.message); }
 }
@@ -1043,13 +1069,17 @@ function updateLiqBar() {
 }
 
 function connectLiqWS(symbols) {
-  const allTopics = symbols.map(s => `liquidation.${s}USDT`);
+  // Máx 50 símbolos para no exceder límites de Bybit
+  const top50 = symbols.slice(0, 50);
+  const allTopics = top50.map(s => `liquidation.${s}USDT`);
   const chunks = [];
   for (let i = 0; i < allTopics.length; i += 10) chunks.push(allTopics.slice(i, i + 10));
 
   let ws, pingTimer;
+  let wsMsgCount = 0;
 
   function connect() {
+    wsMsgCount = 0;
     setLiqDot('connecting');
     clearInterval(pingTimer);
     try { ws && ws.close(); } catch(_) {}
@@ -1058,26 +1088,34 @@ function connectLiqWS(symbols) {
 
     ws.onopen = () => {
       setLiqDot('ok');
-      // Suscribir en chunks de 10 (límite Bybit)
       for (const chunk of chunks) {
         ws.send(JSON.stringify({ op: 'subscribe', args: chunk }));
       }
-      // Heartbeat cada 20s — Bybit cierra sin él
       pingTimer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ op: 'ping' }));
       }, 20_000);
-      // Actualizar barra para salir de "Conectando..."
       updateLiqBar();
     };
 
     ws.onmessage = e => {
       try {
+        wsMsgCount++;
+        const dot = document.getElementById('liq-ws-dot');
+        if (dot) dot.title = `WS activo · ${wsMsgCount} msgs recibidos`;
+
         const msg = JSON.parse(e.data);
         if (!msg.topic?.startsWith('liquidation') || !msg.data) return;
+
         const d = msg.data;
         const usdVal = parseFloat(d.size) * parseFloat(d.price);
-        if (usdVal < 200) return;
-        liqEvents.unshift({ symbol: d.symbol.replace('USDT',''), isLong: d.side==='Buy', usdVal, ts: Date.now() });
+        // Sin threshold — capturar todo
+        if (!usdVal || isNaN(usdVal)) return;
+        liqEvents.unshift({
+          symbol: (d.symbol || '').replace('USDT',''),
+          isLong: d.side === 'Buy',
+          usdVal,
+          ts: Date.now()
+        });
         if (liqEvents.length > 300) liqEvents.length = 300;
         updateLiqBar();
       } catch(_) {}
