@@ -359,28 +359,34 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   font-variant-numeric: tabular-nums; color: #9aaccc; font-size: 12px; font-weight: 500;
 }
 
-/* ── Pct cells — full height fill like CoinGlass ── */
+/* ── Pct cells — pill style ── */
 .pct-wrap {
-  display: flex;
-  align-items: stretch;
-  height: 100%;
-}
-.pct-val {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 0 9px;
-  font-size: 12px;
+  height: 100%;
+  padding: 0 6px;
+}
+.pct-val {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 7px;
+  height: 22px;
+  min-width: 58px;
+  border-radius: 4px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-  letter-spacing: -0.2px;
+  letter-spacing: -0.1px;
   white-space: nowrap;
 }
 .null-val {
   color: #1e2530;
-  font-size: 11px;
+  font-size: 10px;
   justify-content: center;
+  min-width: 24px;
+  background: transparent !important;
 }
 
 .state-row td { text-align: center; padding: 60px; color: #283040; font-size: 14px; }
@@ -609,7 +615,16 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 @keyframes tIn { from { opacity:0; transform:translateX(16px); } to { opacity:1; transform:translateX(0); } }
 
 /* Score column */
-.score-pill { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 5px; }
+.score-pill { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 5px; display: inline-flex; align-items: center; }
+
+/* Score filter buttons */
+.score-flt-btn {
+  background: #0d1117; border: 1px solid #1e2530; color: #4a5a70;
+  border-radius: 4px; padding: 2px 7px; font-size: 10px; cursor: pointer;
+  transition: all .12s;
+}
+.score-flt-btn:hover { border-color: #8855ff; color: #bb99ff; }
+.score-flt-btn.active { background: #1a0e33; border-color: #8855ff; color: #cc99ff; font-weight: 700; }
 
 /* Sound button */
 #sound-btn.snd-on { color: #f0b429; border-color: #806020; background: #1a1500; }
@@ -668,6 +683,11 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   <button class="quad-flt-btn" data-quad="SHORT"  onclick="toggleQuadFilter('SHORT')">▼S</button>
   <button class="quad-flt-btn" data-quad="SQUEEZE" onclick="toggleQuadFilter('SQUEEZE')">↖Sq</button>
   <button class="quad-flt-btn" data-quad="LIQ"    onclick="toggleQuadFilter('LIQ')">↙Liq</button>
+  <span style="font-size:10px;color:#283040;margin-left:4px">Score:</span>
+  <button class="score-flt-btn active" id="sf-0"  onclick="setScoreFilter(0)">Todos</button>
+  <button class="score-flt-btn"        id="sf-4"  onclick="setScoreFilter(4)">≥4</button>
+  <button class="score-flt-btn"        id="sf-6"  onclick="setScoreFilter(6)">≥6</button>
+  <button class="score-flt-btn"        id="sf-8"  onclick="setScoreFilter(8)">≥8</button>
 </div>
 <div id="table-wrap">
 <table id="tbl">
@@ -942,6 +962,11 @@ let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;
 let liqEvents        = []; // {symbol,isLong,usdVal,ts}
 let liqLong5m = 0, liqShort5m = 0;
+let prevScores       = new Map(); // symbol → {score, isLong} — ciclo anterior
+let scoreSnap        = new Map(); // snapshot de prevScores al inicio de render (para flechas)
+let scoreFirstSeen   = new Map(); // symbol → {level, ts}
+let scoreFilter      = 0;
+let liqSumCache      = new Map(); // symbol → {l,s} USD últimos 5m
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function pctStyle(v) {
@@ -1094,6 +1119,16 @@ function toggleSound() {
   if (soundEnabled) beep(880, 'sine', 80);
 }
 
+function showToast(msg, type = '') {
+  const wrap = document.getElementById('toast-wrap');
+  if (!wrap) return;
+  const el = document.createElement('div');
+  el.className = 'toast' + (type === 'long' ? ' t-long' : type === 'short' ? ' t-short' : '');
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 3500);
+}
+
 // ── Filtro cuadrante ───────────────────────────────────────────────────────
 function toggleQuadFilter(quad) {
   activeQuadrant = activeQuadrant === quad ? null : quad;
@@ -1110,12 +1145,32 @@ function scoreCell(row) {
   const isLong = sc.longScore >= sc.shortScore;
   const score  = Math.max(sc.longScore, sc.shortScore);
   if (score < 2) return `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span style="color:#283040;font-size:10px">—</span></div>`;
+
+  // Momentum arrow — lee del snapshot del ciclo anterior
+  const prev = scoreSnap.get(row.symbol);
+  let arrow = '';
+  if (prev !== undefined) {
+    if (score > prev.score)      arrow = `<span style="font-size:8px;opacity:0.85;margin-left:1px">↑</span>`;
+    else if (score < prev.score) arrow = `<span style="font-size:8px;opacity:0.5;margin-left:1px">↓</span>`;
+  }
+
+  // Score age
+  const seen = scoreFirstSeen.get(row.symbol);
+  let ageHtml = '';
+  if (seen) {
+    const ageMin = Math.floor((Date.now() - seen.ts) / 60_000);
+    if (ageMin < 120) ageHtml = `<div style="font-size:8px;opacity:0.45;margin-top:1px;line-height:1">${ageMin}m</div>`;
+  }
+
   const t = Math.min(score / 10, 1);
   const bg = isLong
     ? `rgba(0,${Math.round(70+t*130)},${Math.round(40+t*80)},0.85)`
     : `rgba(${Math.round(80+t*140)},${Math.round(t*20)},0,0.85)`;
   const tc = isLong ? '#aaffdd' : '#ffaaaa';
-  return `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="score-pill" style="background:${bg};color:${tc}">${isLong?'L':'S'}${score}</span></div>`;
+  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:0">
+    <span class="score-pill" style="background:${bg};color:${tc}">${isLong?'L':'S'}${score}${arrow}</span>
+    ${ageHtml}
+  </div>`;
 }
 
 // ── Tamaño de burbuja configurable ─────────────────────────────────────────
@@ -1166,6 +1221,13 @@ function toggleFavFilter() {
   render();
 }
 
+function setScoreFilter(v) {
+  scoreFilter = v;
+  document.querySelectorAll('.score-flt-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`sf-${v}`)?.classList.add('active');
+  render();
+}
+
 function getFilteredRows() {
   const search = (document.getElementById('filter-search')?.value || '').toUpperCase();
   const minOI  = parseFloat(document.getElementById('filter-oi')?.value || 0);
@@ -1177,6 +1239,10 @@ function getFilteredRows() {
       const oiPos = (r.oi1h ?? 0) >= 0, pricePos = (r.price1hPct ?? 0) >= 0;
       const quad = oiPos && pricePos ? 'LONG' : oiPos ? 'SHORT' : pricePos ? 'SQUEEZE' : 'LIQ';
       if (quad !== activeQuadrant) return false;
+    }
+    if (scoreFilter > 0) {
+      const sc = scoreSymbol(r);
+      if (Math.max(sc.longScore, sc.shortScore) < scoreFilter) return false;
     }
     return true;
   });
@@ -1305,6 +1371,16 @@ function pctCell(v) {
 }
 
 function render() {
+  // Refrescar cache de liquidaciones para scoreSymbol
+  const _cut5m = Date.now() - 5*60_000;
+  liqSumCache.clear();
+  for (const e of liqEvents) {
+    if (e.ts < _cut5m) continue;
+    if (!liqSumCache.has(e.symbol)) liqSumCache.set(e.symbol, { l: 0, s: 0 });
+    const _t = liqSumCache.get(e.symbol);
+    if (e.isLong) _t.l += e.usdVal; else _t.s += e.usdVal;
+  }
+
   const rows = getFilteredRows();
   const fc = document.getElementById('filter-count');
   if (fc) fc.textContent = rows.length + ' / ' + allRows.length + ' pares';
@@ -1325,6 +1401,28 @@ function render() {
       sp.textContent = sortDir < 0 ? '▼' : '▲';
       th.appendChild(sp);
     }
+  });
+
+  // Snapshot del ciclo anterior (para flechas en scoreCell)
+  scoreSnap = new Map(prevScores);
+
+  // Detectar saltos de score y actualizar tracking
+  const _now = Date.now();
+  sorted.forEach(row => {
+    const sc = scoreSymbol(row);
+    const score = Math.max(sc.longScore, sc.shortScore);
+    const isLong = sc.longScore >= sc.shortScore;
+    const prev = scoreSnap.get(row.symbol);
+    // Alerta sonora cuando el score salta de < 7 a ≥ 7
+    if (soundEnabled && prev !== undefined && prev.score < 7 && score >= 7) {
+      beep(660, 'square', 110);
+      showToast(`${row.symbol} ${isLong ? 'L' : 'S'}${score} — score subió`, isLong ? 'long' : 'short');
+    }
+    // Edad del score (nivel en buckets de 2)
+    const level = score >= 8 ? 8 : score >= 6 ? 6 : score >= 4 ? 4 : score >= 2 ? 2 : 0;
+    const seen = scoreFirstSeen.get(row.symbol);
+    if (!seen || seen.level !== level) scoreFirstSeen.set(row.symbol, { level, ts: _now });
+    prevScores.set(row.symbol, { score, isLong });
   });
 
   const tbody = document.getElementById('tbody');
@@ -1426,6 +1524,13 @@ function scoreSymbol(row) {
 
   // Volumen mínimo: si < $300k en 1h, cap en 4 (señal no confiable)
   if ((row.vol1hUSD ?? 0) < 300_000) { L = Math.min(L, 4); S = Math.min(S, 4); }
+
+  // Liquidación reciente confirma dirección (+1 bonus)
+  const liqSym = liqSumCache.get(row.symbol);
+  if (liqSym) {
+    if (liqSym.s > 50_000) L += 1; // shorts liq'd → bullish
+    if (liqSym.l > 50_000) S += 1; // longs  liq'd → bearish
+  }
 
   const tipo = L >= S ? 'LONG' : 'SHORT';
   return { tipo, score: Math.min(10, Math.max(L, S)), longScore: Math.min(10, Math.max(0, L)), shortScore: Math.min(10, Math.max(0, S)) };
