@@ -1043,36 +1043,54 @@ function updateLiqBar() {
 }
 
 function connectLiqWS(symbols) {
-  // Bybit permite máx 10 topics por mensaje de suscripción
   const allTopics = symbols.map(s => `liquidation.${s}USDT`);
   const chunks = [];
   for (let i = 0; i < allTopics.length; i += 10) chunks.push(allTopics.slice(i, i + 10));
 
-  let ws;
+  let ws, pingTimer;
+
   function connect() {
     setLiqDot('connecting');
+    clearInterval(pingTimer);
+    try { ws && ws.close(); } catch(_) {}
+
     ws = new WebSocket('wss://stream.bybit.com/v5/public/linear');
+
     ws.onopen = () => {
       setLiqDot('ok');
+      // Suscribir en chunks de 10 (límite Bybit)
       for (const chunk of chunks) {
         ws.send(JSON.stringify({ op: 'subscribe', args: chunk }));
       }
+      // Heartbeat cada 20s — Bybit cierra sin él
+      pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ op: 'ping' }));
+      }, 20_000);
+      // Actualizar barra para salir de "Conectando..."
+      updateLiqBar();
     };
+
     ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
-        if (!msg.data || !msg.topic?.startsWith('liquidation')) return;
+        if (!msg.topic?.startsWith('liquidation') || !msg.data) return;
         const d = msg.data;
         const usdVal = parseFloat(d.size) * parseFloat(d.price);
-        if (usdVal < 500) return;
+        if (usdVal < 200) return;
         liqEvents.unshift({ symbol: d.symbol.replace('USDT',''), isLong: d.side==='Buy', usdVal, ts: Date.now() });
-        if (liqEvents.length > 200) liqEvents.length = 200;
+        if (liqEvents.length > 300) liqEvents.length = 300;
         updateLiqBar();
       } catch(_) {}
     };
-    ws.onclose = () => { setLiqDot('err'); setTimeout(connect, 4000); };
+
+    ws.onclose = () => {
+      setLiqDot('err');
+      clearInterval(pingTimer);
+      setTimeout(connect, 5000);
+    };
     ws.onerror = () => { setLiqDot('err'); };
   }
+
   connect();
 }
 
