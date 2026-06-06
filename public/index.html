@@ -617,6 +617,73 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 /* Score column */
 .score-pill { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 5px; display: inline-flex; align-items: center; }
 
+/* ── Laboratorio de estrategias ── */
+#lab-tab {
+  display: none; flex-direction: column; flex: 1; overflow-y: auto;
+  padding: 12px 14px 80px; gap: 14px; background: #080c12;
+}
+#lab-regime {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px;
+  padding: 12px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+#lab-regime-badge {
+  font-size: 13px; font-weight: 800; letter-spacing: 1px;
+  padding: 4px 12px; border-radius: 6px; border: 1px solid; min-width: 90px; text-align: center;
+}
+#lab-regime-stats { font-size: 11px; color: #4a6080; flex: 1; }
+.regime-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; width: 160px; gap: 1px; }
+.regime-bar > div { height: 100%; border-radius: 1px; }
+.regime-bar-labels { display: flex; gap: 8px; font-size: 9px; margin-top: 3px; }
+
+#lab-columns {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+}
+@media (max-width: 900px) { #lab-columns { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 500px) { #lab-columns { grid-template-columns: 1fr; } }
+
+.lab-col {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.lc-header {
+  padding: 10px 12px 8px; border-bottom: 1px solid #141e2e;
+}
+.lc-title { font-size: 13px; font-weight: 700; color: #c0cce0; display: block; }
+.lc-sub   { font-size: 9px; color: #2e4060; margin-top: 1px; display: block; }
+.lc-section {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 4px 12px; text-transform: uppercase;
+}
+.lc-section.long-s  { color: #005a30; background: rgba(0,120,60,0.08); }
+.lc-section.short-s { color: #5a1010; background: rgba(160,20,20,0.08); }
+.lc-list { padding: 4px 6px; display: flex; flex-direction: column; gap: 3px; min-height: 40px; }
+
+.lab-row {
+  display: flex; align-items: center; gap: 6px;
+  border-radius: 5px; padding: 4px 7px; font-size: 11px;
+}
+.lr-sym   { flex: 1; font-weight: 600; color: #8a9ab8; font-size: 10px; }
+.lr-score { font-weight: 800; font-size: 12px; }
+.lr-extra { font-size: 9px; color: #4a6080; }
+.lr-empty { font-size: 10px; color: #1e2e40; padding: 6px 7px; }
+
+#lab-confluence {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px; padding: 12px 14px;
+}
+.lab-conf-title { font-size: 11px; color: #4a6080; margin-bottom: 8px; font-weight: 600; }
+#lab-conf-list  { display: flex; flex-wrap: wrap; gap: 6px; }
+.conf-item {
+  display: flex; align-items: center; gap: 5px; border-radius: 6px;
+  padding: 4px 10px; font-size: 11px; border: 1px solid;
+}
+.conf-long  { background: rgba(0,140,70,0.12); border-color: rgba(0,160,80,0.25); }
+.conf-short { background: rgba(180,20,20,0.12); border-color: rgba(200,40,40,0.25); }
+.conf-sym   { font-weight: 700; color: #c0cce0; }
+.conf-dir   { font-weight: 800; font-size: 10px; }
+.conf-long  .conf-dir { color: #00c878; }
+.conf-short .conf-dir { color: #ee5555; }
+.conf-count { font-size: 9px; color: #3a5070; }
+
 /* Score filter buttons */
 .score-flt-btn {
   background: #0d1117; border: 1px solid #1e2530; color: #4a5a70;
@@ -654,6 +721,7 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
     <button class="tab-btn active" id="tab-screener" onclick="switchTab('screener')">Screener</button>
     <button class="tab-btn" id="tab-strategy" onclick="switchTab('strategy')">Estrategia</button>
     <button class="tab-btn" id="tab-scalp5m" onclick="switchTab('scalp5m')">Scalp 5M</button>
+    <button class="tab-btn" id="tab-lab" onclick="switchTab('lab')">🔬 Lab</button>
   </div>
   <span class="badge" id="sym-count">—</span>
   <button class="refresh-btn" id="refresh-btn" onclick="forceRefresh()">↻ Refresh</button>
@@ -793,6 +861,49 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
       <div class="s5m-fund-title">🔥 Funding positivo — Longs pagando → Short</div>
       <div id="s5m-fund-short" class="s5m-fund-grid"></div>
     </div>
+  </div>
+</div>
+
+<!-- ── Laboratorio de estrategias ── -->
+<div id="lab-tab">
+  <div id="lab-regime">
+    <div id="lab-regime-badge" style="color:#4a6080;border-color:#1a2535">CALCULANDO</div>
+    <div id="lab-regime-stats">Esperando datos...</div>
+    <div id="lab-regime-dist"></div>
+  </div>
+  <div id="lab-columns">
+    <div class="lab-col">
+      <div class="lc-header"><span class="lc-title">Actual</span><span class="lc-sub">Reglas fijas · línea base</span></div>
+      <div class="lc-section long-s">▲ Longs</div>
+      <div id="lc-cur-long" class="lc-list"></div>
+      <div class="lc-section short-s">▼ Shorts</div>
+      <div id="lc-cur-short" class="lc-list"></div>
+    </div>
+    <div class="lab-col">
+      <div class="lc-header"><span class="lc-title">Percentil</span><span class="lc-sub">Score relativo al mercado</span></div>
+      <div class="lc-section long-s">▲ Longs</div>
+      <div id="lc-pct-long" class="lc-list"></div>
+      <div class="lc-section short-s">▼ Shorts</div>
+      <div id="lc-pct-short" class="lc-list"></div>
+    </div>
+    <div class="lab-col">
+      <div class="lc-header"><span class="lc-title">Régimen</span><span class="lc-sub">Score ajustado al mercado</span></div>
+      <div class="lc-section long-s">▲ Longs</div>
+      <div id="lc-reg-long" class="lc-list"></div>
+      <div class="lc-section short-s">▼ Shorts</div>
+      <div id="lc-reg-short" class="lc-list"></div>
+    </div>
+    <div class="lab-col">
+      <div class="lc-header"><span class="lc-title">Z-Score</span><span class="lc-sub">Anomalía vs historial propio</span></div>
+      <div class="lc-section long-s">▲ Longs</div>
+      <div id="lc-z-long" class="lc-list"></div>
+      <div class="lc-section short-s">▼ Shorts</div>
+      <div id="lc-z-short" class="lc-list"></div>
+    </div>
+  </div>
+  <div id="lab-confluence">
+    <div class="lab-conf-title">🎯 Alta confluencia — símbolo aparece en ≥2 estrategias</div>
+    <div id="lab-conf-list"><span class="lr-empty">Calculando...</span></div>
   </div>
 </div>
 
@@ -2207,11 +2318,14 @@ function switchTab(tab) {
   document.getElementById('screener-tab').style.display  = tab === 'screener'  ? ''     : 'none';
   document.getElementById('strategy-tab').style.display  = tab === 'strategy'  ? 'flex' : 'none';
   document.getElementById('scalp5m-tab').style.display   = tab === 'scalp5m'   ? 'flex' : 'none';
+  document.getElementById('lab-tab').style.display       = tab === 'lab'       ? 'flex' : 'none';
   document.getElementById('tab-screener').classList.toggle('active', tab === 'screener');
   document.getElementById('tab-strategy').classList.toggle('active', tab === 'strategy');
   document.getElementById('tab-scalp5m').classList.toggle('active',  tab === 'scalp5m');
+  document.getElementById('tab-lab').classList.toggle('active',      tab === 'lab');
   if (tab === 'strategy' && allRows.length) renderStrategy();
   if (tab === 'scalp5m'  && allRows.length) renderScalp5m();
+  if (tab === 'lab'      && allRows.length) renderLab();
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────
@@ -2239,6 +2353,7 @@ async function load() {
     render();
     if (activeTab === 'strategy') renderStrategy();
     if (activeTab === 'scalp5m')  renderScalp5m();
+    if (activeTab === 'lab')      renderLab();
   } catch (e) {
     document.getElementById('meta').textContent = 'Error: ' + e.message;
   } finally {
@@ -2249,6 +2364,198 @@ async function load() {
 }
 
 function forceRefresh() { countdownVal = 0; load(); }
+
+// ── Laboratorio de estrategias ──────────────────────────────────────────────
+
+function buildPercentileFns(rows) {
+  const keys = ['oi5m','oi1h','oi4h','vol1hPct','price5mPct','price1hPct','price4hPct'];
+  const fns = {};
+  for (const k of keys) {
+    const sorted = rows.map(r => r[k] ?? 0).sort((a,b) => a-b);
+    fns[k] = v => {
+      if (v == null) return 50;
+      let lo = 0, hi = sorted.length;
+      while (lo < hi) { const m = (lo+hi)>>1; if (sorted[m] < v) lo = m+1; else hi = m; }
+      return lo / sorted.length * 100;
+    };
+  }
+  return fns;
+}
+
+function scorePercentile(row, pFns) {
+  const p = k => pFns[k](row[k]);
+  let L = 0, S = 0;
+  const oi5p = p('oi5m'), oi1p = p('oi1h'), vp = p('vol1hPct');
+  const p5p  = p('price5mPct'), p1p = p('price1hPct');
+
+  // OI alto percentil suma a ambas direcciones (confirma actividad)
+  if      (oi5p > 90) { L += 3; S += 3; }
+  else if (oi5p > 75) { L += 2; S += 2; }
+  else if (oi5p > 60) { L += 1; S += 1; }
+
+  if      (oi1p > 90) { L += 3; S += 3; }
+  else if (oi1p > 75) { L += 2; S += 2; }
+  else if (oi1p > 60) { L += 1; S += 1; }
+
+  // Precio: percentil alto = subiendo = Long
+  if      (p5p > 80) L += 2; else if (p5p > 65) L += 1;
+  if      (p1p > 80) L += 2; else if (p1p > 60) L += 1;
+  // Precio: percentil bajo = bajando = Short
+  if      (p5p < 20) S += 2; else if (p5p < 35) S += 1;
+  if      (p1p < 20) S += 2; else if (p1p < 40) S += 1;
+
+  // Volumen
+  if (vp > 90) { L += 2; S += 2; } else if (vp > 75) { L += 1; S += 1; }
+
+  // Penalización si precio 1h va en contra
+  if (p1p < 35) L = Math.floor(L * 0.35);
+  if (p1p > 65) S = Math.floor(S * 0.35);
+
+  return { longScore: Math.min(10, Math.max(0, L)), shortScore: Math.min(10, Math.max(0, S)) };
+}
+
+function detectRegime(rows) {
+  const valid = rows.filter(r => r.oi1h != null && r.price1hPct != null);
+  if (valid.length < 10) return { regime: 'CARGANDO', color: '#4a6080', desc: 'Datos insuficientes', bullPct: 0, bearPct: 0, avgOI1h: 0, avgVol: 0 };
+  const n = v => v ?? 0;
+  const bull = valid.filter(r => n(r.oi1h) > 0 && n(r.price1hPct) > 0).length;
+  const bear = valid.filter(r => n(r.oi1h) > 0 && n(r.price1hPct) < 0).length;
+  const tot  = valid.length;
+  const bullPct = bull / tot * 100, bearPct = bear / tot * 100;
+  const avgOI1h = valid.reduce((a,r) => a + n(r.oi1h), 0) / tot;
+  const avgVol  = valid.reduce((a,r) => a + n(r.vol1hPct), 0) / tot;
+  let regime, color, desc;
+  if      (bullPct > 55) { regime = 'ALCISTA';  color = '#00c878'; desc = `${bullPct.toFixed(0)}% pares OI↑+P↑`; }
+  else if (bearPct > 45) { regime = 'BAJISTA';  color = '#ee4444'; desc = `${bearPct.toFixed(0)}% pares OI↑+P↓`; }
+  else if (avgVol  > 25) { regime = 'VOLÁTIL';  color = '#e09030'; desc = `Vol +${avgVol.toFixed(0)}% sobre media`; }
+  else                   { regime = 'LATERAL';   color = '#4a7a8a'; desc = 'Bajo momentum, mercado mixto'; }
+  return { regime, color, desc, bullPct, bearPct, avgOI1h, avgVol };
+}
+
+function scoreRegime(row, regime) {
+  const base = scoreSymbol(row);
+  let L = base.longScore, S = base.shortScore;
+  if      (regime.regime === 'ALCISTA') { L = Math.min(10, L + 2); S = Math.max(0, S - 1); }
+  else if (regime.regime === 'BAJISTA') { S = Math.min(10, S + 2); L = Math.max(0, L - 1); }
+  else if (regime.regime === 'VOLÁTIL') { L = Math.min(L, 7); S = Math.min(S, 7); }
+  else                                  { L = Math.min(L, 5); S = Math.min(S, 5); }
+  return { longScore: L, shortScore: S };
+}
+
+function zScoreSymbol(row) {
+  const snaps = oiSnaps.get(row.symbol + 'USDT') || [];
+  if (snaps.length < 8) return null;
+  const changes = [];
+  for (let i = 1; i < Math.min(snaps.length, 60); i++) {
+    if (snaps[i].oiUSD > 0) changes.push((snaps[i-1].oiUSD - snaps[i].oiUSD) / snaps[i].oiUSD * 100);
+  }
+  if (changes.length < 5) return null;
+  const mean = changes.reduce((a,b) => a+b, 0) / changes.length;
+  const std  = Math.sqrt(changes.map(c => (c-mean)**2).reduce((a,b) => a+b, 0) / changes.length);
+  const curr = row.oi5m ?? 0;
+  const z = std > 0.01 ? (curr - mean) / std : 0;
+  const absZ = Math.abs(z);
+  let score = absZ > 3 ? 9 : absZ > 2.5 ? 7 : absZ > 2 ? 5 : absZ > 1.5 ? 3 : absZ > 1 ? 1 : 0;
+  const priceDir = z > 0 ? (row.price5mPct ?? 0) > 0 : (row.price5mPct ?? 0) < 0;
+  if (!priceDir) score = Math.floor(score * 0.35);
+  const isLong = z > 0;
+  return { z, zStr: z.toFixed(1) + 'σ', score, isLong, longScore: isLong ? score : 0, shortScore: isLong ? 0 : score };
+}
+
+function renderLab() {
+  if (!allRows.length) return;
+
+  const regime = detectRegime(allRows);
+
+  // Régimen banner
+  const badge = document.getElementById('lab-regime-badge');
+  const stats = document.getElementById('lab-regime-stats');
+  const dist  = document.getElementById('lab-regime-dist');
+  if (badge) { badge.textContent = regime.regime; badge.style.color = regime.color; badge.style.borderColor = regime.color + '80'; }
+  if (stats) stats.textContent = `${regime.desc} · OI mkt ${regime.avgOI1h >= 0 ? '+' : ''}${regime.avgOI1h.toFixed(2)}%`;
+  if (dist) {
+    const b = Math.round(regime.bullPct), r = Math.round(regime.bearPct), m = Math.max(0, 100 - b - r);
+    dist.innerHTML = `<div class="regime-bar">
+      <div style="width:${b}%;background:#006638"></div>
+      <div style="width:${r}%;background:#882020"></div>
+      <div style="width:${m}%;background:#1a2535"></div>
+    </div>
+    <div class="regime-bar-labels">
+      <span style="color:#00c878">▲${b}%</span>
+      <span style="color:#ee4444">▼${r}%</span>
+      <span style="color:#4a5a70">→${m}%</span>
+    </div>`;
+  }
+
+  const pFns = buildPercentileFns(allRows);
+
+  const scored = allRows.map(r => {
+    const cur = scoreSymbol(r);
+    const pct = scorePercentile(r, pFns);
+    const reg = scoreRegime(r, regime);
+    const z   = zScoreSymbol(r);
+    return { symbol: r.symbol,
+      cur: { l: cur.longScore, s: cur.shortScore },
+      pct: { l: pct.longScore, s: pct.shortScore },
+      reg: { l: reg.longScore, s: reg.shortScore },
+      z:   z ? { l: z.longScore, s: z.shortScore, zStr: z.zStr } : null,
+    };
+  });
+
+  const top = (key, side) => [...scored]
+    .filter(r => r[key] && r[key][side] >= 2)
+    .sort((a,b) => b[key][side] - a[key][side])
+    .slice(0, 6);
+
+  function labRow(r, key, side) {
+    const sc = r[key]; if (!sc) return '';
+    const score = side === 'l' ? sc.l : sc.s;
+    const isLong = side === 'l';
+    const color = isLong ? '#00c878' : '#ee5555';
+    const bg    = isLong ? 'rgba(0,150,70,0.10)' : 'rgba(200,40,40,0.10)';
+    const extra = (key === 'z' && sc.zStr) ? `<span class="lr-extra">${sc.zStr}</span>` : '';
+    return `<div class="lab-row" style="background:${bg}">
+      <span class="lr-sym">${r.symbol}</span>
+      <span class="lr-score" style="color:${color}">${isLong?'L':'S'}${score}</span>${extra}
+    </div>`;
+  }
+
+  const cols = [
+    { key: 'cur', li: 'lc-cur-long', si: 'lc-cur-short' },
+    { key: 'pct', li: 'lc-pct-long', si: 'lc-pct-short' },
+    { key: 'reg', li: 'lc-reg-long', si: 'lc-reg-short' },
+    { key: 'z',   li: 'lc-z-long',   si: 'lc-z-short'   },
+  ];
+  for (const c of cols) {
+    const lEl = document.getElementById(c.li), sEl = document.getElementById(c.si);
+    if (lEl) lEl.innerHTML = top(c.key,'l').map(r => labRow(r,c.key,'l')).join('') || '<div class="lr-empty">Sin señales</div>';
+    if (sEl) sEl.innerHTML = top(c.key,'s').map(r => labRow(r,c.key,'s')).join('') || '<div class="lr-empty">Sin señales</div>';
+  }
+
+  // Confluencia: símbolo aparece en ≥2 estrategias
+  const confMap = new Map();
+  for (const c of cols) {
+    for (const side of ['l','s']) {
+      for (const r of top(c.key, side)) {
+        const k = r.symbol + side;
+        confMap.set(k, (confMap.get(k) || 0) + 1);
+      }
+    }
+  }
+  const confEl = document.getElementById('lab-conf-list');
+  const confItems = [...confMap.entries()]
+    .filter(([,cnt]) => cnt >= 2).sort((a,b) => b[1]-a[1])
+    .map(([k, cnt]) => {
+      const sym = k.slice(0,-1), side = k.slice(-1);
+      const isLong = side === 'l';
+      return `<div class="conf-item ${isLong ? 'conf-long' : 'conf-short'}">
+        <span class="conf-sym">${sym}</span>
+        <span class="conf-dir">${isLong?'L':'S'}</span>
+        <span class="conf-count">${cnt}/4</span>
+      </div>`;
+    });
+  if (confEl) confEl.innerHTML = confItems.join('') || '<span class="lr-empty">Sin confluencia aún</span>';
+}
 
 function toggleFav(sym) {
   if (favorites.has(sym)) favorites.delete(sym);
