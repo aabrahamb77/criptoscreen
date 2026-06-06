@@ -819,6 +819,8 @@ let badgeHitTargets  = [];
 let chartZoom = { scale: 1, offsetX: 0, offsetY: 0 };
 let chartScoredCache = null;
 let activeQuadrant   = null;
+let hoveredSymbol    = null;
+let hoverAnimFrame   = null;
 let prevQuadrants    = new Map();
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;
@@ -1479,6 +1481,28 @@ function drawBubbleChart(scored) {
 
   ctx.globalAlpha = 1.0;
 
+  // ── Hover ring (dibujado encima de todas las burbujas) ────────────────────
+  if (hoveredSymbol) {
+    const hb = bubbleHitTargets.find(b => b.symbol === hoveredSymbol);
+    if (hb) {
+      const pulse = (Math.sin(Date.now() * 0.005) + 1) / 2; // 0..1 ~1.25Hz
+      ctx.save();
+      // Anillo interior fijo — blanco brillante
+      ctx.shadowColor = 'rgba(255,255,255,0.75)';
+      ctx.shadowBlur  = 18 / s;
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth   = 2 / s;
+      ctx.beginPath(); ctx.arc(hb.bx, hb.by, hb.r + 5 / s, 0, Math.PI * 2); ctx.stroke();
+      // Anillo exterior pulsante
+      ctx.globalAlpha = 0.2 + pulse * 0.4;
+      ctx.shadowBlur  = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth   = 1.5 / s;
+      ctx.beginPath(); ctx.arc(hb.bx, hb.by, hb.r + 10 / s + pulse * 7 / s, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   // ── Quadrant badges with stats (drawn on top of bubbles) ─────────────────
   badgeHitTargets = [];
   const _q1 = valid.filter(d => d.oi1h >= 0 && d.price1hPct >= 0);
@@ -1727,6 +1751,19 @@ function renderStrategy() {
       const d = Math.sqrt(ddx*ddx + ddy*ddy);
       if (d <= b.r + 10/chartZoom.scale && d < minDist) { minDist = d; closest = b; }
     }
+    // Hover animation
+    const newSym = closest ? closest.symbol : null;
+    if (newSym !== hoveredSymbol) {
+      hoveredSymbol = newSym;
+      if (hoveredSymbol && !hoverAnimFrame) {
+        const animLoop = () => {
+          drawBubbleChart(null);
+          hoverAnimFrame = hoveredSymbol ? requestAnimationFrame(animLoop) : null;
+        };
+        hoverAnimFrame = requestAnimationFrame(animLoop);
+      }
+    }
+
     const tip = document.getElementById('btip');
     if (closest) {
       const row = allRows.find(r => r.symbol === closest.symbol);
@@ -1773,6 +1810,8 @@ function renderStrategy() {
   canvas.addEventListener('mouseleave', function () {
     dragging = false; this.style.cursor = 'crosshair';
     document.getElementById('btip').style.display = 'none';
+    hoveredSymbol = null;
+    drawBubbleChart(null);
   });
 
   canvas.addEventListener('dblclick', function () {
