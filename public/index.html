@@ -387,6 +387,21 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
 .chart-hint {
   font-size: 9px; color: #1e2a3a; margin-left: auto; white-space: nowrap;
 }
+.chart-tf-nav {
+  display: flex; gap: 2px; background: #0c0f14;
+  border: 1px solid #181e28; border-radius: 6px; padding: 2px;
+}
+.chart-tf-btn {
+  background: transparent; border: none; color: #3a4558;
+  font-family: inherit; font-size: 10px; font-weight: 700;
+  padding: 2px 9px; border-radius: 4px; cursor: pointer;
+  transition: all .15s; letter-spacing: 0.3px; white-space: nowrap;
+}
+.chart-tf-btn:hover { color: #7888aa; background: #141c28; }
+.chart-tf-btn.active {
+  color: #c8d8ff; background: linear-gradient(135deg,#1a2540,#162038);
+  box-shadow: 0 1px 4px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05);
+}
 #bubble-chart { display: block; cursor: crosshair; }
 
 #cards-section {
@@ -638,6 +653,12 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
   <div id="chart-section">
     <div class="chart-header">
       <span class="chart-title">Mapa de Momentum</span>
+      <div class="chart-tf-nav">
+        <button class="chart-tf-btn" data-tf="15m" onclick="setChartTf('15m')">15m</button>
+        <button class="chart-tf-btn active" data-tf="1h"  onclick="setChartTf('1h')">1h</button>
+        <button class="chart-tf-btn" data-tf="4h"  onclick="setChartTf('4h')">4h</button>
+        <button class="chart-tf-btn" data-tf="1d"  onclick="setChartTf('1d')">1d</button>
+      </div>
       <div id="market-bias"></div>
       <div class="chart-legend">
         <div class="leg-item"><div class="leg-dot" style="background:#00b870;box-shadow:0 0 5px #00b870"></div><span class="leg-label">OI↑ P↑ Long</span></div>
@@ -746,7 +767,7 @@ async function fetchSymbolData(symbol, currentOIusd, currentPrice) {
   const [oiRes, k1hRes, k5mRes] = await Promise.all([
     bybitGet(`/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=290`),
     bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=60&limit=50`),
-    bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=5&limit=4`),
+    bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=5&limit=6`),
   ]);
   const oiList = oiRes.result?.list;
   const k1h = k1hRes.result?.list;
@@ -766,12 +787,13 @@ async function fetchSymbolData(symbol, currentOIusd, currentPrice) {
   const vol12hPct = k1h.length > 24 ? pctCalc(sumArr(vol1h.slice(1,13)), sumArr(vol1h.slice(13,25))) : null;
   const vol24hPct = k1h.length > 48 ? pctCalc(sumArr(vol1h.slice(1,25)), sumArr(vol1h.slice(25,49))) : null;
   const cls5m = k5m.map(k => parseFloat(k[4]));
-  const price5mPct = k5m.length > 2 ? pctCalc(cls5m[1], cls5m[2]) : null;
-  const price1hPct = cls1h.length > 1 ? pctCalc(cls1h[0], cls1h[1]) : null;
-  const price4hPct = cls1h.length > 4 ? pctCalc(cls1h[0], cls1h[4]) : null;
+  const price5mPct  = cls5m.length > 2 ? pctCalc(cls5m[1], cls5m[2]) : null;
+  const price15mPct = cls5m.length > 4 ? pctCalc(cls5m[1], cls5m[4]) : null;
+  const price1hPct  = cls1h.length > 1 ? pctCalc(cls1h[0], cls1h[1]) : null;
+  const price4hPct  = cls1h.length > 4 ? pctCalc(cls1h[0], cls1h[4]) : null;
 
   return { oi5m, oi15m, oi1h, oi4h, oi24h, vol1hPct, vol12hPct, vol24hPct,
-           price5mPct, price1hPct, price4hPct, vol1hUSD: vol1h[1] ?? 0 };
+           price5mPct, price15mPct, price1hPct, price4hPct, vol1hUSD: vol1h[1] ?? 0 };
 }
 
 async function loadData() {
@@ -821,6 +843,7 @@ let chartScoredCache = null;
 let activeQuadrant   = null;
 let hoveredSymbol    = null;
 let hoverAnimFrame   = null;
+let chartTf          = '1h';
 let prevQuadrants    = new Map();
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;
@@ -1273,15 +1296,23 @@ function drawBubbleChart(scored) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  const valid = chartScoredCache.filter(d => d.oi1h != null && d.price1hPct != null);
+  const TF_FIELDS = {
+    '15m': { oiKey: 'oi15m',  priceKey: 'price15mPct', label: '15m' },
+    '1h':  { oiKey: 'oi1h',   priceKey: 'price1hPct',  label: '1h'  },
+    '4h':  { oiKey: 'oi4h',   priceKey: 'price4hPct',  label: '4h'  },
+    '1d':  { oiKey: 'oi24h',  priceKey: 'price24hPct', label: '24h' },
+  };
+  const tf = TF_FIELDS[chartTf] || TF_FIELDS['1h'];
+
+  const valid = chartScoredCache.filter(d => d[tf.oiKey] != null && d[tf.priceKey] != null);
   if (!valid.length) return;
 
   const PAD = { top: 18, right: 22, bottom: 34, left: 52 };
   const pW = W - PAD.left - PAD.right;
   const pH = H - PAD.top - PAD.bottom;
 
-  const xs = valid.map(d => d.oi1h);
-  const ys = valid.map(d => d.price1hPct);
+  const xs = valid.map(d => d[tf.oiKey]);
+  const ys = valid.map(d => d[tf.priceKey]);
   const xMax = Math.max(Math.abs(Math.min(...xs)), Math.abs(Math.max(...xs)), 1) * 1.12;
   const yMax = Math.max(Math.abs(Math.min(...ys)), Math.abs(Math.max(...ys)), 0.5) * 1.12;
 
@@ -1357,11 +1388,11 @@ function drawBubbleChart(scored) {
   ctx.fillStyle = '#304050';
   ctx.font = `500 ${10 / s}px Inter,system-ui`;
   ctx.textAlign = 'center';
-  ctx.fillText('OI (1h%)', W / 2, H - 4 / s);
+  ctx.fillText(`OI (${tf.label}%)`, W / 2, H - 4 / s);
   ctx.save();
   ctx.translate(13 / s, H / 2);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillText('Precio (1h%)', 0, 0);
+  ctx.fillText(`Precio (${tf.label}%)`, 0, 0);
   ctx.restore();
 
   // ── Tick marks + escala ───────────────────────────────────────────────────
@@ -1393,11 +1424,11 @@ function drawBubbleChart(scored) {
   ctx.font = `700 ${labelFs}px Inter,system-ui`;
 
   for (const d of valid) {
-    const bx = toX(d.oi1h);
-    const by = toY(d.price1hPct);
+    const bx = toX(d[tf.oiKey]);
+    const by = toY(d[tf.priceKey]);
     const r  = Math.min(24, Math.max(5, Math.sqrt(Math.abs(d.vol1hPct ?? 1)) * 1.9));
 
-    const oiPos = d.oi1h >= 0, pricePos = d.price1hPct >= 0;
+    const oiPos = d[tf.oiKey] >= 0, pricePos = d[tf.priceKey] >= 0;
     const bQuad = oiPos && pricePos ? 'LONG' : oiPos ? 'SHORT' : pricePos ? 'SQUEEZE' : 'LIQ';
     ctx.globalAlpha = (activeQuadrant && bQuad !== activeQuadrant) ? 0.12 : 1.0;
 
@@ -1505,10 +1536,10 @@ function drawBubbleChart(scored) {
 
   // ── Quadrant badges with stats (drawn on top of bubbles) ─────────────────
   badgeHitTargets = [];
-  const _q1 = valid.filter(d => d.oi1h >= 0 && d.price1hPct >= 0);
-  const _q2 = valid.filter(d => d.oi1h <  0 && d.price1hPct >= 0);
-  const _q3 = valid.filter(d => d.oi1h <  0 && d.price1hPct <  0);
-  const _q4 = valid.filter(d => d.oi1h >= 0 && d.price1hPct <  0);
+  const _q1 = valid.filter(d => d[tf.oiKey] >= 0 && d[tf.priceKey] >= 0);
+  const _q2 = valid.filter(d => d[tf.oiKey] <  0 && d[tf.priceKey] >= 0);
+  const _q3 = valid.filter(d => d[tf.oiKey] <  0 && d[tf.priceKey] <  0);
+  const _q4 = valid.filter(d => d[tf.oiKey] >= 0 && d[tf.priceKey] <  0);
   const _qavg = (arr, k) => arr.length ? arr.reduce((a, b) => a + (b[k] || 0), 0) / arr.length : 0;
   const _fmtA = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
 
@@ -1692,6 +1723,15 @@ function renderScalp5m() {
 }
 
 // ── Strategy render ────────────────────────────────────────────────────────
+function setChartTf(tf) {
+  chartTf = tf;
+  document.querySelectorAll('.chart-tf-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tf === tf)
+  );
+  chartZoom = { scale: 1, offsetX: 0, offsetY: 0 };
+  drawBubbleChart(null);
+}
+
 function renderStrategy() {
   if (!allRows.length) return;
 
