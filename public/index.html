@@ -693,9 +693,10 @@ tr:hover td.left-align { filter: none; background: rgba(255,255,255,0.02); }
 
 <div id="liq-bar">
   <span class="liq-title">⚡ LIQ</span>
+  <span id="liq-ws-dot" title="WS estado" style="font-size:7px;color:#444">●</span>
   <span class="liq-total-l" id="liq-long-total">L $0</span>
   <span class="liq-total-s" id="liq-short-total">S $0</span>
-  <span id="liq-feed" style="color:rgba(255,255,255,0.75)">Conectando websocket...</span>
+  <span id="liq-feed" style="color:rgba(255,255,255,0.75)">Conectando...</span>
 </div>
 <div id="btip"></div>
 <div id="toast-wrap"></div>
@@ -995,27 +996,42 @@ function fmtUSD(v) {
   return '$' + v.toFixed(0);
 }
 
+function setLiqDot(state) {
+  const el = document.getElementById('liq-ws-dot');
+  if (!el) return;
+  if (state === 'ok')   { el.style.color = '#00c878'; el.title = 'WS conectado'; }
+  else if (state === 'err') { el.style.color = '#ff5555'; el.title = 'WS error — reconectando'; }
+  else                  { el.style.color = '#555';    el.title = 'WS conectando...'; }
+}
+
 function updateLiqBar() {
   const cut = Date.now() - 5*60_000;
   const rec = liqEvents.filter(e => e.ts > cut);
-  liqLong5m  = rec.filter(e => e.isLong).reduce((a,b) => a+b.usdVal, 0);
+  liqLong5m  = rec.filter(e =>  e.isLong).reduce((a,b) => a+b.usdVal, 0);
   liqShort5m = rec.filter(e => !e.isLong).reduce((a,b) => a+b.usdVal, 0);
   document.getElementById('liq-long-total').textContent  = 'L ' + fmtUSD(liqLong5m);
   document.getElementById('liq-short-total').textContent = 'S ' + fmtUSD(liqShort5m);
-  const feed = liqEvents.slice(0,10).map(e =>
-    `<span class="liq-ev ${e.isLong?'ll':'ls'}">${e.symbol} ${e.isLong?'↓LONG':'↑SHORT'} ${fmtUSD(e.usdVal)}</span>`
+  const feed = liqEvents.slice(0, 15).map(e =>
+    `<span class="liq-ev ${e.isLong?'ll':'ls'}">${e.symbol} ${e.isLong?'↓L':'↑S'} ${fmtUSD(e.usdVal)}</span>`
   ).join('');
-  document.getElementById('liq-feed').innerHTML = feed || '<span style="color:#1e2838">Sin liquidaciones recientes</span>';
+  document.getElementById('liq-feed').innerHTML = feed || '<span style="color:rgba(255,255,255,0.3)">Sin liquidaciones recientes</span>';
 }
 
 function connectLiqWS(symbols) {
-  const topics = symbols.slice(0,30).map(s => `liquidation.${s}USDT`);
+  // Bybit permite máx 10 topics por mensaje de suscripción
+  const allTopics = symbols.map(s => `liquidation.${s}USDT`);
+  const chunks = [];
+  for (let i = 0; i < allTopics.length; i += 10) chunks.push(allTopics.slice(i, i + 10));
+
   let ws;
   function connect() {
+    setLiqDot('connecting');
     ws = new WebSocket('wss://stream.bybit.com/v5/public/linear');
     ws.onopen = () => {
-      ws.send(JSON.stringify({ op: 'subscribe', args: topics }));
-      document.getElementById('liq-feed').textContent = 'Sin liquidaciones recientes';
+      setLiqDot('ok');
+      for (const chunk of chunks) {
+        ws.send(JSON.stringify({ op: 'subscribe', args: chunk }));
+      }
     };
     ws.onmessage = e => {
       try {
@@ -1023,14 +1039,14 @@ function connectLiqWS(symbols) {
         if (!msg.data || !msg.topic?.startsWith('liquidation')) return;
         const d = msg.data;
         const usdVal = parseFloat(d.size) * parseFloat(d.price);
-        if (usdVal < 1000) return;
+        if (usdVal < 500) return;
         liqEvents.unshift({ symbol: d.symbol.replace('USDT',''), isLong: d.side==='Buy', usdVal, ts: Date.now() });
-        if (liqEvents.length > 100) liqEvents.length = 100;
+        if (liqEvents.length > 200) liqEvents.length = 200;
         updateLiqBar();
       } catch(_) {}
     };
-    ws.onclose = () => setTimeout(connect, 4000);
-    ws.onerror = () => {};
+    ws.onclose = () => { setLiqDot('err'); setTimeout(connect, 4000); };
+    ws.onerror = () => { setLiqDot('err'); };
   }
   connect();
 }
