@@ -257,8 +257,6 @@ header h1 {
   .picks-col.short-col { width: 100%; }
   #chart-section { height: 42vh; min-height: 240px; }
 
-  /* Scalp 5M */
-  .s5m-grid { grid-template-columns: 1fr 1fr; }
   .btip-sym { font-size: 11px; }
 
   /* Liq bar más alto en móvil */
@@ -518,57 +516,6 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .sc-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid #111820; }
 .sc-price { font-size: 11px; font-variant-numeric: tabular-nums; color: #3a4a60; font-weight: 500; }
 
-/* ── Scalp 5M tab ── */
-#scalp5m-tab { display: none; flex: 1; flex-direction: column; overflow: hidden; background: #07090b; }
-#s5m-header {
-  padding: 9px 16px 8px; border-bottom: 1px solid #101418;
-  background: #06080b; flex-shrink: 0; display: flex; align-items: center; gap: 14px;
-}
-.s5m-section-title { font-size: 11px; font-weight: 700; letter-spacing: 0.6px; color: #ffffff; white-space: nowrap; }
-.s5m-desc { font-size: 10px; color: rgba(255,255,255,0.40); }
-#s5m-body { display: flex; gap: 16px; padding: 12px 16px; flex: 1; overflow-y: auto; min-height: 0; }
-.s5m-col { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.s5m-col-title { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding-bottom: 8px; border-bottom: 1px solid #101418; }
-.s5m-long-title { color: #00e070; }
-.s5m-short-title { color: #ff4444; }
-.s5m-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px,1fr)); gap: 10px; align-content: start; }
-.s5m-empty { color: rgba(255,255,255,0.25); font-size: 12px; padding: 18px 0; text-align: center; }
-
-.s5m-card {
-  background: linear-gradient(150deg,#0d1117 0%,#090c12 100%);
-  border: 1px solid #181f2c; border-radius: 12px; padding: 12px 14px;
-  cursor: pointer; transition: transform .15s, box-shadow .15s;
-}
-.s5m-card:hover { transform: translateY(-2px); }
-.s5m-card.s5m-long { border-left: 3px solid #00a060; box-shadow: -2px 0 10px rgba(0,160,96,.14); }
-.s5m-card.s5m-long:hover { box-shadow: -2px 0 16px rgba(0,210,120,.22), 0 6px 20px rgba(0,0,0,.4); }
-.s5m-card.s5m-short { border-left: 3px solid #a02020; box-shadow: -2px 0 10px rgba(160,32,32,.14); }
-.s5m-card.s5m-short:hover { box-shadow: -2px 0 16px rgba(230,60,60,.22), 0 6px 20px rgba(0,0,0,.4); }
-
-.s5m-card-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.s5m-sym { font-size: 14px; font-weight: 700; color: #dde8ff; flex: 1; }
-.s5m-sc  { font-size: 12px; font-weight: 700; color: #5a6880; font-variant-numeric: tabular-nums; }
-.s5m-metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin: 8px 0; }
-.s5m-mrow { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-.s5m-mlbl { font-size: 9px; color: #2e3c52; font-family: 'SF Mono',monospace; }
-.s5m-mval { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.s5m-card-foot { display: flex; justify-content: space-between; padding-top: 7px; border-top: 1px solid #111820; font-size: 10px; }
-
-#s5m-funding {
-  flex-shrink: 0; display: flex; gap: 20px;
-  padding: 10px 16px 12px; border-top: 1px solid #101418;
-  background: #06080b; overflow-x: auto;
-}
-.s5m-fund-col { flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 7px; }
-.s5m-fund-title { font-size: 9px; font-weight: 700; letter-spacing: 0.7px; text-transform: uppercase; color: rgba(255,255,255,0.45); margin-bottom: 2px; }
-.s5m-fund-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.fund-pill {
-  display: flex; align-items: center; gap: 9px;
-  background: #0c111a; border: 1px solid #161e28; border-radius: 8px;
-  padding: 6px 10px; cursor: pointer; transition: background .15s;
-}
-.fund-pill:hover { background: #101620; }
-
 /* ── Market bias bar ── */
 #market-bias {
   display: flex; align-items: center; gap: 10px;
@@ -635,10 +582,13 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .regime-bar > div { height: 100%; border-radius: 1px; }
 .regime-bar-labels { display: flex; gap: 8px; font-size: 9px; margin-top: 3px; }
 
-#lab-columns {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+#lab-cols-row {
+  display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap;
 }
-@media (max-width: 900px) { #lab-columns { grid-template-columns: repeat(2, 1fr); } }
+#lab-columns {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+  flex: 1.1 1 360px; min-width: 0;
+}
 @media (max-width: 500px) { #lab-columns { grid-template-columns: 1fr; } }
 
 .lab-col {
@@ -646,40 +596,28 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   overflow: hidden; display: flex; flex-direction: column;
 }
 .lc-header {
-  padding: 10px 12px 8px; border-bottom: 1px solid #141e2e;
+  padding: 7px 10px 5px; border-bottom: 1px solid #141e2e;
 }
-.lc-title { font-size: 13px; font-weight: 700; color: #c0cce0; display: block; }
-.lc-sub   { font-size: 9px; color: #2e4060; margin-top: 1px; display: block; }
+.lc-title { font-size: 11px; font-weight: 700; color: #c0cce0; display: block; }
+.lc-sub   { font-size: 8px; color: #2e4060; margin-top: 1px; display: block; }
 .lc-section {
-  font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
-  padding: 4px 12px; text-transform: uppercase;
+  font-size: 8px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 2px 10px; text-transform: uppercase;
 }
 .lc-section.long-s  { color: #005a30; background: rgba(0,120,60,0.08); }
 .lc-section.short-s { color: #5a1010; background: rgba(160,20,20,0.08); }
-.lc-list { padding: 4px 6px; display: flex; flex-direction: column; gap: 3px; min-height: 40px; }
+.lc-list { padding: 3px 5px; display: flex; flex-direction: column; gap: 2px; min-height: 26px; }
 
 .lab-row {
   display: flex; align-items: center; gap: 6px;
-  border-radius: 5px; padding: 4px 7px; font-size: 11px;
+  border-radius: 4px; padding: 2px 6px; font-size: 10px; line-height: 1.5;
 }
-.lr-sym   { flex: 1; font-weight: 600; color: #8a9ab8; font-size: 10px; }
-.lr-score { font-weight: 800; font-size: 12px; }
-.lr-extra { font-size: 9px; color: #4a6080; }
+.lr-sym   { flex: 1; font-weight: 600; color: #8a9ab8; font-size: 9px; }
+.lr-score { font-weight: 800; font-size: 10px; }
+.lr-extra { font-size: 8px; color: #4a6080; }
 .lr-empty { font-size: 10px; color: #1e2e40; padding: 6px 7px; }
 
 /* ── Seguimiento de favoritos ── */
-#track-tab {
-  display: none; flex-direction: column; flex: 1; overflow-y: auto;
-  padding: 12px 14px 80px; gap: 14px; background: #080c12;
-}
-#track-header {
-  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px;
-  padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  font-size: 11px; color: #4a6080; line-height: 1.5;
-}
-#track-cards {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px;
-}
 .track-card {
   background: #0c1220; border: 1px solid #1a2535; border-radius: 10px;
   padding: 12px 14px; display: flex; flex-direction: column; gap: 7px;
@@ -709,6 +647,37 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .conf-long  .conf-dir { color: #00c878; }
 .conf-short .conf-dir { color: #ee5555; }
 .conf-count { font-size: 9px; color: #3a5070; }
+
+/* ── Comparador de estrategias ── */
+#lab-strat-compare {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px; padding: 12px 14px;
+}
+.sc-title { font-size: 11px; color: #4a6080; margin-bottom: 8px; font-weight: 600; }
+.sc-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+}
+@media (max-width: 900px) { .sc-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 500px) { .sc-grid { grid-template-columns: 1fr; } }
+.sc-card {
+  background: #0a0f1a; border: 1px solid #141e2e; border-radius: 8px;
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 5px;
+}
+.sc-card.sc-best { border-color: rgba(0,180,100,0.4); background: rgba(0,140,70,0.06); }
+.sc-name  { font-size: 11px; font-weight: 700; color: #c0cce0; display: flex; align-items: center; gap: 5px; }
+.sc-crown { font-size: 10px; }
+.sc-row   { display: flex; justify-content: space-between; font-size: 10px; color: #4a6080; }
+.sc-row b { color: #8a9ab8; }
+.sc-row .pos { color: #00c878; }
+.sc-row .neg { color: #ee5555; }
+.sc-empty { font-size: 9px; color: #1e2e40; }
+
+#lab-track {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px; padding: 12px 14px;
+  flex: 1 1 280px; min-width: 0;
+}
+#lab-track-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-top: 8px;
+}
 
 /* ── Paper Trading Bot ── */
 #lab-paper {
@@ -792,9 +761,7 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   <div class="tab-nav">
     <button class="tab-btn active" id="tab-screener" onclick="switchTab('screener')">Screener</button>
     <button class="tab-btn" id="tab-strategy" onclick="switchTab('strategy')">Estrategia</button>
-    <button class="tab-btn" id="tab-scalp5m" onclick="switchTab('scalp5m')">Scalp 5M</button>
     <button class="tab-btn" id="tab-lab" onclick="switchTab('lab')">🔬 Lab</button>
-    <button class="tab-btn" id="tab-track" onclick="switchTab('track')">📈 Seguimiento</button>
   </div>
   <span class="badge" id="sym-count">—</span>
   <button class="refresh-btn" id="refresh-btn" onclick="forceRefresh()">↻ Refresh</button>
@@ -907,36 +874,6 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   </div>
 </div>
 
-<!-- ── Scalp 5M tab ── -->
-<div id="scalp5m-tab">
-  <div id="s5m-header">
-    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-      <span class="s5m-section-title">⚡ Scalp 5M — Señales de entrada inmediata</span>
-      <span class="s5m-desc">Basado en OI 5m + Price 5m + confirmación 15m · mín $300k vol/h</span>
-    </div>
-  </div>
-  <div id="s5m-body">
-    <div class="s5m-col">
-      <div class="s5m-col-title s5m-long-title">▲ Long 5M — Top 5</div>
-      <div id="s5m-long-cards" class="s5m-grid"></div>
-    </div>
-    <div class="s5m-col">
-      <div class="s5m-col-title s5m-short-title">▼ Short 5M — Top 5</div>
-      <div id="s5m-short-cards" class="s5m-grid"></div>
-    </div>
-  </div>
-  <div id="s5m-funding">
-    <div class="s5m-fund-col">
-      <div class="s5m-fund-title">💧 Funding negativo — Shorts pagando → Long</div>
-      <div id="s5m-fund-long" class="s5m-fund-grid"></div>
-    </div>
-    <div class="s5m-fund-col">
-      <div class="s5m-fund-title">🔥 Funding positivo — Longs pagando → Short</div>
-      <div id="s5m-fund-short" class="s5m-fund-grid"></div>
-    </div>
-  </div>
-</div>
-
 <!-- ── Laboratorio de estrategias ── -->
 <div id="lab-tab">
   <div id="lab-regime">
@@ -944,39 +881,55 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
     <div id="lab-regime-stats">Esperando datos...</div>
     <div id="lab-regime-dist"></div>
   </div>
-  <div id="lab-columns">
-    <div class="lab-col">
-      <div class="lc-header"><span class="lc-title">Actual</span><span class="lc-sub">Reglas fijas · línea base</span></div>
-      <div class="lc-section long-s">▲ Longs</div>
-      <div id="lc-cur-long" class="lc-list"></div>
-      <div class="lc-section short-s">▼ Shorts</div>
-      <div id="lc-cur-short" class="lc-list"></div>
+  <div id="lab-cols-row">
+    <div id="lab-columns">
+      <div class="lab-col">
+        <div class="lc-header"><span class="lc-title">Actual</span><span class="lc-sub">Reglas fijas · línea base</span></div>
+        <div class="lc-section long-s">▲ Longs</div>
+        <div id="lc-cur-long" class="lc-list"></div>
+        <div class="lc-section short-s">▼ Shorts</div>
+        <div id="lc-cur-short" class="lc-list"></div>
+      </div>
+      <div class="lab-col">
+        <div class="lc-header"><span class="lc-title">Percentil</span><span class="lc-sub">Score relativo al mercado</span></div>
+        <div class="lc-section long-s">▲ Longs</div>
+        <div id="lc-pct-long" class="lc-list"></div>
+        <div class="lc-section short-s">▼ Shorts</div>
+        <div id="lc-pct-short" class="lc-list"></div>
+      </div>
+      <div class="lab-col">
+        <div class="lc-header"><span class="lc-title">Régimen</span><span class="lc-sub">Score ajustado al mercado</span></div>
+        <div class="lc-section long-s">▲ Longs</div>
+        <div id="lc-reg-long" class="lc-list"></div>
+        <div class="lc-section short-s">▼ Shorts</div>
+        <div id="lc-reg-short" class="lc-list"></div>
+      </div>
+      <div class="lab-col">
+        <div class="lc-header"><span class="lc-title">Z-Score</span><span class="lc-sub">Anomalía vs historial propio</span></div>
+        <div class="lc-section long-s">▲ Longs</div>
+        <div id="lc-z-long" class="lc-list"></div>
+        <div class="lc-section short-s">▼ Shorts</div>
+        <div id="lc-z-short" class="lc-list"></div>
+      </div>
     </div>
-    <div class="lab-col">
-      <div class="lc-header"><span class="lc-title">Percentil</span><span class="lc-sub">Score relativo al mercado</span></div>
-      <div class="lc-section long-s">▲ Longs</div>
-      <div id="lc-pct-long" class="lc-list"></div>
-      <div class="lc-section short-s">▼ Shorts</div>
-      <div id="lc-pct-short" class="lc-list"></div>
-    </div>
-    <div class="lab-col">
-      <div class="lc-header"><span class="lc-title">Régimen</span><span class="lc-sub">Score ajustado al mercado</span></div>
-      <div class="lc-section long-s">▲ Longs</div>
-      <div id="lc-reg-long" class="lc-list"></div>
-      <div class="lc-section short-s">▼ Shorts</div>
-      <div id="lc-reg-short" class="lc-list"></div>
-    </div>
-    <div class="lab-col">
-      <div class="lc-header"><span class="lc-title">Z-Score</span><span class="lc-sub">Anomalía vs historial propio</span></div>
-      <div class="lc-section long-s">▲ Longs</div>
-      <div id="lc-z-long" class="lc-list"></div>
-      <div class="lc-section short-s">▼ Shorts</div>
-      <div id="lc-z-short" class="lc-list"></div>
+
+    <div id="lab-track">
+      <div class="sc-title" style="display:flex;align-items:center;gap:10px">
+        <span>📈 Seguimiento de favoritos — tasa de acierto real (score ≥ 6) de tus monedas ★ a 30min y 1h</span>
+        <button class="pt-btn pt-btn-danger" style="margin-left:auto" onclick="clearTrackHistory()">Limpiar</button>
+      </div>
+      <div id="lab-track-cards"></div>
     </div>
   </div>
+
   <div id="lab-confluence">
     <div class="lab-conf-title">🎯 Alta confluencia — símbolo aparece en ≥2 estrategias</div>
     <div id="lab-conf-list"><span class="lr-empty">Calculando...</span></div>
+  </div>
+
+  <div id="lab-strat-compare">
+    <div class="sc-title">📊 Comparador de estrategias — símbolo nuevo en el Top de una columna = "señal"; ¿cuál estrategia acierta más a 30min/1h?</div>
+    <div class="sc-grid" id="sc-grid"><span class="sc-empty">Acumulando señales...</span></div>
   </div>
 
   <div id="lab-paper2">
@@ -1043,14 +996,6 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
       <tbody id="pt-closed-body"><tr><td colspan="8" class="pt-empty">Sin trades cerrados aún</td></tr></tbody>
     </table>
   </div>
-</div>
-
-<div id="track-tab">
-  <div id="track-header">
-    <span>📈 Registra automáticamente el score y precio de tus monedas ★ favoritas cada minuto, y mide si el precio se movió a favor de la señal 30min y 1h después — así puedes ver la tasa de acierto real de cada moneda (score ≥ 6).</span>
-    <button class="pt-btn pt-btn-danger" onclick="clearTrackHistory()">Limpiar historial</button>
-  </div>
-  <div id="track-cards"></div>
 </div>
 
 <div id="liq-bar">
@@ -1221,6 +1166,15 @@ let trackHistory   = JSON.parse(localStorage.getItem('scalp_track') || '{}'); //
 let lastTrackLog   = new Map(); // symbol → ts del último snapshot guardado (throttle ~1/min)
 const TRACK_MAX    = 1500;      // ~25h de historial a 1 snapshot/min
 const TRACK_SCORE_MIN = 6;      // umbral de score para considerar "señal"
+
+// ── Comparador de estrategias del Lab (Actual/Percentil/Régimen/Z-Score) ───
+// Cada vez que un símbolo entra al Top-4 de una estrategia se registra como
+// "señal" con su precio de entrada; 30min/1h después se evalúa si el precio
+// se movió a favor, y así se mide qué estrategia acierta más en la práctica.
+let stratSignals    = JSON.parse(localStorage.getItem('scalp_stratsig') || '[]');
+let activeStratPick = new Map(); // 'estrategia|símbolo|lado' → true mientras siga en el Top
+const STRAT_SIG_MAX = 3000;
+const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-Score' };
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;
 let liqEvents        = []; // {symbol,isLong,usdVal,ts}
@@ -2202,128 +2156,6 @@ function drawBubbleChart(scored) {
   ctx.restore();
 }
 
-// ── Scalp 5M scoring ──────────────────────────────────────────────────────
-function score5m(row) {
-  const n = v => v ?? 0;
-  let L = 0, S = 0;
-
-  // Core: OI 5m + Precio 5m misma dirección con mínimos reales
-  if      (n(row.oi5m) > 0.5 && n(row.price5mPct) > 0.20) L += 4;
-  else if (n(row.oi5m) > 0.2 && n(row.price5mPct) > 0.10) L += 3;
-  else if (n(row.oi5m) > 0.1 && n(row.price5mPct) > 0.05) L += 2;
-  else if (n(row.oi5m) > 0   && n(row.price5mPct) > 0)    L += 1;
-
-  // 15m confirmando acumulación
-  if      (n(row.oi15m) > 0.5) L += 2;
-  else if (n(row.oi15m) > 0.2) L += 1;
-
-  // Volumen elevado
-  if      (n(row.vol1hPct) > 50) L += 2;
-  else if (n(row.vol1hPct) > 15) L += 1;
-
-  // Tendencia 1h alineada
-  if (n(row.price1hPct) > 0.3) L += 1;
-
-  // Funding negativo = sesgo alcista
-  if (n(row.fundingRate) < -0.01) L += 1;
-
-  // Penalización si tendencia 1h opuesta
-  if (n(row.price1hPct) < -0.5) L = Math.floor(L * 0.5);
-
-  // SHORT
-  if      (n(row.oi5m) > 0.5 && n(row.price5mPct) < -0.20) S += 4;
-  else if (n(row.oi5m) > 0.2 && n(row.price5mPct) < -0.10) S += 3;
-  else if (n(row.oi5m) > 0.1 && n(row.price5mPct) < -0.05) S += 2;
-  else if (n(row.oi5m) > 0   && n(row.price5mPct) < 0)     S += 1;
-
-  if      (n(row.oi15m) > 0.5) S += 2;
-  else if (n(row.oi15m) > 0.2) S += 1;
-
-  if      (n(row.vol1hPct) > 50) S += 2;
-  else if (n(row.vol1hPct) > 15) S += 1;
-
-  if (n(row.price1hPct) < -0.3) S += 1;
-  if (n(row.fundingRate) >  0.01) S += 1;
-  if (n(row.price1hPct) >  0.5) S = Math.floor(S * 0.5);
-
-  if ((row.vol1hUSD ?? 0) < 300_000) { L = Math.min(L, 3); S = Math.min(S, 3); }
-
-  return { longScore5m: Math.min(10, Math.max(0, L)), shortScore5m: Math.min(10, Math.max(0, S)) };
-}
-
-// ── Scalp 5M card ─────────────────────────────────────────────────────────
-function make5mCard(row, isLong) {
-  const score = isLong ? row.longScore5m : row.shortScore5m;
-  const barFill    = isLong ? '#00804a' : '#992020';
-  const badgeColor = isLong ? '#00cc88' : '#ff5555';
-  const badgeBg    = isLong ? '#002e1a' : '#2e0a0a';
-  const f  = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
-  const fc = v => v == null ? '#3a4a60' : v >= 0 ? '#55bb88' : '#ee6666';
-  const fr = row.fundingRate;
-  const frStr = fr == null ? '—' : (fr >= 0 ? '+' : '') + fr.toFixed(4) + '%';
-  const frC = fr == null ? '#3a4a60' : fr > 0.01 ? '#e09030' : fr < -0.01 ? '#3090d0' : '#4a5a70';
-  const tvUrl = `https://www.tradingview.com/chart/?symbol=BYBIT:${row.symbol}USDT.P`;
-
-  return `<div class="s5m-card ${isLong?'s5m-long':'s5m-short'}" onclick="window.open('${tvUrl}','_blank')">
-    <div class="s5m-card-hdr">
-      <div class="sc-icon" style="background:${symColor(row.symbol)};width:28px;height:28px;font-size:7px">${row.symbol.slice(0,3)}</div>
-      <div class="s5m-sym">${row.symbol}</div>
-      <div class="sc-badge" style="background:${badgeBg};color:${badgeColor}">${isLong?'LONG':'SHORT'}</div>
-      <div class="s5m-sc">${score}/10</div>
-    </div>
-    <div class="sc-score-bar"><div class="sc-score-fill" style="width:${score*10}%;background:${barFill}"></div></div>
-    <div class="s5m-metrics-grid">
-      <div class="s5m-mrow"><span class="s5m-mlbl">OI  5m</span><span class="s5m-mval" style="color:${fc(row.oi5m)}">${f(row.oi5m)}</span></div>
-      <div class="s5m-mrow"><span class="s5m-mlbl">OI 15m</span><span class="s5m-mval" style="color:${fc(row.oi15m)}">${f(row.oi15m)}</span></div>
-      <div class="s5m-mrow"><span class="s5m-mlbl">P   5m</span><span class="s5m-mval" style="color:${fc(row.price5mPct)}">${f(row.price5mPct)}</span></div>
-      <div class="s5m-mrow"><span class="s5m-mlbl">Vol 1h</span><span class="s5m-mval" style="color:${fc(row.vol1hPct)}">${f(row.vol1hPct)}</span></div>
-    </div>
-    <div class="s5m-card-foot">
-      <span style="color:#3a4a60">${fmtPrice(row.price)}</span>
-      <span style="color:${frC}">Fund ${frStr}</span>
-    </div>
-  </div>`;
-}
-
-// ── Funding pill ───────────────────────────────────────────────────────────
-function makeFundingPill(row, isLong) {
-  const fr = row.fundingRate ?? 0;
-  const frStr = (fr >= 0 ? '+' : '') + fr.toFixed(4) + '%';
-  const frC = isLong ? '#3090d0' : '#e09030';
-  const p1h = row.price1hPct ?? 0;
-  const pC = p1h >= 0 ? '#55bb88' : '#ee6666';
-  const tvUrl = `https://www.tradingview.com/chart/?symbol=BYBIT:${row.symbol}USDT.P`;
-  return `<div class="fund-pill" onclick="window.open('${tvUrl}','_blank')">
-    <div class="sc-icon" style="background:${symColor(row.symbol)};width:24px;height:24px;font-size:6px;flex-shrink:0">${row.symbol.slice(0,3)}</div>
-    <div style="flex:1;min-width:0">
-      <div style="font-weight:700;font-size:12px;color:#dde8ff;line-height:1.2">${row.symbol}</div>
-      <div style="font-size:10px;color:${frC};font-weight:600">${frStr}</div>
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:10px;color:${pC};font-weight:600">${(p1h>=0?'+':'')+p1h.toFixed(2)}%</div>
-      <div style="font-size:9px;color:#2e3c52">${fmtPrice(row.price)}</div>
-    </div>
-  </div>`;
-}
-
-// ── Scalp 5M render ────────────────────────────────────────────────────────
-function renderScalp5m() {
-  if (!allRows.length) return;
-  const scored = allRows.map(r => ({ ...r, ...score5m(r) }));
-
-  const longs5m  = scored.filter(r => r.longScore5m  >= 4).sort((a,b) => b.longScore5m  - a.longScore5m ).slice(0,5);
-  const shorts5m = scored.filter(r => r.shortScore5m >= 4).sort((a,b) => b.shortScore5m - a.shortScore5m).slice(0,5);
-
-  const fundLong  = allRows.filter(r => (r.fundingRate??0) < -0.03).sort((a,b) => (a.fundingRate??0)-(b.fundingRate??0)).slice(0,6);
-  const fundShort = allRows.filter(r => (r.fundingRate??0) >  0.03).sort((a,b) => (b.fundingRate??0)-(a.fundingRate??0)).slice(0,6);
-
-  const empty = `<div class="s5m-empty">Sin señales — mercado lateral</div>`;
-  document.getElementById('s5m-long-cards').innerHTML  = longs5m.map(r => make5mCard(r,true)).join('')  || empty;
-  document.getElementById('s5m-short-cards').innerHTML = shorts5m.map(r => make5mCard(r,false)).join('') || empty;
-  document.getElementById('s5m-fund-long').innerHTML   = fundLong.map(r => makeFundingPill(r,true)).join('')  || `<span style="color:#1e2838;font-size:11px">Ninguna</span>`;
-  document.getElementById('s5m-fund-short').innerHTML  = fundShort.map(r => makeFundingPill(r,false)).join('') || `<span style="color:#1e2838;font-size:11px">Ninguna</span>`;
-}
-
 // ── Strategy render ────────────────────────────────────────────────────────
 function setChartTf(tf) {
   chartTf = tf;
@@ -2471,18 +2303,12 @@ function switchTab(tab) {
   activeTab = tab;
   document.getElementById('screener-tab').style.display  = tab === 'screener'  ? ''     : 'none';
   document.getElementById('strategy-tab').style.display  = tab === 'strategy'  ? 'flex' : 'none';
-  document.getElementById('scalp5m-tab').style.display   = tab === 'scalp5m'   ? 'flex' : 'none';
   document.getElementById('lab-tab').style.display       = tab === 'lab'       ? 'flex' : 'none';
-  document.getElementById('track-tab').style.display     = tab === 'track'     ? 'flex' : 'none';
   document.getElementById('tab-screener').classList.toggle('active', tab === 'screener');
   document.getElementById('tab-strategy').classList.toggle('active', tab === 'strategy');
-  document.getElementById('tab-scalp5m').classList.toggle('active',  tab === 'scalp5m');
   document.getElementById('tab-lab').classList.toggle('active',      tab === 'lab');
-  document.getElementById('tab-track').classList.toggle('active',    tab === 'track');
   if (tab === 'strategy' && allRows.length) renderStrategy();
-  if (tab === 'scalp5m'  && allRows.length) renderScalp5m();
   if (tab === 'lab'      && allRows.length) renderLab();
-  if (tab === 'track') renderSeguimiento();
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────
@@ -2509,9 +2335,7 @@ async function load() {
 
     render();
     if (activeTab === 'strategy') renderStrategy();
-    if (activeTab === 'scalp5m')  renderScalp5m();
     if (activeTab === 'lab')      renderLab();
-    if (activeTab === 'track')    renderSeguimiento();
   } catch (e) {
     document.getElementById('meta').textContent = 'Error: ' + e.message;
   } finally {
@@ -3038,7 +2862,7 @@ function renderLab() {
   const top = (key, side) => [...scored]
     .filter(r => r[key] && r[key][side] >= 2)
     .sort((a,b) => b[key][side] - a[key][side])
-    .slice(0, 6);
+    .slice(0, 4);
 
   function labRow(r, key, side) {
     const sc = r[key]; if (!sc) return '';
@@ -3088,6 +2912,13 @@ function renderLab() {
       </div>`;
     });
   if (confEl) confEl.innerHTML = confItems.join('') || '<span class="lr-empty">Sin confluencia aún</span>';
+
+  // Comparador de estrategias: registra señales nuevas (entradas al Top-4),
+  // evalúa las que ya tienen 30min/1h de antigüedad y refresca el panel
+  logStrategySignals(top);
+  evalStrategySignals();
+  renderStrategyCompare();
+  renderSeguimiento();
 
   // Bot 1 — Confluencia libre
   checkPTExits();
@@ -3186,7 +3017,7 @@ function fmtTrackSpan(ms) {
 }
 
 function renderSeguimiento() {
-  const wrap = document.getElementById('track-cards');
+  const wrap = document.getElementById('lab-track-cards');
   if (!wrap) return;
   if (!favorites.size) {
     wrap.innerHTML = `<div class="tc-empty">Marca monedas con ★ en el Screener para empezar a registrar su historial.</div>`;
@@ -3221,6 +3052,89 @@ function clearTrackHistory() {
   lastTrackLog.clear();
   saveTrackHistory();
   renderSeguimiento();
+}
+
+// ── Comparador de estrategias (Lab) ─────────────────────────────────────────
+// `topFn(key, side)` es la misma función `top()` de renderLab — recibe los
+// símbolos que están en el Top-4 de cada estrategia/lado en este ciclo.
+function logStrategySignals(topFn) {
+  const now = Date.now();
+  const stillActive = new Set();
+  for (const key of Object.keys(STRAT_NAMES)) {
+    for (const side of ['l', 's']) {
+      for (const r of topFn(key, side)) {
+        const pickKey = `${key}|${r.symbol}|${side}`;
+        stillActive.add(pickKey);
+        if (activeStratPick.has(pickKey)) continue; // ya estaba activo, no es señal nueva
+        const row = allRows.find(rr => rr.symbol === r.symbol);
+        if (!row) continue;
+        stratSignals.push({
+          ts: now, strategy: key, symbol: r.symbol, dir: side,
+          score: r[key][side], entryPrice: row.price,
+          eval30: null, eval60: null,
+        });
+        if (stratSignals.length > STRAT_SIG_MAX) stratSignals.shift();
+      }
+    }
+  }
+  for (const k of [...activeStratPick.keys()]) if (!stillActive.has(k)) activeStratPick.delete(k);
+  for (const k of stillActive) activeStratPick.set(k, now);
+  localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+}
+
+// Congela el resultado de cada señal la primera vez que cumple 30min / 1h de
+// antigüedad, comparando el precio de entrada vs. el precio actual en ese momento.
+function evalStrategySignals() {
+  const now = Date.now();
+  let changed = false;
+  for (const sig of stratSignals) {
+    const age = now - sig.ts;
+    if ((!sig.eval30 && age >= 30 * 60_000) || (!sig.eval60 && age >= 60 * 60_000)) {
+      const row = allRows.find(r => r.symbol === sig.symbol);
+      if (!row) continue;
+      const movePct = (row.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
+      const result = { price: row.price, movePct, hit: movePct > 0 };
+      if (!sig.eval30 && age >= 30 * 60_000) { sig.eval30 = result; changed = true; }
+      if (!sig.eval60 && age >= 60 * 60_000) { sig.eval60 = { ...result }; changed = true; }
+    }
+  }
+  if (changed) localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+}
+
+function renderStrategyCompare() {
+  const grid = document.getElementById('sc-grid');
+  if (!grid) return;
+  const agg = (evals) => {
+    if (!evals.length) return null;
+    return {
+      n: evals.length,
+      winRate: Math.round(evals.filter(e => e.hit).length / evals.length * 100),
+      avgMove: evals.reduce((a, e) => a + e.movePct, 0) / evals.length,
+    };
+  };
+  const cards = Object.entries(STRAT_NAMES).map(([key, name]) => {
+    const sigs  = stratSignals.filter(s => s.strategy === key);
+    const s30   = agg(sigs.map(s => s.eval30).filter(Boolean));
+    const s60   = agg(sigs.map(s => s.eval60).filter(Boolean));
+    return { key, name, total: sigs.length, s30, s60 };
+  });
+  // "Más peso" = mejor win rate a 1h con al menos 5 señales evaluadas
+  const ranked = cards.filter(c => c.s60 && c.s60.n >= 5).sort((a, b) => b.s60.winRate - a.s60.winRate);
+  const bestKey = ranked.length ? ranked[0].key : null;
+
+  grid.innerHTML = cards.map(c => {
+    const row = (label, agg) => {
+      if (!agg) return `<div class="sc-row"><span>${label}</span><b>esperando…</b></div>`;
+      const cls = agg.avgMove > 0 ? 'pos' : agg.avgMove < 0 ? 'neg' : '';
+      return `<div class="sc-row"><span>${label} (${agg.n})</span>
+        <span><b>${agg.winRate}%</b> · <span class="${cls}">${agg.avgMove >= 0 ? '+' : ''}${agg.avgMove.toFixed(2)}%</span></span></div>`;
+    };
+    return `<div class="sc-card${c.key === bestKey ? ' sc-best' : ''}">
+      <div class="sc-name">${c.key === bestKey ? '<span class="sc-crown">👑</span>' : ''}${c.name}<span style="margin-left:auto;font-size:9px;color:#2e4060;font-weight:400">${c.total} señales</span></div>
+      ${row('30 min', c.s30)}
+      ${row('1 h', c.s60)}
+    </div>`;
+  }).join('');
 }
 
 // ── Sort ───────────────────────────────────────────────────────────────────
