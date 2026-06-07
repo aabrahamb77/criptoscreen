@@ -667,6 +667,32 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .lr-extra { font-size: 9px; color: #4a6080; }
 .lr-empty { font-size: 10px; color: #1e2e40; padding: 6px 7px; }
 
+/* ── Seguimiento de favoritos ── */
+#track-tab {
+  display: none; flex-direction: column; flex: 1; overflow-y: auto;
+  padding: 12px 14px 80px; gap: 14px; background: #080c12;
+}
+#track-header {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px;
+  padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: 11px; color: #4a6080; line-height: 1.5;
+}
+#track-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px;
+}
+.track-card {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 7px;
+}
+.tc-head { display: flex; align-items: center; gap: 8px; }
+.tc-sym  { font-size: 13px; font-weight: 700; color: #c0cce0; }
+.tc-meta { font-size: 9px; color: #2e4060; margin-left: auto; text-align: right; }
+.tc-row  { display: flex; justify-content: space-between; font-size: 11px; color: #4a6080; }
+.tc-row b { color: #8a9ab8; font-weight: 700; }
+.tc-row .pos { color: #00c878; }
+.tc-row .neg { color: #ee5555; }
+.tc-empty { font-size: 10px; color: #1e2e40; padding: 4px 0; }
+
 #lab-confluence {
   background: #0c1220; border: 1px solid #1a2535; border-radius: 10px; padding: 12px 14px;
 }
@@ -768,6 +794,7 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
     <button class="tab-btn" id="tab-strategy" onclick="switchTab('strategy')">Estrategia</button>
     <button class="tab-btn" id="tab-scalp5m" onclick="switchTab('scalp5m')">Scalp 5M</button>
     <button class="tab-btn" id="tab-lab" onclick="switchTab('lab')">🔬 Lab</button>
+    <button class="tab-btn" id="tab-track" onclick="switchTab('track')">📈 Seguimiento</button>
   </div>
   <span class="badge" id="sym-count">—</span>
   <button class="refresh-btn" id="refresh-btn" onclick="forceRefresh()">↻ Refresh</button>
@@ -1018,6 +1045,14 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   </div>
 </div>
 
+<div id="track-tab">
+  <div id="track-header">
+    <span>📈 Registra automáticamente el score y precio de tus monedas ★ favoritas cada minuto, y mide si el precio se movió a favor de la señal 30min y 1h después — así puedes ver la tasa de acierto real de cada moneda (score ≥ 6).</span>
+    <button class="pt-btn pt-btn-danger" onclick="clearTrackHistory()">Limpiar historial</button>
+  </div>
+  <div id="track-cards"></div>
+</div>
+
 <div id="liq-bar">
   <span class="liq-title">⚡ LIQ</span>
   <span id="liq-ws-dot" title="WS estado" style="font-size:7px;color:#444">●</span>
@@ -1180,6 +1215,12 @@ let soundEnabled     = false;
 let prevAligned      = new Set();
 let bubbleSizeMetric = 'vol'; // 'vol' | 'oi' | 'funding'
 let prevQuadrants    = new Map();
+
+// ── Seguimiento de favoritos (historial de señales + resultado) ────────────
+let trackHistory   = JSON.parse(localStorage.getItem('scalp_track') || '{}'); // symbol → [{ts,price,score,isLong,regime,...}]
+let lastTrackLog   = new Map(); // symbol → ts del último snapshot guardado (throttle ~1/min)
+const TRACK_MAX    = 1500;      // ~25h de historial a 1 snapshot/min
+const TRACK_SCORE_MIN = 6;      // umbral de score para considerar "señal"
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;
 let liqEvents        = []; // {symbol,isLong,usdVal,ts}
@@ -1602,6 +1643,8 @@ function render() {
     const _t = liqSumCache.get(e.symbol);
     if (e.isLong) _t.l += e.usdVal; else _t.s += e.usdVal;
   }
+
+  logTrackSnapshots(allRows);
 
   const rows = getFilteredRows();
   const fc = document.getElementById('filter-count');
@@ -2430,13 +2473,16 @@ function switchTab(tab) {
   document.getElementById('strategy-tab').style.display  = tab === 'strategy'  ? 'flex' : 'none';
   document.getElementById('scalp5m-tab').style.display   = tab === 'scalp5m'   ? 'flex' : 'none';
   document.getElementById('lab-tab').style.display       = tab === 'lab'       ? 'flex' : 'none';
+  document.getElementById('track-tab').style.display     = tab === 'track'     ? 'flex' : 'none';
   document.getElementById('tab-screener').classList.toggle('active', tab === 'screener');
   document.getElementById('tab-strategy').classList.toggle('active', tab === 'strategy');
   document.getElementById('tab-scalp5m').classList.toggle('active',  tab === 'scalp5m');
   document.getElementById('tab-lab').classList.toggle('active',      tab === 'lab');
+  document.getElementById('tab-track').classList.toggle('active',    tab === 'track');
   if (tab === 'strategy' && allRows.length) renderStrategy();
   if (tab === 'scalp5m'  && allRows.length) renderScalp5m();
   if (tab === 'lab'      && allRows.length) renderLab();
+  if (tab === 'track') renderSeguimiento();
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────
@@ -2465,6 +2511,7 @@ async function load() {
     if (activeTab === 'strategy') renderStrategy();
     if (activeTab === 'scalp5m')  renderScalp5m();
     if (activeTab === 'lab')      renderLab();
+    if (activeTab === 'track')    renderSeguimiento();
   } catch (e) {
     document.getElementById('meta').textContent = 'Error: ' + e.message;
   } finally {
@@ -3058,6 +3105,122 @@ function toggleFav(sym) {
   else favorites.add(sym);
   localStorage.setItem('scalp_favs', JSON.stringify([...favorites]));
   render();
+}
+
+// ── Seguimiento de favoritos ────────────────────────────────────────────────
+function saveTrackHistory() {
+  localStorage.setItem('scalp_track', JSON.stringify(trackHistory));
+}
+
+// Guarda 1 snapshot por símbolo favorito cada ~60s: precio, score, dirección,
+// régimen de mercado y contexto (OI/volumen/funding/liquidaciones). Esto permite
+// reconstruir después "qué pasó tras la señal" sin necesitar marcar nada a mano.
+function logTrackSnapshots(rows) {
+  if (!favorites.size) return;
+  const now = Date.now();
+  let regime = null;
+  for (const sym of favorites) {
+    const last = lastTrackLog.get(sym);
+    if (last && now - last < 55_000) continue;
+    const row = rows.find(r => r.symbol === sym);
+    if (!row) continue;
+    if (!regime) regime = detectRegime(allRows);
+    const sc = scoreSymbol(row);
+    const score  = Math.max(sc.longScore, sc.shortScore);
+    const isLong = sc.longScore >= sc.shortScore;
+    const liq = liqSumCache.get(sym) || { l: 0, s: 0 };
+    if (!trackHistory[sym]) trackHistory[sym] = [];
+    trackHistory[sym].push({
+      ts: now, price: row.price, score, isLong,
+      regime: regime.regime,
+      oi1h: row.oi1h, vol1hPct: row.vol1hPct, fundingRate: row.fundingRate,
+      liqL: liq.l, liqS: liq.s,
+    });
+    if (trackHistory[sym].length > TRACK_MAX) trackHistory[sym].shift();
+    lastTrackLog.set(sym, now);
+  }
+  if (regime) saveTrackHistory();
+}
+
+// Para cada snapshot que fue "señal" (score >= TRACK_SCORE_MIN), busca el primer
+// snapshot posterior a >= lookaheadMs y calcula si el precio se movió a favor.
+// Solo cuenta señales con suficiente tiempo transcurrido (resultado ya conocido).
+function trackOutcomes(sym, lookaheadMs) {
+  const hist = trackHistory[sym] || [];
+  const out = [];
+  for (let i = 0; i < hist.length; i++) {
+    const snap = hist[i];
+    if (snap.score < TRACK_SCORE_MIN) continue;
+    const target = snap.ts + lookaheadMs;
+    let future = null;
+    for (let j = i + 1; j < hist.length; j++) {
+      if (hist[j].ts >= target) { future = hist[j]; break; }
+    }
+    if (!future) continue;
+    const movePct = (future.price - snap.price) / snap.price * 100 * (snap.isLong ? 1 : -1);
+    out.push({ snap, movePct, hit: movePct > 0 });
+  }
+  return out;
+}
+
+function trackStats(sym) {
+  const total = (trackHistory[sym] || []).length;
+  if (total < 2) return null;
+  const span = Date.now() - trackHistory[sym][0].ts;
+  const o30 = trackOutcomes(sym, 30 * 60_000);
+  const o60 = trackOutcomes(sym, 60 * 60_000);
+  const agg = (outs) => {
+    if (!outs.length) return null;
+    const hits = outs.filter(o => o.hit).length;
+    const avgMove = outs.reduce((a, o) => a + o.movePct, 0) / outs.length;
+    return { n: outs.length, winRate: Math.round(hits / outs.length * 100), avgMove };
+  };
+  return { totalSnaps: total, spanMs: span, s30: agg(o30), s60: agg(o60) };
+}
+
+function fmtTrackSpan(ms) {
+  const h = ms / 3_600_000;
+  if (h < 1) return Math.round(ms / 60_000) + 'm';
+  if (h < 24) return h.toFixed(1) + 'h';
+  return (h / 24).toFixed(1) + 'd';
+}
+
+function renderSeguimiento() {
+  const wrap = document.getElementById('track-cards');
+  if (!wrap) return;
+  if (!favorites.size) {
+    wrap.innerHTML = `<div class="tc-empty">Marca monedas con ★ en el Screener para empezar a registrar su historial.</div>`;
+    return;
+  }
+  const cards = [...favorites].sort().map(sym => {
+    const stats = trackStats(sym);
+    const head = `<div class="tc-head"><span class="tc-sym">${sym}</span><span class="tc-meta">${
+      stats ? `${stats.totalSnaps} snapshots · ${fmtTrackSpan(stats.spanMs)}` : 'sin datos aún'
+    }</span></div>`;
+    if (!stats) {
+      return `<div class="track-card">${head}<div class="tc-empty">Esperando snapshots — vuelve en unos minutos con la app abierta.</div></div>`;
+    }
+    const row = (label, agg) => {
+      if (!agg) return `<div class="tc-row"><span>${label}</span><b>esperando…</b></div>`;
+      const cls = agg.avgMove > 0 ? 'pos' : agg.avgMove < 0 ? 'neg' : '';
+      return `<div class="tc-row"><span>${label} (${agg.n} señales)</span>
+        <span><b>${agg.winRate}% acierto</b> · <span class="${cls}">${agg.avgMove >= 0 ? '+' : ''}${agg.avgMove.toFixed(2)}% prom.</span></span></div>`;
+    };
+    return `<div class="track-card">
+      ${head}
+      ${row('A 30 min', stats.s30)}
+      ${row('A 1 h', stats.s60)}
+    </div>`;
+  });
+  wrap.innerHTML = cards.join('');
+}
+
+function clearTrackHistory() {
+  if (!confirm('¿Borrar todo el historial de seguimiento de favoritos?')) return;
+  trackHistory = {};
+  lastTrackLog.clear();
+  saveTrackHistory();
+  renderSeguimiento();
 }
 
 // ── Sort ───────────────────────────────────────────────────────────────────
