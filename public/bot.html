@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LXR Bot · Scalp Screener</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{background:#07090b;color:#c8d0e0;font-family:'Inter',-apple-system,sans-serif;font-size:13px;min-height:100vh;padding:0 0 40px}
+a{color:inherit;text-decoration:none}
+
+/* header */
+header{display:flex;align-items:center;gap:10px;padding:0 16px;height:44px;border-bottom:1px solid #131820;background:linear-gradient(180deg,#0d1018,#0a0d12);position:sticky;top:0;z-index:10}
+.logo-icon{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#00c878,#0088ff);display:flex;align-items:center;justify-content:center;font-size:11px;box-shadow:0 0 10px rgba(0,200,120,.25)}
+header h1{font-size:13px;font-weight:700;color:#e8edf8;letter-spacing:-.3px}
+header .sub{font-size:10px;color:#3a4558;font-weight:600}
+.spacer{flex:1}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot.on{background:#00c878;box-shadow:0 0 6px #00c878;animation:pulse 2s infinite}
+.dot.off{background:#ee4444;box-shadow:0 0 6px #ee4444}
+.dot.warn{background:#e0a020;box-shadow:0 0 6px #e0a020}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.ws-label{font-size:10px;font-weight:600;color:#7888aa}
+.back-link{font-size:10px;font-weight:600;color:#4a6080;border:1px solid #1e2a3a;background:#0f1520;padding:4px 9px;border-radius:6px}
+.back-link:hover{color:#7888aa}
+/* Embebido dentro de la app (iframe): oculta la cabecera redundante */
+body.embedded{padding-top:0}
+body.embedded header{height:30px;background:transparent;border-bottom:1px solid #11161f}
+body.embedded .logo-icon,
+body.embedded header h1,
+body.embedded header .sub,
+body.embedded .back-link{display:none}
+body.embedded .wrap{padding-top:12px}
+
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+.banner{display:none;margin-bottom:14px;padding:8px 12px;border-radius:8px;font-size:11px;font-weight:600;border:1px solid #2a2410;background:rgba(224,160,32,.08);color:#e0a020}
+.banner.show{display:block}
+
+/* KPI cards */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px}
+.kpi{background:linear-gradient(180deg,#0d1018,#0a0d12);border:1px solid #161d28;border-radius:10px;padding:12px 14px}
+.kpi .label{font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
+.kpi .value{font-size:22px;font-weight:800;color:#e8edf8;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.kpi .value.pos{color:#00c878}
+.kpi .value.neg{color:#ee4444}
+.kpi .hint{font-size:10px;color:#3a4558;margin-top:3px}
+
+/* sections */
+.section{background:linear-gradient(180deg,#0c0f15,#0a0d12);border:1px solid #161d28;border-radius:12px;padding:14px 16px;margin-bottom:16px}
+.section h2{font-size:12px;font-weight:700;color:#c8d8ff;margin-bottom:12px;display:flex;align-items:center;gap:7px}
+.section h2 .count{font-size:10px;font-weight:600;color:#4a5568;background:#10151e;border:1px solid #1c2533;border-radius:10px;padding:1px 8px}
+
+/* table */
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{font-size:9.5px;font-weight:600;color:#3a4558;text-transform:uppercase;letter-spacing:.4px;text-align:right;padding:6px 8px;border-bottom:1px solid #161d28}
+th:first-child,td:first-child{text-align:left}
+td{font-size:12px;padding:8px;border-bottom:1px solid #0f141c}
+tr:last-child td{border-bottom:none}
+.sym{font-weight:700;color:#e8edf8}
+.pill{font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:5px;letter-spacing:.3px}
+.pill.long{background:rgba(0,200,120,.12);color:#00c878;border:1px solid rgba(0,200,120,.25)}
+.pill.short{background:rgba(238,68,68,.12);color:#ee5555;border:1px solid rgba(238,68,68,.25)}
+.pos{color:#00c878}.neg{color:#ee5555}.muted{color:#3a4558}
+.empty{text-align:center;color:#3a4558;font-size:11px;padding:18px 0}
+
+/* signal cards */
+.signals{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.sig{background:#0a0e14;border:1px solid #161d28;border-radius:10px;padding:11px 12px;position:relative;overflow:hidden}
+.sig::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}
+.sig.long::before{background:#00c878}.sig.short::before{background:#ee4444}
+.sig .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.sig .score{font-size:11px;font-weight:800;color:#e8edf8}
+.sig .score .s{font-size:9px;color:#4a5568;font-weight:600}
+.sig .lv{display:flex;gap:10px;font-size:10px;margin:6px 0}
+.sig .lv b{color:#c8d0e0;font-weight:700}
+.sig .reason{font-size:10px;color:#6a7890;line-height:1.5;border-top:1px solid #11161f;padding-top:7px;margin-top:7px}
+.bar{height:3px;border-radius:2px;background:#161d28;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,#0088ff,#00c878)}
+
+footer{max-width:1100px;margin:8px auto 0;padding:0 16px;font-size:10px;color:#2e3a4a;line-height:1.6}
+.updated{font-size:10px;color:#3a4558;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo-icon">⚡</div>
+  <h1>LXR Bot</h1>
+  <span class="sub">paper trading</span>
+  <div class="spacer"></div>
+  <span class="dot off" id="ws-dot"></span>
+  <span class="ws-label" id="ws-label">conectando…</span>
+  <span class="updated" id="updated"></span>
+  <a class="back-link" href="/">← Screener</a>
+</header>
+
+<div class="wrap">
+  <div class="banner" id="banner"></div>
+  <div class="banner" id="cb-banner" style="border-color:#3a1414;background:rgba(238,68,68,.08);color:#ee5555"></div>
+
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+    <span style="font-size:11px;font-weight:600;color:#4a5568">Mercado (BTC):</span>
+    <span id="btc-regime"></span>
+    <span style="font-size:11px;font-weight:600;color:#4a5568;margin-left:8px">PnL del día:</span>
+    <span id="day-pnl" style="font-size:12px;font-weight:700">—</span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="section">
+    <h2>Posiciones abiertas <span class="count" id="open-count">0</span></h2>
+    <div id="open-wrap"></div>
+  </div>
+
+  <div class="section">
+    <h2>Últimas señales LXR <span class="count" id="sig-count">0</span></h2>
+    <div id="sig-wrap"></div>
+  </div>
+
+  <div class="section">
+    <h2>Operaciones recientes <span class="count" id="trades-count">0</span></h2>
+    <div id="trades-wrap"></div>
+  </div>
+
+  <div class="section">
+    <h2>Régimen por símbolo <span class="count" id="reg-count">0</span></h2>
+    <div id="reg-wrap"></div>
+  </div>
+
+  <div class="section">
+    <h2>Heatmap de liquidaciones (BTC) <span class="count">imanes de precio</span></h2>
+    <div id="heat-wrap"></div>
+  </div>
+</div>
+
+<footer>
+  Paper trading y herramienta de análisis. No es asesoramiento financiero.
+  El panel consulta <code>/api/bot/stats</code> cada 5&nbsp;s. Si el bot no está iniciado,
+  se muestran datos de ejemplo para ver la maqueta.
+</footer>
+
+<script>
+// Si el panel se carga dentro de la app (iframe), ocultamos su cabecera propia.
+if (window.self !== window.top) document.body.classList.add('embedded');
+
+const fmtUSD = n => (n==null?'—':'$'+Number(n).toLocaleString('en-US',{maximumFractionDigits:2}));
+const fmtNum = (n,d=2) => (n==null||!isFinite(n))?'—':Number(n).toFixed(d);
+const cls = n => n>0?'pos':n<0?'neg':'muted';
+const sign = n => (n>0?'+':'')+fmtNum(n);
+
+/* ---- datos de ejemplo (maqueta) cuando no hay backend ---- */
+const DEMO = {
+  started:true, wsConnected:true, _demo:true,
+  stats:{trades:23,winRate:60.9,avgR:0.41,profitFactor:1.84,realizedPnl:312.45,equity:10312.45,returnPct:3.12,openPositions:2},
+  circuitBreaker:{halted:false,reason:null,dayPnl:128.4,lossStreak:1,dayPnlPct:1.25},
+  expectancy:{trades:23,winRate:60.9,avgWinR:1.31,avgLossR:0.92,expectancyR:0.44},
+  btcRegime:{regime:'volatile',dir:'down',adx:18.4,er:0.31,atrPct:0.42},
+  regimes:{SOL:{regime:'volatile',dir:'down',adx:17,er:0.28},WLD:{regime:'trend',dir:'down',adx:29,er:0.55},EIGEN:{regime:'volatile',dir:'up',adx:16,er:0.22},BTC:{regime:'volatile',dir:'down',adx:18,er:0.31}},
+  heatmaps:{BTC:[{price:61250,side:'below',weight:8.2,levs:[50,100]},{price:60100,side:'below',weight:6.1,levs:[25,50,100]},{price:63800,side:'above',weight:5.4,levs:[50,100]},{price:64900,side:'above',weight:3.2,levs:[100]}]},
+  openPositions:[
+    {symbol:'SOL',side:'long',entry:65.21,stop:64.10,takeProfit:67.40,score:84,trailActive:true},
+    {symbol:'WLD',side:'short',entry:0.4761,stop:0.4880,takeProfit:0.4520,score:71,trailActive:false},
+  ],
+  lastSignals:[
+    {symbol:'EIGEN',side:'short',score:90,price:0.18269,stop:0.1910,takeProfit:0.1690,reason:'Cascada short_liq z=4.2 dom=88% | move=2.6ATR | OI -1.80% | flow=ok | fundZ=+2.1',components:{liqZ:4.2,moveAtr:2.6,oiChgPct:-1.8,fundingZ:2.1}},
+    {symbol:'SOL',side:'long',score:84,price:65.21,stop:64.10,takeProfit:67.40,reason:'Cascada long_liq z=3.1 dom=82% | move=1.9ATR | OI -0.90% | flow=ok | fundZ=-1.7',components:{liqZ:3.1,moveAtr:1.9,oiChgPct:-0.9,fundingZ:-1.7}},
+    {symbol:'PIPPIN',side:'long',score:68,price:0.01829,stop:0.01760,takeProfit:0.01940,reason:'Cascada long_liq z=2.4 dom=74% | move=1.7ATR | OI -0.40% | flow=no | fundZ=-1.9',components:{liqZ:2.4,moveAtr:1.7,oiChgPct:-0.4,fundingZ:-1.9}},
+  ],
+  recentTrades:[
+    {symbol:'ETH',side:'long',pnl:48.2,r_multiple:1.5,reason_exit:'take_profit',held_sec:540},
+    {symbol:'XRP',side:'short',pnl:-19.6,r_multiple:-1.0,reason_exit:'stop',held_sec:300},
+    {symbol:'DOGE',side:'long',pnl:31.1,r_multiple:1.5,reason_exit:'take_profit',held_sec:720},
+    {symbol:'AVAX',side:'short',pnl:12.4,r_multiple:0.6,reason_exit:'timeout',held_sec:1800},
+  ],
+};
+
+function renderKPIs(s){
+  const k=[
+    {label:'Equity',val:fmtUSD(s.equity),hint:'capital simulado'},
+    {label:'Retorno',val:sign(s.returnPct)+'%',cls:cls(s.returnPct)},
+    {label:'PnL realizado',val:fmtUSD(s.realizedPnl),cls:cls(s.realizedPnl)},
+    {label:'Win rate',val:s.trades?fmtNum(s.winRate,1)+'%':'—',hint:(s.trades||0)+' trades'},
+    {label:'Profit factor',val:s.trades?fmtNum(s.profitFactor):'—',cls:(s.profitFactor>=1?'pos':'neg')},
+    {label:'R medio',val:s.trades?sign(s.avgR):'—',cls:cls(s.avgR)},
+  ];
+  if(window._exp&&window._exp.trades){k.push({label:'Expectancy',val:sign(window._exp.expectancyR)+' R',cls:cls(window._exp.expectancyR),hint:'por trade'});}
+  document.getElementById('kpis').innerHTML=k.map(x=>
+    `<div class="kpi"><div class="label">${x.label}</div>
+     <div class="value ${x.cls||''}">${x.val}</div>
+     ${x.hint?`<div class="hint">${x.hint}</div>`:''}</div>`).join('');
+}
+
+function renderOpen(list){
+  document.getElementById('open-count').textContent=list.length;
+  const w=document.getElementById('open-wrap');
+  if(!list.length){w.innerHTML='<div class="empty">Sin posiciones abiertas</div>';return;}
+  w.innerHTML=`<table><thead><tr>
+    <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Take profit</th><th>Score</th><th>Trailing</th>
+    </tr></thead><tbody>${list.map(p=>`<tr>
+      <td class="sym">${p.symbol}</td>
+      <td><span class="pill ${p.side}">${p.side.toUpperCase()}</span></td>
+      <td>${fmtNum(p.entry,p.entry<1?5:2)}</td>
+      <td class="neg">${fmtNum(p.stop,p.stop<1?5:2)}</td>
+      <td class="pos">${fmtNum(p.takeProfit,p.takeProfit<1?5:2)}</td>
+      <td>${p.score??'—'}</td>
+      <td class="${p.trailActive?'pos':'muted'}">${p.trailActive?'activo':'—'}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function renderSignals(list){
+  document.getElementById('sig-count').textContent=list.length;
+  const w=document.getElementById('sig-wrap');
+  if(!list.length){w.innerHTML='<div class="empty">Sin señales recientes</div>';return;}
+  w.innerHTML=`<div class="signals">${list.map(s=>{
+    const d=s<1?5:2;
+    return `<div class="sig ${s.side}">
+      <div class="top">
+        <span class="sym">${s.symbol} <span class="pill ${s.side}">${s.side.toUpperCase()}</span>${s.strategy?`<span style="font-size:8.5px;color:#6a7890;margin-left:5px">${s.strategy}</span>`:''}</span>
+        <span class="score">${s.score}<span class="s">/100</span></span>
+      </div>
+      <div class="lv">
+        <span>E <b>${fmtNum(s.price,s.price<1?5:2)}</b></span>
+        <span>SL <b class="neg">${fmtNum(s.stop,s.stop<1?5:2)}</b></span>
+        <span>TP <b class="pos">${fmtNum(s.takeProfit,s.takeProfit<1?5:2)}</b></span>
+      </div>
+      <div class="bar"><i style="width:${Math.min(100,s.score)}%"></i></div>
+      <div class="reason">${s.reason||''}</div>
+    </div>`;}).join('')}</div>`;
+}
+
+function renderTrades(list){
+  document.getElementById('trades-count').textContent=list.length;
+  const w=document.getElementById('trades-wrap');
+  if(!list.length){w.innerHTML='<div class="empty">Aún no hay operaciones cerradas</div>';return;}
+  w.innerHTML=`<table><thead><tr>
+    <th>Símbolo</th><th>Lado</th><th>PnL</th><th>R</th><th>Salida</th><th>Duración</th>
+    </tr></thead><tbody>${list.map(t=>`<tr>
+      <td class="sym">${t.symbol}</td>
+      <td><span class="pill ${t.side}">${t.side.toUpperCase()}</span></td>
+      <td class="${cls(t.pnl)}">${fmtUSD(t.pnl)}</td>
+      <td class="${cls(t.r_multiple)}">${sign(t.r_multiple)}</td>
+      <td class="muted">${t.reason_exit||'—'}</td>
+      <td class="muted">${t.held_sec?Math.round(t.held_sec/60)+'m':'—'}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function regimeBadge(reg){
+  if(!reg) return '<span class="muted">—</span>';
+  const map={trend:['#0088ff','TENDENCIA'],volatile:['#e0a020','VOLÁTIL'],range:['#5a6a80','RANGO']};
+  const [c,label]=map[reg.regime]||['#5a6a80','—'];
+  const arrow=reg.dir==='up'?'↑':reg.dir==='down'?'↓':'·';
+  return `<span style="font-size:10px;font-weight:700;color:${c};border:1px solid ${c}55;background:${c}18;border-radius:5px;padding:2px 8px" title="ADX ${reg.adx??'?'} · ER ${reg.er??'?'}">${label} ${arrow}</span>`;
+}
+
+function renderMarket(data){
+  document.getElementById('btc-regime').innerHTML=regimeBadge(data.btcRegime);
+  const cb=data.circuitBreaker||{};
+  const dp=document.getElementById('day-pnl');
+  dp.textContent=(cb.dayPnlPct!=null?sign(cb.dayPnlPct)+'%':'—');
+  dp.className=cls(cb.dayPnlPct);
+  const b=document.getElementById('cb-banner');
+  if(cb.halted){b.classList.add('show');b.textContent='⛔ BOT PAUSADO por circuit breaker: '+(cb.reason||'')+'. Se reanuda al cambiar de día.';}
+  else b.classList.remove('show');
+}
+
+function renderRegimes(regs){
+  const entries=Object.entries(regs||{});
+  document.getElementById('reg-count').textContent=entries.length;
+  const w=document.getElementById('reg-wrap');
+  if(!entries.length){w.innerHTML='<div class="empty">Sin datos de régimen</div>';return;}
+  w.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:8px">'+entries.map(([sym,r])=>
+    `<div style="display:flex;align-items:center;gap:7px;background:#0a0e14;border:1px solid #161d28;border-radius:8px;padding:6px 10px">
+      <span class="sym" style="font-size:11px">${sym}</span>${regimeBadge(r)}</div>`).join('')+'</div>';
+}
+
+function renderHeatmap(heatmaps){
+  const h=(heatmaps&&(heatmaps.BTC||heatmaps.BTCUSDT))||[];
+  const w=document.getElementById('heat-wrap');
+  if(!h.length){w.innerHTML='<div class="empty">Sin clusters calculados</div>';return;}
+  const max=Math.max(...h.map(x=>x.weight))||1;
+  const sorted=h.slice().sort((a,b)=>b.price-a.price);
+  w.innerHTML=sorted.map(c=>{
+    const col=c.side==='above'?'#ee4444':'#00c878';
+    return `<div style="display:flex;align-items:center;gap:10px;margin:4px 0">
+      <span style="width:90px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;color:#c8d0e0">${fmtNum(c.price,c.price<1?5:1)}</span>
+      <div style="flex:1;height:14px;background:#0f141c;border-radius:3px;overflow:hidden">
+        <i style="display:block;height:100%;width:${(c.weight/max*100).toFixed(0)}%;background:${col}88"></i></div>
+      <span class="muted" style="width:120px;font-size:10px">${c.side==='above'?'shorts ▲':'longs ▼'} · ${c.levs.join('/')}x</span>
+    </div>`;}).join('');
+}
+
+function setWS(state){
+  const dot=document.getElementById('ws-dot'),lab=document.getElementById('ws-label');
+  if(state==='on'){dot.className='dot on';lab.textContent='WS conectado';}
+  else if(state==='warn'){dot.className='dot warn';lab.textContent='datos de ejemplo';}
+  else{dot.className='dot off';lab.textContent='bot no iniciado';}
+}
+
+function render(data,demo){
+  const s=data.stats||{};
+  window._exp=data.expectancy;
+  renderKPIs(s);
+  renderMarket(data);
+  renderOpen(data.openPositions||[]);
+  renderSignals(data.lastSignals||[]);
+  renderTrades(data.recentTrades||[]);
+  renderRegimes(data.regimes||{});
+  renderHeatmap(data.heatmaps||{});
+  const b=document.getElementById('banner');
+  if(demo){b.classList.add('show');b.textContent='⚠ Mostrando datos de EJEMPLO — el bot no está iniciado. Arráncalo con LXR_BOT=1 npm start (o npm run bot) y expón /api/bot/stats.';setWS('warn');}
+  else{b.classList.remove('show');setWS(data.wsConnected?'on':'off');}
+  document.getElementById('updated').textContent=new Date().toLocaleTimeString();
+}
+
+async function tick(){
+  try{
+    const r=await fetch('/api/bot/stats',{cache:'no-store'});
+    if(!r.ok) throw new Error('no endpoint');
+    const data=await r.json();
+    if(!data||!data.started) return render(DEMO,true);
+    render(data,false);
+  }catch(_){ render(DEMO,true); }
+}
+tick();
+setInterval(tick,5000);
+</script>
+</body>
+</html>

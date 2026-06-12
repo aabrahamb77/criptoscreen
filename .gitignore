@@ -1,3 +1,7 @@
 node_modules/
 .claude/
 *.bat
+.env
+server.log
+server-error.log
+*.log
