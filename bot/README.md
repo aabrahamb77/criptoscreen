@@ -43,6 +43,7 @@ app.get('/api/bot/stats', (req, res) => res.json(lxrBot.getState()));
 | `bybit.js` | REST (klines/OI/funding/tickers/orderbook) + WS (`publicTrade`, `allLiquidation`) con `coverageSec()`. |
 | `paperBroker.js` | Sizing por riesgo, fees, **SL/TP intravela** (regla pesimista), trailing, persistencia y **rehidratación** en Turso. |
 | `recorder.js` | **Grabación de order flow** en Turso para backtests: CVD por buckets + liquidaciones raw (`LXR_RECORD=1`). |
+| `edge.js` | **Capa de edge v2**: semáforo de mercado, filtro de salud por operación y asignación adaptativa por expectancy. |
 | `index.js` | Loop principal + `startBot()` / `getState()`. |
 
 ### Honestidad de la simulación
@@ -56,6 +57,30 @@ app.get('/api/bot/stats', (req, res) => res.json(lxrBot.getState()));
   liquidaciones se acota a la cobertura real (con <5 ventanas el z es 0).
 - **fakeoutFade con score dinámico**: pondera OI cayendo, CVD opuesto a la
   ruptura y mecha de rechazo — ya no pasa el filtro automáticamente.
+
+### Capa de edge (bot v2)
+
+Tres controles sobre cada operación (`LXR_EDGE=0` los desactiva):
+
+1. **Semáforo de mercado** (server-side): BTC en ×ATR + cascadas de liquidación
+   + chop direccional + funding estirado → riesgo 0-100. En 🔴 (≥60) no se abre
+   nada; en 🟡 (30-59) se opera a **mitad de tamaño**; en 🟢 tamaño normal.
+2. **Filtro de salud por operación**: liquidez, CVD a favor, OI con interés,
+   funding sin euforia y — solo para estrategias de continuación — alineación
+   de temporalidades y no sobre-extensión (las de reversión operan justamente
+   la extensión, no se les exige). Salud < `EDGE_MIN_QUALITY` (60%) → la señal
+   se descarta y queda registrada en el log.
+3. **Asignación adaptativa**: cada trade persiste su estrategia; con ≥15 trades
+   y expectancy < −0.05R una estrategia queda **desactivada automáticamente**
+   — el bot deja de operar lo que demuestra no funcionar.
+
+`getState().edge` expone el semáforo actual, los descartes (guard/quality/
+disabled) y la expectancy por estrategia.
+
+**Criterios de validación antes de pensar en dinero real** (todos a la vez):
+n ≥ 100 trades cerrados · profit factor ≥ 1.3 · expectancy ≥ +0.05R · max
+drawdown < 10% · y que se sostenga en ≥ 3 semanas con regímenes distintos.
+Si no se cumplen, el bot NO es rentable, diga lo que diga una buena semana.
 
 ### Grabación de order flow (para backtests)
 

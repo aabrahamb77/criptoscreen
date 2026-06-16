@@ -260,8 +260,29 @@ function renderMarket(data){
   dp.textContent=(cb.dayPnlPct!=null?sign(cb.dayPnlPct)+'%':'—');
   dp.className=cls(cb.dayPnlPct);
   const b=document.getElementById('cb-banner');
-  if(cb.halted){b.classList.add('show');b.textContent='⛔ BOT PAUSADO por circuit breaker: '+(cb.reason||'')+'. Se reanuda al cambiar de día.';}
+  if(cb.halted){
+    b.classList.add('show');
+    b.innerHTML='⛔ BOT PAUSADO por circuit breaker: '+(cb.reason||'')+'. Se reanuda al cambiar de día. '+
+      '<button id="cb-reset-btn" style="margin-left:8px;font-size:10px;font-weight:700;color:#ee5555;border:1px solid #ee555555;background:#ee555518;border-radius:5px;padding:3px 9px;cursor:pointer">Reanudar ahora</button>';
+    const btn=document.getElementById('cb-reset-btn');
+    if(btn) btn.onclick=resetBreaker;
+  }
   else b.classList.remove('show');
+}
+
+async function resetBreaker(){
+  if(!confirm('¿Reanudar el bot ahora? Esto reinicia el contador de pérdida diaria y la racha de pérdidas, saltándose la pausa de seguridad por hoy.')) return;
+  const btn=document.getElementById('cb-reset-btn');
+  if(btn){btn.disabled=true;btn.textContent='Reanudando…';}
+  try{
+    const r=await fetch('/api/bot/reset',{method:'POST'});
+    const data=await r.json();
+    if(!data.ok) throw new Error(data.error||'fallo');
+    tick();
+  }catch(e){
+    alert('No se pudo reanudar: '+e.message);
+    if(btn){btn.disabled=false;btn.textContent='Reanudar ahora';}
+  }
 }
 
 function renderRegimes(regs){

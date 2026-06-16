@@ -415,6 +415,7 @@ function renderConfluence(scored) {
   renderQuadWinrates();
   renderConfAlerts();
   renderQuadAligned(res.valid);
+  renderPotentialPanel(res.valid);
   renderConfCalib();
   if (selectedBubble && confCache.has(selectedBubble)) renderConfDetail(selectedBubble);
 }
@@ -540,6 +541,101 @@ function renderQuadAligned(rows) {
   }).join('');
   el.innerHTML = `<div class="qal-head">🧭 Cuadrante alineado en 15m · 1h · 4h · 1d (${items.filter(i => i.tfs === 4).length} completas)</div>
     <div class="qal-grid">${chips || '<span class="cc-note">Ninguna moneda con las temporalidades en el mismo cuadrante ahora mismo.</span>'}</div>`;
+}
+
+// ── 🚀 Monedas con potencial ────────────────────────────────────────────────
+// Replica el método que usé para detectar STG en el análisis manual. Busca el
+// setup de SQUEEZE/ACUMULACIÓN: cortos pagando funding extremo + dinero nuevo
+// entrando (OI multi-ventana) + giro de precio incipiente + independiente de
+// BTC. El CVD es el GATILLO: con flujo a favor sube el score; en contra avisa
+// "esperar confirmación" (igual que dije de STG: tesis intacta, falta el CVD).
+function potentialScore(row) {
+  const n = v => v ?? 0;
+  const reasons = [];
+  let score = 0;
+
+  // Dirección de la tesis por el funding (quién paga = a quién exprimir)
+  const fr = n(row.fundingRate);
+  // LONG si cortos pagan (funding negativo) · SHORT si longs pagan (positivo)
+  const dirUp = fr < 0 ? true : fr > 0 ? false : (n(row.oi1h) > 0 && n(row.price1hPct) >= 0);
+  const sgn = dirUp ? 1 : -1;
+
+  // 1) Funding extremo (núcleo, hasta 35): cuanto más estirado, más combustible
+  const af = Math.abs(fr);
+  if      (af >= 0.5)  { score += 35; reasons.push(`funding ${fr.toFixed(2)}% extremo`); }
+  else if (af >= 0.2)  { score += 25; reasons.push(`funding ${fr.toFixed(2)}% alto`); }
+  else if (af >= 0.05) { score += 15; reasons.push(`funding ${fr.toFixed(3)}% estirado`); }
+  else return null; // sin funding estirado no es este setup
+
+  // 2) OI acumulando en varias ventanas (hasta 30): dinero NUEVO, no cortos viejos
+  const oiWins = [n(row.oi5m), n(row.oi1h), n(row.oi4h), n(row.oi24h)];
+  const oiUp = oiWins.filter(v => v > 0.2).length;
+  if      (oiUp >= 3) { score += 30; reasons.push(`OI subiendo en ${oiUp}/4 ventanas (acumulación)`); }
+  else if (oiUp >= 2) { score += 18; reasons.push(`OI subiendo en ${oiUp}/4 ventanas`); }
+  else if (oiUp >= 1) { score += 8; }
+  else reasons.push('⚠ OI no acumula (posible fade débil)');
+
+  // 3) Giro de precio incipiente a favor (hasta 15): recuperando, no en caída libre
+  if (sgn * n(row.price5mPct) > 0 || sgn * n(row.price1hPct) > 0) { score += 15; reasons.push('precio girando a favor'); }
+  else reasons.push('⚠ precio aún no gira');
+
+  // 4) Independiente de BTC (hasta 10): tesis propia, no arrastrada
+  if (row.btcCorr != null && Math.abs(row.btcCorr) <= 0.4) { score += 10; reasons.push(`independiente de BTC (ρ ${row.btcCorr.toFixed(2)})`); }
+
+  // 5) Liquidaciones a favor recientes (hasta 10): el squeeze ya empezó
+  const lq = liqSumCache.get(row.symbol);
+  if (lq) {
+    const favLiq = dirUp ? lq.s : lq.l; // long: cortos liquidados · short: largos liquidados
+    if (favLiq > 100_000) { score += 10; reasons.push('cascada a favor en curso'); }
+    else if (favLiq > 20_000) score += 4;
+  }
+
+  // GATILLO: CVD 5m. A favor confirma (+10); en contra no resta pero AVISA.
+  const cvd = row.cvd5m;
+  let trigger;
+  if (cvd == null) trigger = { state: 'wait', txt: 'sin datos de flujo' };
+  else if (sgn * cvd > 0) { score += 10; trigger = { state: 'go', txt: 'CVD a favor — gatillo activo' }; }
+  else trigger = { state: 'wait', txt: 'esperar CVD a favor (gatillo)' };
+
+  // exige el núcleo del setup: funding estirado + algo de acumulación de OI
+  if (score < 40 || oiUp < 1) return null;
+
+  return {
+    symbol: row.symbol, side: dirUp ? 'long' : 'short',
+    score: Math.min(100, Math.round(score)),
+    reasons, trigger, price: row.price,
+    funding: fr, corr: row.btcCorr,
+  };
+}
+
+function renderPotentialPanel(scored) {
+  const grid = document.getElementById('potential-grid');
+  const cnt = document.getElementById('potential-count');
+  if (!grid) return;
+  const list = scored.map(potentialScore).filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+  // ready = gatillo activo y score alto; watch = tesis viva, falta confirmación
+  if (cnt) cnt.textContent = list.length
+    ? `${list.filter(p => p.trigger.state === 'go').length} con gatillo activo · ${list.length} en total`
+    : '';
+  if (!list.length) {
+    grid.innerHTML = '<div class="cc-note">Ninguna moneda con el setup de squeeze/acumulación ahora mismo (sin funding estirado + OI acumulando). En mercado lateral es lo normal — esperar.</div>';
+    return;
+  }
+  grid.innerHTML = list.slice(0, 8).map(p => {
+    const go = p.trigger.state === 'go';
+    const col = go ? '#2fe08a' : '#e0a830';
+    return `<div class="pot-card${go ? ' pot-go' : ''}" onclick="selectConfSymbol('${p.symbol}')">
+      <div class="cc-top">
+        <span class="cc-sym">${p.symbol}</span>
+        <span class="cc-side ${p.side}">${p.side.toUpperCase()}</span>
+        <span class="pot-trigger" style="color:${col}">${go ? '✓ LISTA' : '⏳ VIGILAR'}</span>
+        <span class="cc-count" style="color:${col}">${p.score}</span>
+      </div>
+      <div class="pot-reasons">${p.reasons.slice(0, 3).map(r => `<div class="pot-r">${r.startsWith('⚠') ? r : '· ' + r}</div>`).join('')}</div>
+      <div class="pot-foot" style="color:${col}">🔑 ${p.trigger.txt}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderConfAlerts() {

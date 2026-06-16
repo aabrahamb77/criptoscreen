@@ -57,4 +57,10 @@ module.exports = {
   // mínima de datos en vivo (CVD/liqs) tras conectar o RECONECTAR. Además el
   // baseline del z-score de liquidaciones se acota a la cobertura real.
   WS_WARMUP_SEC: Number(process.env.LXR_WARMUP_SEC || 120),
+
+  // ── Capa de edge (bot v2) ── LXR_EDGE=0 la desactiva por completo.
+  EDGE_ENABLED: process.env.LXR_EDGE !== '0',
+  EDGE_MIN_QUALITY_PCT: Number(process.env.EDGE_MIN_QUALITY || 0.6), // salud mínima por operación (0-1)
+  EDGE_DISABLE_MIN_TRADES: 15,    // trades mínimos antes de poder desactivar una estrategia
+  EDGE_DISABLE_EXPECTANCY: -0.05, // expectancy R por debajo de esto → estrategia desactivada
 };

@@ -161,6 +161,14 @@
       <div id="conf-aligned"></div>
     </div>
   </div>
+  <div id="potential-section">
+    <div class="conf-head">
+      <span class="conf-title">🚀 Monedas con potencial</span>
+      <span class="conf-sub">mismo método que detectó STG: funding extremo · OI acumulando multi-ventana · giro de precio · independiente de BTC · flujo. Ordenadas por potencial — clic para el radar.</span>
+      <span id="potential-count" style="font-size:9px;color:#3a5070;margin-left:auto"></span>
+    </div>
+    <div id="potential-grid"><div class="cc-note">Esperando datos…</div></div>
+  </div>
   <div id="cards-section">
     <div class="picks-col long-col">
       <div class="picks-title long-title">🚀 Long momentum — Top 5</div>
@@ -277,9 +285,19 @@
           <button class="pt-btn" style="margin-left:auto" onclick="exportHistory()">Exportar JSON</button>
           <button class="pt-btn pt-btn-danger" onclick="clearTrackHistory()">Limpiar</button>
         </div>
+        <div id="track-ledger"></div>
         <div id="lab-track-cards"></div>
       </div>
     </div>
+  </div>
+
+  <div id="lab-health">
+    <div class="lab-conf-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>💎 Salud — monedas en buen momento y seguras de operar</span>
+      <span id="lab-health-count" style="font-size:9px;color:#3a5070"></span>
+      <span style="font-size:9px;color:#2e4060;margin-left:auto">liquidez · tendencia · flujo · OI · funding · liqs · extensión · rango — nota A/B = saludable</span>
+    </div>
+    <div id="lab-health-cards"><span class="lr-empty">Calculando...</span></div>
   </div>
 
   <div id="lab-confluence">
@@ -1360,12 +1378,18 @@ function render() {
   tbody.innerHTML = sorted.map((row, i) => {
     const isFav = favorites.has(row.symbol);
     const icon = `<div class="sym-icon" style="background:${symColor(row.symbol)}">${row.symbol.slice(0,3)}</div>`;
+    const h = healthScore(row);
+    const gem = h.grade === 'A'
+      ? `<span class="health-gem" title="💎 Salud ${h.score}/100 (nota A, ${h.side.toUpperCase()}) — ${h.ok.slice(0, 3).join(' · ')}">💎</span>`
+      : h.grade === 'B'
+        ? `<span class="health-gem health-gem-b" title="Salud ${h.score}/100 (nota B, ${h.side.toUpperCase()}) — ${h.ok.slice(0, 2).join(' · ')}${h.bad.length ? ' · ✗ ' + h.bad[0] : ''}">💎</span>`
+        : '';
     return `<tr>
       <td class="left-align"><div class="rank-cell">
         <span class="rank-num">${i+1}</span>
         <span class="star${isFav?' on':''}" onclick="toggleFav('${row.symbol}')">★</span>
       </div></td>
-      <td class="left-align"><div class="sym-cell">${icon}<span class="sym-name">${row.symbol}</span>${quadBadge(row)}${streakBadge(row)}<span class="row-radar" title="Abrir en el radar de confluencia (checklist de 7 señales)" onclick="event.stopPropagation();openInRadar('${row.symbol}')">🎯</span></div></td>
+      <td class="left-align"><div class="sym-cell">${icon}<span class="sym-name">${row.symbol}</span>${gem}${quadBadge(row)}${streakBadge(row)}<span class="row-radar" title="Abrir en el radar de confluencia (checklist de 7 señales)" onclick="event.stopPropagation();openInRadar('${row.symbol}')">🎯</span></div></td>
       <td><div class="price-cell">${sparkSVG(row.spark)}<span style="margin-left:6px">${fmtPrice(row.price)}</span></div></td>
       <td>${fundingCell(row.fundingRate)}</td>
       <td>${cvdCell(row.cvd1m)}</td>
@@ -2875,6 +2899,136 @@ function scoreDecorrAlpha(row) {
   return dirUp ? { longScore: sc, shortScore: 0 } : { longScore: 0, shortScore: sc };
 }
 
+// ── 💎 Score de SALUD (0-100): ¿es un movimiento de calidad, operable? ──────
+// Distinto del score de momentum (que mide "se mueve ahora"): la salud mide si
+// el movimiento es FIABLE — con liquidez, tendencia coherente, flujo real
+// respaldando, OI sano, sin euforia de funding, sin cascadas en contra y sin
+// estar tan extendida que entrar sea chasear. Nota: A ≥75 · B ≥60 · C ≥45 · D.
+function healthScore(row) {
+  const n = v => v ?? 0;
+  const dirUp = n(row.price4hPct) !== 0 ? n(row.price4hPct) > 0 : n(row.price1hPct) >= 0;
+  const sgn = dirUp ? 1 : -1;
+  let score = 0;
+  const ok = [], bad = [];
+
+  // 1) Liquidez (0-15): sin liquidez no hay scalp sano
+  const turn = n(row.turnover24h);
+  if      (turn >= 100e6) { score += 15; ok.push('liquidez alta (≥$100M/24h)'); }
+  else if (turn >= 30e6)  { score += 10; ok.push('liquidez aceptable'); }
+  else if (turn >= 10e6)  { score += 5;  bad.push('liquidez justa'); }
+  else bad.push('ilíquida (<$10M/24h)');
+
+  // 2) Tendencia multi-TF (0-15): todas las temporalidades contando lo mismo
+  const al = timeframeAlignment(row);
+  if (al && (al.dir === 'up') === dirUp) {
+    if (al.count === al.total && al.total >= 3) { score += 15; ok.push(`tendencia alineada ${al.count}/${al.total} TFs`); }
+    else if (al.count >= 3)                     { score += 10; ok.push(`tendencia ${al.count}/${al.total} TFs`); }
+    else score += 5;
+  } else bad.push('temporalidades en conflicto');
+
+  // 3) Flujo real (0-15): CVD a favor, relativo al volumen propio
+  const vol5m = n(row.vol1hUSD) / 12;
+  if (row.cvd5m != null && vol5m > 0) {
+    const ratio = (row.cvd5m * sgn) / vol5m;
+    if      (ratio > 0.15)  { score += 15; ok.push('flujo agresor fuerte a favor'); }
+    else if (ratio > 0.03)  { score += 9;  ok.push('flujo a favor'); }
+    else if (ratio > -0.05) score += 4;
+    else bad.push('CVD en contra (divergencia de flujo)');
+  }
+
+  // 4) OI sano (0-15): dinero nuevo entrando, de forma sostenida
+  if      (n(row.oi1h) > 0.2 && n(row.oi4h) > 0) { score += 10; ok.push('OI creciendo (dinero nuevo)'); }
+  else if (n(row.oi1h) > 0)                       score += 5;
+  else bad.push('OI cayendo (interés saliendo)');
+  const st = oiStreaks.get(row.symbol);
+  if (st && st.dir > 0 && (Date.now() - st.since) >= 5 * 60_000) { score += 5; ok.push('acumulación de OI sostenida'); }
+
+  // 5) Funding sin euforia (0-10)
+  const fr = n(row.fundingRate);
+  const overheated = dirUp ? fr > 0.05 : fr < -0.05;
+  if (overheated) bad.push('funding sobrecalentado (euforia/apalancamiento estirado)');
+  else if (Math.abs(fr) <= 0.02) { score += 10; ok.push('funding equilibrado'); }
+  else score += 5;
+
+  // 6) Sin cascada de liquidaciones en contra (0-10)
+  const lq = liqSumCache.get(row.symbol);
+  const liqAgainst = lq ? (dirUp ? lq.l : lq.s) : 0;
+  if      (liqAgainst > 100_000) bad.push('cascada de liquidaciones en contra');
+  else if (liqAgainst > 30_000)  score += 4;
+  else score += 10;
+
+  // 7) No sobre-extendida (0-10): que entrar no sea chasear
+  if (row.moveAtr1h != null) {
+    const ext = Math.abs(row.moveAtr1h);
+    if      (ext > 2.5)  bad.push(`sobre-extendida (${row.moveAtr1h.toFixed(1)}×ATR): esperar retroceso`);
+    else if (ext >= 0.5) { score += 10; ok.push('movimiento sano, no parabólico'); }
+    else score += 6;
+  }
+
+  // 8) Estructura propia (0-10): rompiendo su rango a favor
+  const reg = detectSymbolRegime(row.symbol) || fallbackSymbolRegime(row);
+  if (reg && ((reg.regime === 'RUPTURA ↑' && dirUp) || (reg.regime === 'RUPTURA ↓' && !dirUp))) {
+    score += 10; ok.push('rompiendo su propio rango a favor');
+  } else if (reg && reg.regime === 'VOLÁTIL') score += 3;
+  else if (reg) score += 5;
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const grade = score >= 75 ? 'A' : score >= 60 ? 'B' : score >= 45 ? 'C' : 'D';
+  return { symbol: row.symbol, score, grade, side: dirUp ? 'long' : 'short', ok, bad };
+}
+
+const HEALTH_GRADE_STYLE = {
+  A: ['#06291a', '#2fe08a'], B: ['#0a2518', '#55bb88'],
+  C: ['#2a2410', '#e0a830'], D: ['#240808', '#aa6060'],
+};
+
+function renderHealthPanel() {
+  const el = document.getElementById('lab-health-cards');
+  const cnt = document.getElementById('lab-health-count');
+  if (!el) return;
+  const healths = allRows.map(healthScore).sort((a, b) => b.score - a.score);
+  const good = healths.filter(h => h.score >= 60);
+  if (cnt) cnt.textContent = good.length
+    ? `${good.filter(h => h.grade === 'A').length} nota A · ${good.filter(h => h.grade === 'B').length} nota B`
+    : '';
+  if (!good.length) {
+    el.innerHTML = '<span class="lr-empty">Ninguna moneda cumple los criterios de salud ahora mismo — a veces la mejor operación es esperar.</span>';
+    return;
+  }
+  el.innerHTML = good.slice(0, 8).map(h => {
+    const [bg, fg] = HEALTH_GRADE_STYLE[h.grade];
+    const row = allRows.find(r => r.symbol === h.symbol);
+    return `<div class="health-card">
+      <div class="hc-head">
+        <span class="hc-sym">${h.symbol}</span>
+        <span class="cc-side ${h.side}">${h.side.toUpperCase()}</span>
+        <span class="hc-grade" style="background:${bg};color:${fg}">${h.grade}</span>
+        <span class="hc-score" style="color:${fg}">${h.score}</span>
+        <span class="row-radar" style="margin-left:auto" title="Abrir en el radar de confluencia" onclick="openInRadar('${h.symbol}')">🎯</span>
+        <span class="star${favorites.has(h.symbol) ? ' on' : ''}" title="Añadir al seguimiento" onclick="toggleFav('${h.symbol}')">★</span>
+      </div>
+      <div class="hc-rows">
+        ${h.ok.slice(0, 3).map(t => `<div class="hc-row" style="color:#4a8a68">✓ ${t}</div>`).join('')}
+        ${h.bad.slice(0, 2).map(t => `<div class="hc-row" style="color:#a05555">✗ ${t}</div>`).join('')}
+      </div>
+      <div class="hc-foot">${row ? fmtPrice(row.price) : ''} · ρBTC ${row && row.btcCorr != null ? row.btcCorr.toFixed(2) : '—'}</div>
+    </div>`;
+  }).join('');
+
+  // Las nota A entran solas al seguimiento automático (si no son ya favoritas)
+  const now = Date.now();
+  for (const h of good.filter(x => x.grade === 'A').slice(0, 5)) {
+    if (favorites.has(h.symbol)) continue;
+    autoTracked.set(h.symbol, {
+      addedAt: autoTracked.get(h.symbol)?.addedAt ?? now,
+      expiresAt: now + AUTOTRACK_TTL_MS,
+      side: h.side === 'long' ? 'l' : 's',
+      heat: Math.round(h.score / 10),
+    });
+  }
+  saveAutoTracked();
+}
+
 // Heat score 0-10: combina cuántas estrategias coinciden en el mismo lado
 // (confluencia), qué tan anómalo es el movimiento de OI propio (z-score) y el
 // score "actual" base — para detectar monedas "on fire" sin depender de ★.
@@ -3035,6 +3189,8 @@ function renderLab() {
     if (sEl) sEl.innerHTML = top(c.key,'s').map(r => labRow(r,c.key,'s')).join('') || '<div class="lr-empty">Sin señales</div>';
   }
 
+  renderHealthPanel(); // 💎 monedas saludables (y auto-seguimiento de las nota A)
+
   // Confluencia: símbolo aparece en ≥2 estrategias
   const confMap = new Map();
   for (const c of cols) {
@@ -3100,9 +3256,23 @@ function syncToServer() {
     fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trackHistory, stratSignals }),
+      body: JSON.stringify({ trackHistory, stratSignals, trackLedger }),
     }).catch(() => {});
   }, 5000);
+}
+
+// Fusiona libros de detecciones de dos orígenes: clave sym|t0, y si el mismo
+// registro existe abierto en uno y cerrado en otro, gana el cerrado.
+function mergeTrackLedger(local, remote) {
+  if (!Array.isArray(remote) || !remote.length) return local;
+  const byKey = new Map();
+  for (const e of [...remote, ...local]) {
+    if (!e || !e.sym || !e.t0) continue;
+    const k = e.sym + '|' + e.t0;
+    const prev = byKey.get(k);
+    if (!prev || (e.closedAt && !prev.closedAt)) byKey.set(k, e);
+  }
+  return [...byKey.values()].sort((a, b) => a.t0 - b.t0).slice(-LEDGER_MAX);
 }
 
 function mergeTrackHistory(local, remote) {
@@ -3143,6 +3313,8 @@ async function syncFromServer() {
     if (!data) return;
     trackHistory = mergeTrackHistory(trackHistory, data.trackHistory);
     stratSignals = mergeStratSignals(stratSignals, data.stratSignals);
+    trackLedger  = mergeTrackLedger(trackLedger, data.trackLedger);
+    saveTrackLedger();
     saveTrackHistory();
     localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
   } catch (e) { /* sin servidor o sin Turso — seguimos solo con localStorage */ }
@@ -3398,11 +3570,19 @@ function topPromisingPicks(n = 5) {
     .slice(0, n);
 }
 
-function renderTrackSummary(trackedCount) {
+function renderTrackSummary(trackedCount, agg) {
   const countEl = document.getElementById('track-summary-count');
-  if (countEl) countEl.textContent = trackedCount
-    ? `${trackedCount} moneda${trackedCount === 1 ? '' : 's'} en seguimiento`
-    : 'sin monedas en seguimiento aún';
+  if (countEl) {
+    let txt = trackedCount
+      ? `${trackedCount} moneda${trackedCount === 1 ? '' : 's'} en seguimiento`
+      : 'sin monedas en seguimiento aún';
+    // El dato que mide si el sistema aporta: ¿las detecciones van a favor?
+    if (agg && agg.n) {
+      const cls = agg.avg >= 0 ? '#00c878' : '#ee5555';
+      txt += ` — desde detección: ${agg.wins}/${agg.n} a favor · `;
+      countEl.innerHTML = txt + `<b style="color:${cls}">${agg.avg >= 0 ? '+' : ''}${agg.avg.toFixed(2)}% prom.</b>`;
+    } else countEl.textContent = txt;
+  }
   const picksEl = document.getElementById('track-summary-picks');
   if (!picksEl) return;
   const picks = topPromisingPicks(5);
@@ -3413,34 +3593,194 @@ function renderTrackSummary(trackedCount) {
     : '<span class="lr-empty">Sin candidatas destacadas por ahora — vuelve en unos minutos</span>';
 }
 
+// ── 📒 Libro de detecciones: historial PERMANENTE del seguimiento ───────────
+// Cada vez que una moneda entra al seguimiento se abre un registro (lado,
+// precio, origen); cuando sale (expira el auto o se quita la ★) se cierra con
+// el resultado final. Así el rendimiento histórico del sistema es auditable
+// aunque las monedas ya no estén trackeadas.
+let trackLedger = JSON.parse(localStorage.getItem('scalp_ledger') || '[]');
+const LEDGER_MAX = 500;
+function saveTrackLedger() {
+  if (trackLedger.length > LEDGER_MAX) trackLedger = trackLedger.slice(-LEDGER_MAX);
+  try { localStorage.setItem('scalp_ledger', JSON.stringify(trackLedger)); } catch (_) {}
+  if (typeof syncToServer === 'function') syncToServer(); // respaldo en Turso (debounced)
+}
+
+function updateTrackLedger(symbols, theses) {
+  let dirty = false;
+  // abrir registro para detecciones nuevas
+  for (const sym of symbols) {
+    const th = theses.get(sym);
+    if (!th) continue;
+    if (!trackLedger.some(e => e.sym === sym && !e.closedAt)) {
+      trackLedger.push({ sym, side: th.side, t0: th.t0, p0: th.p0,
+        origin: favorites.has(sym) ? 'fav' : 'auto', closedAt: null });
+      dirty = true;
+    }
+  }
+  // cerrar registros de monedas que salieron del seguimiento
+  for (const e of trackLedger) {
+    if (e.closedAt || symbols.has(e.sym)) continue;
+    const row = allRows.find(r => r.symbol === e.sym);
+    const hist = trackHistory[e.sym] || [];
+    const pClose = row ? row.price : (hist.length ? hist[hist.length - 1].price : e.p0);
+    e.closedAt = Date.now();
+    e.pClose = pClose;
+    e.movePct = +((pClose - e.p0) / e.p0 * 100 * (e.side === 'l' ? 1 : -1)).toFixed(2);
+    e.estadoFinal = _trackStateMap.get(e.sym) || null;
+    dirty = true;
+  }
+  if (dirty) saveTrackLedger();
+}
+
+function renderTrackLedger() {
+  const el = document.getElementById('track-ledger');
+  if (!el) return;
+  const closed = trackLedger.filter(e => e.closedAt);
+  if (!closed.length) {
+    el.innerHTML = '<span class="lr-empty">📒 Aún no hay detecciones cerradas — se registran automáticamente cuando una moneda sale del seguimiento (expira el auto-track o le quitas la ★).</span>';
+    return;
+  }
+  const wins = closed.filter(e => e.movePct > 0).length;
+  const avg  = closed.reduce((a, e) => a + e.movePct, 0) / closed.length;
+  const wr   = Math.round(wins / closed.length * 100);
+  const last = closed.slice(-10).reverse();
+  el.innerHTML = `<div class="tc-ctx-title">📒 Historial de detecciones cerradas — <b>${closed.length}</b> registradas ·
+      acierto <b style="color:${wr >= 50 ? '#00c878' : '#ee5555'}">${wr}%</b> ·
+      promedio <b style="color:${avg >= 0 ? '#00c878' : '#ee5555'}">${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%</b>
+      <span style="color:#2e4060;font-weight:400">(resultado al cerrar, en la dirección de la tesis — el veredicto real del sistema)</span></div>
+    <div class="ledger-rows">` + last.map(e => {
+      const cls = e.movePct > 0 ? 'pos' : 'neg';
+      const when = new Date(e.closedAt).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' });
+      return `<div class="ledger-row"><span class="qa-time">${when}</span><b style="color:#c8d8ff">${e.sym}</b>
+        <span style="color:${e.side === 'l' ? '#00c878' : '#ee5555'};font-weight:700">${e.side === 'l' ? 'LONG' : 'SHORT'}</span>
+        <span style="color:#3a5070">${e.origin === 'fav' ? '★' : '🔥'} · ${fmtTrackSpan(e.closedAt - e.t0)} en seguimiento</span>
+        <b class="${cls}">${e.movePct >= 0 ? '+' : ''}${e.movePct}%</b></div>`;
+    }).join('') + '</div>';
+}
+
+// ── Tesis y estado de cada moneda en seguimiento ────────────────────────────
+// Responde lo que un trader necesita: ¿qué lado era la tesis?, ¿cómo va desde
+// que se detectó?, ¿sigue viva o ya se invalidó?
+let _trackStateMap = new Map(); // sym → estado anterior (para alertar transiciones)
+
+function trackThesis(sym) {
+  const row = allRows.find(r => r.symbol === sym);
+  if (!row) return null;
+  const auto = autoTracked.get(sym);
+  const hist = trackHistory[sym] || [];
+  let side = auto?.side ?? null;          // 'l' | 's' (lado al detectarla)
+  const t0 = auto?.addedAt ?? (hist.length ? hist[0].ts : Date.now());
+  let p0 = null;
+  for (const s of hist) {
+    if (s.ts >= t0) { p0 = s.price; if (side == null) side = s.isLong ? 'l' : 's'; break; }
+  }
+  if (p0 == null && hist.length) p0 = hist[0].price;
+  const sc = scoreSymbol(row);
+  if (side == null) side = sc.longScore >= sc.shortScore ? 'l' : 's';
+  if (p0 == null) p0 = row.price;
+  const dirUp = side === 'l';
+  const movePct = (row.price - p0) / p0 * 100 * (dirUp ? 1 : -1); // a favor de la tesis
+  const curScore = dirUp ? sc.longScore : sc.shortScore;
+  const atrPct = row.atr1h && row.price ? row.atr1h / row.price * 100 : null;
+  const cvdAgainst = dirUp ? (row.cvd5m ?? 0) < 0 : (row.cvd5m ?? 0) > 0;
+
+  // INVALIDADA: movió >1.2×ATR en contra desde detección, o el score colapsó.
+  // DÉBIL: score bajo o flujo en contra mientras pierde. ACTIVA: lo demás.
+  const invalidated = (atrPct != null && movePct < -1.2 * atrPct) || curScore <= 2;
+  const weak = !invalidated && (curScore <= 4 || (cvdAgainst && movePct < 0));
+  const estado = invalidated ? 'inv' : weak ? 'weak' : 'ok';
+  const ESTADOS = {
+    ok:   ['✅ ACTIVA',     '#00c878', 'la tesis sigue respaldada por score y flujo'],
+    weak: ['⚠️ DÉBIL',      '#e0a830', 'el score cayó o el flujo va en contra — vigilar de cerca'],
+    inv:  ['❌ INVALIDADA', '#ee5555', 'movió más de 1.2×ATR en contra o el score colapsó — la tesis murió'],
+  };
+  const [estadoTxt, estadoCol, estadoTip] = ESTADOS[estado];
+  return { sym, side, dirUp, t0, p0, movePct, curScore, estado, estadoTxt, estadoCol, estadoTip, atrPct, row };
+}
+
 function renderSeguimiento() {
   const wrap = document.getElementById('lab-track-cards');
   if (!wrap) return;
   const symbols = new Set([...favorites, ...autoTracked.keys()]);
-  renderTrackSummary(symbols.size);
   if (!symbols.size) {
+    renderTrackSummary(0, null);
     wrap.innerHTML = `<div class="tc-empty">Marca monedas con ★ en el Screener — o espera a que el radar detecte alguna "on fire" — para empezar a registrar su historial.</div>`;
     return;
   }
-  const cards = [...symbols].sort().map(sym => {
+
+  // Tesis de cada moneda + alertas de invalidación + resumen agregado
+  const theses = new Map();
+  let aggN = 0, aggWins = 0, aggSum = 0;
+  for (const sym of symbols) {
+    const th = trackThesis(sym);
+    if (!th) continue;
+    theses.set(sym, th);
+    aggN++; aggSum += th.movePct; if (th.movePct > 0) aggWins++;
+    const prev = _trackStateMap.get(sym);
+    if (prev && prev !== 'inv' && th.estado === 'inv') {
+      showToast(`❌ ${sym}: tesis ${th.dirUp ? 'LONG' : 'SHORT'} invalidada (${th.movePct.toFixed(1)}%)`, th.dirUp ? 'short' : 'long');
+      if (soundEnabled) beep(330, 'sine', 200);
+      notifyDesktop(`❌ ${sym} — tesis invalidada`, `Movió ${th.movePct.toFixed(1)}% en contra desde la detección`);
+    }
+    _trackStateMap.set(sym, th.estado);
+  }
+  renderTrackSummary(symbols.size, aggN ? { n: aggN, wins: aggWins, avg: aggSum / aggN } : null);
+  updateTrackLedger(symbols, theses); // 📒 abre/cierra registros del libro de detecciones
+  renderTrackLedger();
+
+  // Orden por relevancia: activas primero (mejor rendimiento arriba), luego débiles, al final invalidadas
+  const ORDER = { ok: 0, weak: 1, inv: 2 };
+  const sorted = [...symbols].sort((a, b) => {
+    const ta = theses.get(a), tb = theses.get(b);
+    if (!ta || !tb) return ta ? -1 : tb ? 1 : a.localeCompare(b);
+    return ORDER[ta.estado] - ORDER[tb.estado] || tb.movePct - ta.movePct;
+  });
+
+  const cards = sorted.map(sym => {
     const stats = trackStats(sym, trackRegimeFilter);
     const auto = autoTracked.get(sym);
+    const th = theses.get(sym);
     const originPill = favorites.has(sym)
       ? '<span class="tc-origin tc-origin-fav">★ favorito</span>'
       : auto ? `<span class="tc-origin tc-origin-auto">🔥 auto · expira en ${fmtAutoTrackAge(auto.expiresAt - Date.now())}</span>` : '';
     const screenerRow = allRows.find(r => r.symbol === sym);
     const align = screenerRow ? timeframeAlignment(screenerRow) : null;
-    const head = `<div class="tc-head"><span class="tc-sym">${sym}</span>${originPill}${tfAlignmentBadge(align)}<span class="tc-meta">${
+    const estadoPill = th ? `<span class="tc-state" style="color:${th.estadoCol};border-color:${th.estadoCol}55" title="${th.estadoTip}">${th.estadoTxt}</span>` : '';
+    const head = `<div class="tc-head"><span class="tc-sym">${sym}</span>${estadoPill}${originPill}${tfAlignmentBadge(align)}<span class="tc-meta">${
       stats ? `${stats.totalSnaps} snapshots · ${fmtTrackSpan(stats.spanMs)}` : 'sin datos aún'
     }</span></div>`;
+
+    // ── La respuesta del trader: tesis, rendimiento desde detección y niveles ──
+    let thesisHtml = '';
+    if (th) {
+      const mvCls = th.movePct > 0 ? 'pos' : th.movePct < 0 ? 'neg' : '';
+      const sideTxt = th.dirUp ? '▲ LONG' : '▼ SHORT';
+      const sideCol = th.dirUp ? '#00c878' : '#ee5555';
+      thesisHtml = `<div class="tc-thesis">
+        <div class="tc-row"><span>Tesis</span>
+          <span><b style="color:${sideCol}">${sideTxt}</b> · detectada hace ${fmtTrackSpan(Date.now() - th.t0)} @ ${fmtPrice(th.p0)}</span></div>
+        <div class="tc-since"><span>Desde detección</span>
+          <b class="${mvCls}">${th.movePct >= 0 ? '+' : ''}${th.movePct.toFixed(2)}%</b></div>
+        <div class="tc-row"><span>Ahora</span>
+          <span>${fmtPrice(th.row.price)} · score <b>${th.dirUp ? 'L' : 'S'}${th.curScore}</b>${th.row.cvd5m != null ? ` · CVD ${(th.dirUp ? th.row.cvd5m > 0 : th.row.cvd5m < 0) ? '<b class="pos">a favor</b>' : '<b class="neg">en contra</b>'}` : ''}</span></div>
+        ${th.atrPct ? `<div class="tc-row"><span>Niveles (ATR)</span>
+          <span>stop <b class="neg">${fmtPrice(th.row.price * (1 - (th.dirUp ? 1 : -1) * th.atrPct * 1.2 / 100))}</b> · TP <b class="pos">${fmtPrice(th.row.price * (1 + (th.dirUp ? 1 : -1) * th.atrPct * 1.8 / 100))}</b></span></div>` : ''}
+      </div>`;
+    }
+
     const symRegime = detectSymbolRegime(sym);
     const symRegimeHtml = symRegime ? `<div class="tc-row tc-symregime"><span>Régimen propio</span>
       <span style="color:${symRegime.color}"><b>${symRegime.regime}</b> · ${symRegime.desc}</span></div>` : '';
     if (!stats) {
-      return `<div class="track-card">${head}${symRegimeHtml}<div class="tc-empty">Esperando snapshots — vuelve en unos minutos con la app abierta.</div></div>`;
+      return `<div class="track-card">${head}${thesisHtml}${symRegimeHtml}<div class="tc-empty">Registrando snapshots — el historial se construye con la app abierta.</div></div>`;
     }
+
+    // Estadística honesta: win-rate solo con n≥5; antes, mostrar que acumula
+    const MIN_N = 5;
     const row = (label, agg) => {
       if (!agg) return `<div class="tc-row"><span>${label}</span><b>${trackRegimeFilter === 'ALL' ? 'esperando…' : 'sin señales en ' + trackRegimeFilter}</b></div>`;
+      if (agg.n < MIN_N) return `<div class="tc-row"><span>${label}</span><span style="color:#4a6080">acumulando datos (${agg.n}/${MIN_N} señales)</span></div>`;
       const cls = agg.avgMove > 0 ? 'pos' : agg.avgMove < 0 ? 'neg' : '';
       return `<div class="tc-row"><span>${label} (${agg.n} señales)</span>
         <span><b>${agg.winRate}% acierto</b> · <span class="${cls}">${agg.avgMove >= 0 ? '+' : ''}${agg.avgMove.toFixed(2)}% prom.</span></span></div>`;
@@ -3457,14 +3797,16 @@ function renderSeguimiento() {
       ${renderCtxRow('OI 1h', ctx.oi)}
       ${renderCtxRow('Liquidaciones', ctx.liq)}
     </div>` : '';
+    // Playbook solo cuando es APROVECHABLE: mejor día con ≥50% acierto y prom. positivo
     const dow = symbolDowBreakdown(sym, trackRegimeFilter);
-    const playbookHtml = dow ? `<div class="tc-ctx">
+    const playbookHtml = (dow && dow.best.winRate >= 50 && dow.best.avgMove > 0) ? `<div class="tc-ctx">
       <div class="tc-ctx-title">Playbook — patrón por día de la semana (1h)</div>
       ${playbookDowRow('Mejor día', dow.best, 'pos')}
       ${playbookDowRow('Peor día', dow.worst, 'neg')}
     </div>` : '';
-    return `<div class="track-card">
+    return `<div class="track-card${th && th.estado === 'inv' ? ' track-card-inv' : ''}">
       ${head}
+      ${thesisHtml}
       ${symRegimeHtml}
       ${row('A 30 min', stats.s30)}
       ${row('A 1 h', stats.s60)}
@@ -3473,6 +3815,7 @@ function renderSeguimiento() {
       ${playbookHtml}
       <div class="tc-ai">
         <button class="tc-ai-btn" onclick="explainSymbol('${sym}')">🤖 Explicar con IA</button>
+        <button class="tc-ai-btn" onclick="openInRadar('${sym}')">🎯 Ver en radar</button>
         <div class="tc-ai-out" id="tc-ai-${sym}"></div>
       </div>
     </div>`;
@@ -3495,6 +3838,7 @@ function exportHistory() {
     exportedAt: new Date().toISOString(),
     trackHistory,
     stratSignals,
+    trackLedger, // 📒 libro de detecciones cerradas
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);

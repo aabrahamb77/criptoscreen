@@ -29,9 +29,14 @@ async function ensureTable() {
         pnl REAL, r_multiple REAL,
         reason_entry TEXT, reason_exit TEXT,
         score REAL, held_sec INTEGER,
-        equity_after REAL, closed_at INTEGER
+        equity_after REAL, closed_at INTEGER,
+        strategy TEXT
       )
-    `).then(() => true).catch(e => { console.error('paper_trades init:', e.message); return false; });
+    `)
+      // migración para tablas creadas antes de la columna strategy
+      .then(() => client.execute(`ALTER TABLE paper_trades ADD COLUMN strategy TEXT`).catch(() => {}))
+      .then(() => true)
+      .catch(e => { console.error('paper_trades init:', e.message); return false; });
   }
   return _initDone;
 }
@@ -48,11 +53,12 @@ class PaperBroker {
     return !this.positions.has(symbol) && this.positions.size < C.MAX_CONCURRENT;
   }
 
-  open(sig) {
-    if (!this.canOpen(sig.symbol)) return null;
+  /** riskScale: factor del semáforo (1 verde · 0.5 amarillo · 0 rojo). */
+  open(sig, riskScale = 1) {
+    if (!this.canOpen(sig.symbol) || riskScale <= 0) return null;
     const riskPerUnit = Math.abs(sig.price - sig.stop);
     if (riskPerUnit <= 0) return null;
-    const size = (this.equity * C.RISK_PCT) / riskPerUnit;
+    const size = (this.equity * C.RISK_PCT * riskScale) / riskPerUnit;
 
     const slip = sig.price * (C.SLIPPAGE_BPS / 10000);
     const entry = sig.side === 'long' ? sig.price + slip : sig.price - slip;
@@ -62,6 +68,7 @@ class PaperBroker {
       symbol: sig.symbol, side: sig.side, entry, size,
       stop: sig.stop, takeProfit: sig.takeProfit, atr: sig.atr,
       openedMs: Date.now(), score: sig.score, reason: sig.reason,
+      strategy: sig.strategy || null, riskScale,
       maxFav: entry, trailActive: false, riskPerUnit,
     };
     this.positions.set(sig.symbol, pos);
@@ -124,6 +131,7 @@ class PaperBroker {
       pnl: +pnl.toFixed(4),
       r_multiple: pos.riskPerUnit * pos.size ? +(pnl / (pos.riskPerUnit * pos.size)).toFixed(2) : 0,
       reason_entry: pos.reason, reason_exit: reason, score: pos.score,
+      strategy: pos.strategy || null,
       held_sec: Math.round((Date.now() - pos.openedMs) / 1000),
       equity_after: +this.equity.toFixed(2), closed_at: Date.now(),
     };
@@ -143,7 +151,7 @@ class PaperBroker {
     try {
       const res = await client.execute(
         `SELECT symbol, side, entry, exit, size, pnl, r_multiple, reason_entry,
-                reason_exit, score, held_sec, equity_after, closed_at
+                reason_exit, score, held_sec, equity_after, closed_at, strategy
          FROM paper_trades ORDER BY closed_at ASC`
       );
       if (!res.rows.length) return false;
@@ -154,6 +162,7 @@ class PaperBroker {
         reason_entry: r.reason_entry, reason_exit: r.reason_exit,
         score: +r.score, held_sec: +r.held_sec,
         equity_after: +r.equity_after, closed_at: +r.closed_at,
+        strategy: r.strategy || null,
       }));
       const last = this.closed[this.closed.length - 1];
       this.equity = +last.equity_after;
@@ -169,10 +178,10 @@ class PaperBroker {
     if (!(await ensureTable())) return;
     await client.execute({
       sql: `INSERT INTO paper_trades
-        (symbol,side,entry,exit,size,pnl,r_multiple,reason_entry,reason_exit,score,held_sec,equity_after,closed_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        (symbol,side,entry,exit,size,pnl,r_multiple,reason_entry,reason_exit,score,held_sec,equity_after,closed_at,strategy)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       args: [rec.symbol, rec.side, rec.entry, rec.exit, rec.size, rec.pnl, rec.r_multiple,
-        rec.reason_entry, rec.reason_exit, rec.score, rec.held_sec, rec.equity_after, rec.closed_at],
+        rec.reason_entry, rec.reason_exit, rec.score, rec.held_sec, rec.equity_after, rec.closed_at, rec.strategy],
     });
   }
 

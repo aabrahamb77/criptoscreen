@@ -265,6 +265,38 @@ header h1 {
 
 table { width: 100%; border-collapse: collapse; min-width: 1440px; }
 
+/* ── 🚀 Monedas con potencial (Estrategia) ── */
+#potential-section { flex-shrink: 0; padding: 10px 16px 14px; border-bottom: 1px solid #101418; background: #06080b; }
+#potential-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.pot-card { background: linear-gradient(160deg,#0d1117,#090c12); border: 1px solid #181f2c; border-radius: 10px; padding: 9px 11px; cursor: pointer; transition: border-color .15s, transform .15s; }
+.pot-card:hover { border-color: #2a3850; transform: translateY(-1px); }
+.pot-card.pot-go { border-color: #2fe08a; box-shadow: 0 0 14px rgba(47,224,138,.15); }
+.pot-trigger { font-size: 8.5px; font-weight: 800; letter-spacing: .3px; }
+.pot-reasons { display: flex; flex-direction: column; gap: 1px; margin: 4px 0; }
+.pot-r { font-size: 9px; color: #5a6a85; line-height: 1.4; }
+.pot-foot { font-size: 9px; font-weight: 700; border-top: 1px solid #141c28; padding-top: 4px; margin-top: 2px; }
+
+/* ── 💎 Panel de salud (Lab) ── */
+#lab-health {
+  background: #0c1220; border: 1px solid #1a2535; border-radius: 10px; padding: 12px 14px;
+}
+#lab-health-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.health-card {
+  background: #0a0f1a; border: 1px solid #141e2e; border-radius: 8px;
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 5px;
+}
+.hc-head { display: flex; align-items: center; gap: 7px; }
+.hc-sym { font-weight: 700; font-size: 12px; color: #e8edf8; }
+.hc-grade { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 5px; }
+.hc-score { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hc-rows { display: flex; flex-direction: column; gap: 1px; }
+.hc-row { font-size: 9px; line-height: 1.4; }
+.hc-foot { font-size: 9px; color: #2e4060; border-top: 1px solid #11182a; padding-top: 4px; }
+
+/* 💎 insignia de salud en la tabla */
+.health-gem { font-size: 10px; flex-shrink: 0; cursor: help; filter: drop-shadow(0 0 3px rgba(80,220,180,.5)); }
+.health-gem-b { opacity: .45; filter: none; }
+
 /* ── Badges de fila (cuadrante, racha de OI, puente al radar) ── */
 .row-quad { font-size: 8px; font-weight: 800; padding: 1px 5px; border-radius: 4px; letter-spacing: .3px; flex-shrink: 0; }
 .oi-streak { font-size: 8px; font-weight: 700; flex-shrink: 0; white-space: nowrap; }
@@ -777,6 +809,28 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .lxr-levels { display: flex; gap: 14px; font-size: 9px; color: #4a6080; }
 .lxr-levels b { color: #8a9ab8; font-weight: 700; }
 .lxr-reason { font-size: 9px; color: #4a6080; line-height: 1.45; }
+
+/* ── 📒 Libro de detecciones ── */
+#track-ledger { margin: 8px 0 10px; padding: 9px 11px; background: #0a0f1a; border: 1px solid #141e2e; border-radius: 8px; }
+.ledger-rows { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; }
+.ledger-row { display: flex; align-items: center; gap: 10px; font-size: 10px; color: #5a6a85; }
+.ledger-row b.pos { color: #00c878; margin-left: auto; font-variant-numeric: tabular-nums; }
+.ledger-row b.neg { color: #ee5555; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* ── Seguimiento: tesis y estado ── */
+.tc-state {
+  font-size: 8px; font-weight: 800; letter-spacing: .3px;
+  border: 1px solid; border-radius: 5px; padding: 2px 6px; white-space: nowrap; cursor: help;
+}
+.tc-thesis {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 7px 9px; border-radius: 8px;
+  background: #0a0f1a; border: 1px solid #141e2e;
+}
+.tc-since { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #4a6080; }
+.tc-since b { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tc-since b.pos { color: #00c878; } .tc-since b.neg { color: #ee5555; }
+.track-card-inv { opacity: .55; }
 
 /* ── Seguimiento: pill de origen (favorito vs auto-detectado por el radar) ── */
 .tc-origin {

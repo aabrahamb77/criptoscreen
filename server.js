@@ -50,11 +50,11 @@ app.get('/api/sync', async (req, res) => {
 app.post('/api/sync', async (req, res) => {
   if (!db.enabled()) return res.status(204).end();
   try {
-    const { trackHistory, stratSignals } = req.body || {};
+    const { trackHistory, stratSignals, trackLedger } = req.body || {};
     if (typeof trackHistory !== 'object' || !Array.isArray(stratSignals)) {
       return res.status(400).json({ error: 'invalid payload' });
     }
-    await db.saveSync(trackHistory, stratSignals);
+    await db.saveSync(trackHistory, stratSignals, Array.isArray(trackLedger) ? trackLedger : []);
     res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/sync error:', err.message);
@@ -80,6 +80,7 @@ app.post('/api/explain', rateLimit(10, 60_000), async (req, res) => {
 });
 
 app.get('/api/bot/stats', (req, res) => res.json(lxrBot.getState()));
+app.post('/api/bot/reset', (req, res) => res.json(lxrBot.resetBreaker()));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Screener → http://localhost:${PORT}`));

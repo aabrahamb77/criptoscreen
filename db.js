@@ -22,40 +22,47 @@ function init() {
         id INTEGER PRIMARY KEY CHECK (id = 1),
         track_history TEXT NOT NULL DEFAULT '{}',
         strat_signals TEXT NOT NULL DEFAULT '[]',
+        track_ledger TEXT NOT NULL DEFAULT '[]',
         updated_at INTEGER NOT NULL
       )
-    `).then(() => true).catch(err => {
-      console.error('Turso init error:', err.message);
-      return false;
-    });
+    `)
+      // migración para tablas creadas antes del libro de detecciones
+      .then(() => client.execute(`ALTER TABLE sync_data ADD COLUMN track_ledger TEXT NOT NULL DEFAULT '[]'`).catch(() => {}))
+      .then(() => true)
+      .catch(err => {
+        console.error('Turso init error:', err.message);
+        return false;
+      });
   }
   return ready;
 }
 
 async function loadSync() {
   if (!await init()) return null;
-  const res = await client.execute('SELECT track_history, strat_signals, updated_at FROM sync_data WHERE id = 1');
+  const res = await client.execute('SELECT track_history, strat_signals, track_ledger, updated_at FROM sync_data WHERE id = 1');
   if (!res.rows.length) return null;
   const row = res.rows[0];
   return {
     trackHistory: JSON.parse(row.track_history),
     stratSignals: JSON.parse(row.strat_signals),
+    trackLedger: JSON.parse(row.track_ledger || '[]'),
     updatedAt: row.updated_at,
   };
 }
 
-async function saveSync(trackHistory, stratSignals) {
+async function saveSync(trackHistory, stratSignals, trackLedger) {
   if (!await init()) return false;
   await client.execute({
     sql: `
-      INSERT INTO sync_data (id, track_history, strat_signals, updated_at)
-      VALUES (1, ?, ?, ?)
+      INSERT INTO sync_data (id, track_history, strat_signals, track_ledger, updated_at)
+      VALUES (1, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         track_history = excluded.track_history,
         strat_signals = excluded.strat_signals,
+        track_ledger  = excluded.track_ledger,
         updated_at    = excluded.updated_at
     `,
-    args: [JSON.stringify(trackHistory), JSON.stringify(stratSignals), Date.now()],
+    args: [JSON.stringify(trackHistory), JSON.stringify(stratSignals), JSON.stringify(trackLedger || []), Date.now()],
   });
   return true;
 }
