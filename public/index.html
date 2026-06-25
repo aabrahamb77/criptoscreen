@@ -157,7 +157,6 @@
     <div id="conf-calib" style="display:none"></div>
     <div id="conf-detail" style="display:none"></div>
     <div id="conf-bottom">
-      <div id="conf-alerts"></div>
       <div id="conf-aligned"></div>
     </div>
   </div>
@@ -646,10 +645,12 @@ function saveAutoTracked() {
 // se movió a favor, y así se mide qué estrategia acierta más en la práctica.
 let stratSignals    = JSON.parse(localStorage.getItem('scalp_stratsig') || '[]');
 let activeStratPick = new Map(); // 'estrategia|símbolo|lado' → true mientras siga en el Top
+let activePanelPick = new Map(); // igual pero para detecciones de paneles (confluencia/salud/potencial)
 const STRAT_SIG_MAX = 3000;
 const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-Score',
   range: 'Ruptura rango', liq: 'Cascada liq.', sector: 'Rotación sectorial', whale: 'Ballenas',
-  beta: 'Beta rezagada', alpha: 'Alpha propio' };
+  beta: 'Beta rezagada', alpha: 'Alpha propio',
+  confluence: 'Confluencia', health: 'Saludable', promising: 'Potencial' };
 let stratRegimeFilter = 'ALL'; // 'ALL' | 'ALCISTA' | 'BAJISTA' | 'VOLÁTIL' | 'LATERAL'
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;
@@ -907,9 +908,6 @@ function checkQuadrantChanges(rows) {
       if (hist.length > 8) hist.length = 8;
       quadrantHistory.set(r.symbol, hist);
 
-      // Feed de cruces + alerta en las transiciones de mayor valor
-      confAlerts.unshift({ symbol: r.symbol, from: prev, to: q, ts: Date.now() });
-      if (confAlerts.length > 20) confAlerts.length = 20;
       const hot = (prev === 'SQUEEZE' && q === 'LONG') || (prev === 'LIQ' && q === 'SHORT')
                || (prev === 'LONG' && q === 'SHORT')   || (prev === 'SHORT' && q === 'LONG');
       if (hot) {
@@ -3027,6 +3025,10 @@ function renderHealthPanel() {
     });
   }
   saveAutoTracked();
+
+  logPanelDetections('health', good.map(h => ({
+    symbol: h.symbol, side: h.side === 'long' ? 'l' : 's', score: h.score,
+  })));
 }
 
 // Heat score 0-10: combina cuántas estrategias coinciden en el mismo lado
@@ -3215,6 +3217,9 @@ function renderLab() {
     });
   if (confEl) confEl.innerHTML = confItems.join('') || '<span class="lr-empty">Sin confluencia aún</span>';
 
+  logPanelDetections('confluence', [...confMap.entries()].filter(([,cnt]) => cnt >= 2)
+    .map(([k, cnt]) => ({ symbol: k.slice(0,-1), side: k.slice(-1), score: cnt })));
+
   // Radar automático: detecta y sigue temporalmente las monedas "on fire"
   // del momento sin depender de marcarlas con ★.
   const radarHeats = updateAutoTracked(scored);
@@ -3243,6 +3248,7 @@ function toggleFav(sym) {
   if (favorites.has(sym)) favorites.delete(sym);
   else favorites.add(sym);
   localStorage.setItem('scalp_favs', JSON.stringify([...favorites]));
+  syncToServer();
   render();
 }
 
@@ -3256,7 +3262,7 @@ function syncToServer() {
     fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trackHistory, stratSignals, trackLedger }),
+      body: JSON.stringify({ trackHistory, stratSignals, trackLedger, favorites: [...favorites] }),
     }).catch(() => {});
   }, 5000);
 }
@@ -3314,6 +3320,10 @@ async function syncFromServer() {
     trackHistory = mergeTrackHistory(trackHistory, data.trackHistory);
     stratSignals = mergeStratSignals(stratSignals, data.stratSignals);
     trackLedger  = mergeTrackLedger(trackLedger, data.trackLedger);
+    if (Array.isArray(data.favorites)) {
+      for (const sym of data.favorites) favorites.add(sym);
+      localStorage.setItem('scalp_favs', JSON.stringify([...favorites]));
+    }
     saveTrackLedger();
     saveTrackHistory();
     localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
@@ -3586,6 +3596,9 @@ function renderTrackSummary(trackedCount, agg) {
   const picksEl = document.getElementById('track-summary-picks');
   if (!picksEl) return;
   const picks = topPromisingPicks(5);
+  logPanelDetections('promising', picks.map(p => ({
+    symbol: p.symbol, side: p.side, score: Math.round(p.heat * 10),
+  })));
   picksEl.innerHTML = picks.length
     ? picks.map(p => `<span class="track-pick ${p.side === 'l' ? 'track-pick-long' : 'track-pick-short'}">
         <b>${p.symbol}</b> ${p.side === 'l' ? '▲ LONG' : '▼ SHORT'} · <span class="track-pick-heat">🔥${p.heat}</span>
@@ -3854,6 +3867,32 @@ function exportHistory() {
 // ── Comparador de estrategias (Lab) ─────────────────────────────────────────
 // `topFn(key, side)` es la misma función `top()` de renderLab — recibe los
 // símbolos que están en el Top-4 de cada estrategia/lado en este ciclo.
+function logPanelDetections(strategy, entries) {
+  const now = Date.now();
+  const regime = detectRegime(allRows).regime;
+  const stillActive = new Set();
+  let added = false;
+  for (const e of entries) {
+    const pickKey = `${strategy}|${e.symbol}|${e.side}`;
+    stillActive.add(pickKey);
+    if (activePanelPick.has(pickKey)) continue;
+    const row = allRows.find(r => r.symbol === e.symbol);
+    if (!row) continue;
+    stratSignals.push({
+      ts: now, strategy, symbol: e.symbol, dir: e.side,
+      score: e.score, entryPrice: row.price, regime,
+      eval30: null, eval60: null,
+    });
+    if (stratSignals.length > STRAT_SIG_MAX) stratSignals.shift();
+    added = true;
+  }
+  for (const k of [...activePanelPick.keys()]) {
+    if (k.startsWith(strategy + '|') && !stillActive.has(k)) activePanelPick.delete(k);
+  }
+  for (const k of stillActive) activePanelPick.set(k, now);
+  if (added) { localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals)); syncToServer(); }
+}
+
 function logStrategySignals(topFn) {
   const now = Date.now();
   const regime = detectRegime(allRows).regime;

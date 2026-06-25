@@ -19,7 +19,6 @@ let outliersOnly  = false;      // ocultar la nube del centro
 let minTurnover   = 0;          // filtro de liquidez (turnover 24h USD)
 let bubbleTrails  = new Map();  // symbol → [{ts, oi15m..oi24h, price15mPct..price24hPct}]
 let selectedBubble = null;      // símbolo seleccionado para el panel de detalle
-let confAlerts    = [];         // feed de cruces de cuadrante
 let confCache     = new Map();  // symbol → resultado de confluencia del último render
 let prevConfCount = new Map();  // symbol → count anterior (para alertar al llegar a ≥6)
 let _oiSigCache   = new Map();  // symbol|tf → σ de cambios de OI (se limpia en cada load)
@@ -413,7 +412,6 @@ function renderConfluence(scored) {
   }).join('');
 
   renderQuadWinrates();
-  renderConfAlerts();
   renderQuadAligned(res.valid);
   renderPotentialPanel(res.valid);
   renderConfCalib();
@@ -638,14 +636,3 @@ function renderPotentialPanel(scored) {
   }).join('');
 }
 
-function renderConfAlerts() {
-  const el = document.getElementById('conf-alerts');
-  if (!el) return;
-  if (!confAlerts.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div style="font-size:9px;color:#283040;font-weight:700;letter-spacing:.6px;text-transform:uppercase;margin-bottom:2px">⚡ Cruces de cuadrante recientes</div>` +
-    confAlerts.slice(0, 10).map(a => {
-      const mins = Math.floor((Date.now() - a.ts) / 60_000);
-      const toCol = a.to === 'LONG' ? '#2fe08a' : a.to === 'SHORT' ? '#ff6655' : a.to === 'SQUEEZE' ? '#5a9ec0' : '#aa6060';
-      return `<div class="qa-row"><span class="qa-time">${mins < 1 ? 'ahora' : mins + 'm'}</span><b style="color:#c8d8ff">${a.symbol}</b><span>${a.from} → <b style="color:${toCol}">${a.to}</b></span></div>`;
-    }).join('');
-}

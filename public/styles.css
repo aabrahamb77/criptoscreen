@@ -509,7 +509,7 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .cc-note { font-size: 9px; color: #3a4558; line-height: 1.4; }
 #conf-detail { margin-top: 10px; border: 1px solid #1a2535; border-radius: 10px; padding: 10px 12px; background: #080b10; font-size: 11px; }
 #conf-bottom { margin-top: 10px; display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
-#conf-alerts { display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto; min-width: 240px; }
+
 #conf-aligned { flex: 1; min-width: 280px; }
 .qal-head { font-size: 9px; color: #283040; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; margin-bottom: 6px; }
 .qal-grid { display: flex; flex-wrap: wrap; gap: 6px; }
