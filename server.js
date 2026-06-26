@@ -50,11 +50,11 @@ app.get('/api/sync', async (req, res) => {
 app.post('/api/sync', async (req, res) => {
   if (!db.enabled()) return res.status(204).end();
   try {
-    const { trackHistory, stratSignals, trackLedger, favorites } = req.body || {};
+    const { trackHistory, stratSignals, trackLedger, favorites, confSignals } = req.body || {};
     if (typeof trackHistory !== 'object' || !Array.isArray(stratSignals)) {
       return res.status(400).json({ error: 'invalid payload' });
     }
-    await db.saveSync(trackHistory, stratSignals, Array.isArray(trackLedger) ? trackLedger : [], Array.isArray(favorites) ? favorites : []);
+    await db.saveSync(trackHistory, stratSignals, Array.isArray(trackLedger) ? trackLedger : [], Array.isArray(favorites) ? favorites : [], Array.isArray(confSignals) ? confSignals : []);
     res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/sync error:', err.message);

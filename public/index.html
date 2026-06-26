@@ -3262,7 +3262,7 @@ function syncToServer() {
     fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trackHistory, stratSignals, trackLedger, favorites: [...favorites] }),
+      body: JSON.stringify({ trackHistory, stratSignals, trackLedger, favorites: [...favorites], confSignals: typeof confSignals !== 'undefined' ? confSignals : [] }),
     }).catch(() => {});
   }, 5000);
 }
@@ -3323,6 +3323,15 @@ async function syncFromServer() {
     if (Array.isArray(data.favorites)) {
       for (const sym of data.favorites) favorites.add(sym);
       localStorage.setItem('scalp_favs', JSON.stringify([...favorites]));
+    }
+    if (Array.isArray(data.confSignals) && typeof confSignals !== 'undefined') {
+      const seen = new Set(confSignals.map(s => `${s.ts}|${s.symbol}|${s.side}`));
+      for (const s of data.confSignals) {
+        if (!seen.has(`${s.ts}|${s.symbol}|${s.side}`)) { confSignals.push(s); seen.add(`${s.ts}|${s.symbol}|${s.side}`); }
+      }
+      confSignals.sort((a, b) => a.ts - b.ts);
+      if (confSignals.length > CONF_SIG_MAX) confSignals = confSignals.slice(-CONF_SIG_MAX);
+      saveConfSignals();
     }
     saveTrackLedger();
     saveTrackHistory();

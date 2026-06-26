@@ -36,6 +36,7 @@ let confCalibOpen = false;
 function saveConfSignals() {
   if (confSignals.length > CONF_SIG_MAX) confSignals = confSignals.slice(-CONF_SIG_MAX);
   try { localStorage.setItem('scalp_confsig2', JSON.stringify(confSignals)); } catch (_) {}
+  if (typeof syncToServer === 'function') syncToServer();
 }
 
 // ── σ de cambios de OI por símbolo (desde oiSnaps, cadencia ~1min) ─────────
