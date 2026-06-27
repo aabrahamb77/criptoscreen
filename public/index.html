@@ -3931,21 +3931,99 @@ function logStrategySignals(topFn) {
 
 // Congela el resultado de cada señal la primera vez que cumple 30min / 1h de
 // antigüedad, comparando el precio de entrada vs. el precio actual en ese momento.
+// Helper para obtener el precio de una moneda en un timestamp exacto vía Bybit API
+async function fetchPriceAtTime(symbol, targetTs) {
+  try {
+    const endTs = targetTs + 120_000; // ventana de 2 minutos
+    const data = await bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=1&start=${targetTs}&end=${endTs}&limit=1`);
+    if (data && data.result && data.result.list && data.result.list.length > 0) {
+      return +data.result.list[0][4]; // Precio de cierre de Bybit
+    }
+  } catch (err) {
+    console.error('Error obteniendo precio histórico para', symbol, err);
+  }
+  return null;
+}
+
+// Congela el resultado de cada señal la primera vez que cumple 30min / 1h de
+// antigüedad, comparando el precio de entrada vs. el precio real de ese momento.
+// Si la pestaña estuvo cerrada, busca retrospectivamente en trackHistory o consulta Bybit.
 function evalStrategySignals() {
   const now = Date.now();
   let changed = false;
+
   for (const sig of stratSignals) {
     const age = now - sig.ts;
-    if ((!sig.eval30 && age >= 30 * 60_000) || (!sig.eval60 && age >= 60 * 60_000)) {
-      const row = allRows.find(r => r.symbol === sig.symbol);
-      if (!row) continue;
-      const movePct = (row.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
-      const result = { price: row.price, movePct, hit: movePct > 0 };
-      if (!sig.eval30 && age >= 30 * 60_000) { sig.eval30 = result; changed = true; }
-      if (!sig.eval60 && age >= 60 * 60_000) { sig.eval60 = { ...result }; changed = true; }
+
+    // 1) Evaluar 30 minutos
+    if (!sig.eval30 && age >= 30 * 60_000) {
+      const targetTs = sig.ts + 30 * 60_000;
+      if (age < 35 * 60_000) {
+        const row = allRows.find(r => r.symbol === sig.symbol);
+        if (row) {
+          const movePct = (row.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
+          sig.eval30 = { price: row.price, movePct, hit: movePct > 0 };
+          changed = true;
+        }
+      } else {
+        // Evaluación retrospectiva
+        const hist = trackHistory[sig.symbol] || [];
+        const matched = hist.find(h => Math.abs(h.ts - targetTs) <= 3 * 60_000);
+        if (matched) {
+          const movePct = (matched.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
+          sig.eval30 = { price: matched.price, movePct, hit: movePct > 0 };
+          changed = true;
+        } else {
+          fetchPriceAtTime(sig.symbol, targetTs).then(price => {
+            if (price) {
+              const movePct = (price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
+              sig.eval30 = { price, movePct, hit: movePct > 0 };
+              localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+              syncToServer();
+              renderStrategyCompare();
+            }
+          });
+        }
+      }
+    }
+
+    // 2) Evaluar 60 minutos
+    if (!sig.eval60 && age >= 60 * 60_000) {
+      const targetTs = sig.ts + 60 * 60_000;
+      if (age < 65 * 60_000) {
+        const row = allRows.find(r => r.symbol === sig.symbol);
+        if (row) {
+          const movePct = (row.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
+          sig.eval60 = { price: row.price, movePct, hit: movePct > 0 };
+          changed = true;
+        }
+      } else {
+        // Evaluación retrospectiva
+        const hist = trackHistory[sig.symbol] || [];
+        const matched = hist.find(h => Math.abs(h.ts - targetTs) <= 3 * 60_000);
+        if (matched) {
+          const movePct = (matched.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
+          sig.eval60 = { price: matched.price, movePct, hit: movePct > 0 };
+          changed = true;
+        } else {
+          fetchPriceAtTime(sig.symbol, targetTs).then(price => {
+            if (price) {
+              const movePct = (price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
+              sig.eval60 = { price, movePct, hit: movePct > 0 };
+              localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+              syncToServer();
+              renderStrategyCompare();
+            }
+          });
+        }
+      }
     }
   }
-  if (changed) { localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals)); syncToServer(); }
+
+  if (changed) {
+    localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+    syncToServer();
+  }
 }
 
 function renderStrategyCompare() {

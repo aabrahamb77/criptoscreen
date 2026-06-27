@@ -129,7 +129,8 @@ class Stream {
       const norm = [];
       for (const t of data) norm.push({ ts: +t.T, side: t.S, size: +t.v, price: +t.p });
       for (const t of norm) arr.push(t);
-      this._trim(arr, cut);
+      const cutTrades = Date.now() - 600 * 1000; // mantener solo 10 minutos de trades en memoria
+      this._trim(arr, cutTrades);
       if (this.onTrades) { try { this.onTrades(sym, norm); } catch (_) {} }
     } else if (topic.startsWith('allLiquidation.')) {
       const sym = topic.split('.')[1];

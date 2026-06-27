@@ -285,6 +285,21 @@ async function resetBreaker(){
   }
 }
 
+async function startBot() {
+  if(!confirm('¿Quieres arrancar el bot de paper trading ahora?')) return;
+  const btn=document.getElementById('start-bot-btn');
+  if(btn){btn.disabled=true;btn.textContent='Arrancando…';}
+  try{
+    const r=await fetch('/api/bot/start',{method:'POST'});
+    const data=await r.json();
+    if(!data.ok) throw new Error(data.error||'fallo');
+    tick();
+  }catch(e){
+    alert('No se pudo arrancar el bot: '+e.message);
+    if(btn){btn.disabled=false;btn.textContent='Arrancar Bot';}
+  }
+}
+
 function renderRegimes(regs){
   const entries=Object.entries(regs||{});
   document.getElementById('reg-count').textContent=entries.length;
@@ -329,7 +344,14 @@ function render(data,demo){
   renderRegimes(data.regimes||{});
   renderHeatmap(data.heatmaps||{});
   const b=document.getElementById('banner');
-  if(demo){b.classList.add('show');b.textContent='⚠ Mostrando datos de EJEMPLO — el bot no está iniciado. Arráncalo con LXR_BOT=1 npm start (o npm run bot) y expón /api/bot/stats.';setWS('warn');}
+  if(demo){
+    b.classList.add('show');
+    b.innerHTML='⚠ Mostrando datos de EJEMPLO — el bot no está iniciado. ' +
+      '<button id="start-bot-btn" style="margin-left:8px;font-size:10px;font-weight:700;color:#00c878;border:1px solid #00c87855;background:#00c87818;border-radius:5px;padding:3px 9px;cursor:pointer">Arrancar Bot</button>';
+    const btn=document.getElementById('start-bot-btn');
+    if(btn) btn.onclick=startBot;
+    setWS('warn');
+  }
   else{b.classList.remove('show');setWS(data.wsConnected?'on':'off');}
   document.getElementById('updated').textContent=new Date().toLocaleTimeString();
 }

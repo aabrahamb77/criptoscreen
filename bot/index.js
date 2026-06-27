@@ -98,15 +98,16 @@ async function cycle(broker, stream, breaker, edge) {
       if (!breaker.canTrade(broker.equity)) continue; // circuit breaker
       if (guard.scale === 0) { if (edge) edge.skipped('guard'); continue; } // semáforo en rojo
 
-      const [oiSeries, fundingHist] = await Promise.all([
+      const [oiSeries, fundingHist, tickerData] = await Promise.all([
         bybit.openInterest(symbol),
         bybit.fundingHistory(symbol),
+        bybit.ticker(symbol),
       ]);
-      const currentFunding = fundingHist.length ? fundingHist[fundingHist.length - 1] : 0;
+      const currentFunding = tickerData ? tickerData.funding : (fundingHist.length ? fundingHist[fundingHist.length - 1] : 0);
       if (C.EDGE_ENABLED && edge) edge.recordFunding(symbol, currentFunding);
 
       const ctx = {
-        symbol, klines, oiSeries, fundingHist, currentFunding,   // symbol completo (BTCUSDT) para casar con el broker
+        symbol, klines, oiSeries, fundingHist, currentFunding, ticker: tickerData,   // symbol completo (BTCUSDT) para casar con el broker
         trades: stream.getTrades(symbol), liqs: stream.getLiqs(symbol),
         btcCloses, nowMs,
         // baseline efectivo del z-score de liqs = cobertura real del WS
@@ -115,6 +116,11 @@ async function cycle(broker, stream, breaker, edge) {
       const { best, regime } = strategies.evaluateAll(ctx);
       if (regime) state.regimes[symbol] = regime;
       if (!best) continue;
+
+      // filtro de shorts
+      if (best.side === 'short' && C.DISABLE_SHORTS) {
+        continue;
+      }
 
       // guarda de correlación
       const corrGuard = correlationGuard([...broker.positions.values()], best, state.btcRegime);

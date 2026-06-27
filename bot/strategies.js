@@ -24,9 +24,9 @@ const ind = require('./indicators');
 const lxr = require('./strategy'); // evaluate() existente
 
 const ALLOWED = {
-  trend: ['breakoutOiCvd', 'momentumDelta'],
-  volatile: ['lxr', 'vwapReclaim', 'fundingFade'],
-  range: ['fakeoutFade', 'fundingFade', 'lxr'],
+  trend: ['health'],
+  volatile: ['health'],
+  range: ['health'],
 };
 
 function levels(side, price, atrVal, ref, cfg) {
@@ -183,6 +183,131 @@ function momentumDelta(ctx, atrVal) {
     components: { moveAtr: +moveAtr.toFixed(2), cvdShort: +cvdShort.toFixed(2), oiChgPct: +oiChg.toFixed(2) } };
 }
 
+// --- 💎 Estrategia de Salud (healthScore >= 60) ---------------------------
+function health(ctx, atrVal) {
+  const { klines, oiSeries, currentFunding, trades, liqs, nowMs, ticker } = ctx;
+  const closes = klines.map(k => k.close);
+  const price = closes[closes.length - 1];
+
+  // 1) Calcular variaciones porcentuales de precio en diferentes timeframes
+  // En base a klines de 1m (KLINE_LIMIT = 300)
+  const p5m = closes.length >= 6 ? ((price - closes[closes.length - 6]) / closes[closes.length - 6]) * 100 : 0;
+  const p15m = closes.length >= 16 ? ((price - closes[closes.length - 16]) / closes[closes.length - 16]) * 100 : 0;
+  const p1h = closes.length >= 61 ? ((price - closes[closes.length - 61]) / closes[closes.length - 61]) * 100 : 0;
+  const p4h = closes.length >= 241 ? ((price - closes[closes.length - 241]) / closes[closes.length - 241]) * 100 : 0;
+  // price24hPcnt desde el ticker
+  const p24h = ticker ? ticker.price24hPcnt : 0;
+
+  // Dirección principal de la tendencia
+  const dirUp = p4h !== 0 ? p4h > 0 : p1h >= 0;
+  const sgn = dirUp ? 1 : -1;
+
+  let score = 0;
+  const ok = [], bad = [];
+
+  // Criterio 1: Liquidez (0-15 pts)
+  const turn = ticker ? ticker.turnover24h : 0;
+  if (turn >= 100e6) { score += 15; ok.push('liquidez alta (>=100M)'); }
+  else if (turn >= 30e6) { score += 10; ok.push('liquidez aceptable'); }
+  else if (turn >= 10e6) { score += 5; bad.push('liquidez justa'); }
+  else { bad.push('ilíquida (<10M)'); }
+
+  // Criterio 2: Tendencia multi-TF (0-15 pts)
+  const tfs = [p5m, p1h, p4h, p24h].filter(v => v !== 0);
+  if (tfs.length >= 2) {
+    const pos = tfs.filter(v => v > 0).length;
+    const count = dirUp ? pos : (tfs.length - pos);
+    const total = tfs.length;
+    if (count === total && total >= 3) { score += 15; ok.push(`tendencia alineada ${count}/${total} TFs`); }
+    else if (count >= 3) { score += 10; ok.push(`tendencia ${count}/${total} TFs`); }
+    else { score += 5; bad.push('temporalidades en conflicto'); }
+  } else {
+    bad.push('temporalidades insuficientes');
+  }
+
+  // Criterio 3: Flujo real CVD (0-15 pts)
+  const vol5m = klines.slice(-5).reduce((sum, k) => sum + k.turnover, 0);
+  let cvd5m = 0;
+  const since5m = nowMs - 300_000;
+  for (const tr of trades) {
+    if (tr.ts >= since5m) {
+      cvd5m += (tr.side === 'Buy' ? 1 : -1) * tr.size * (tr.price || 0);
+    }
+  }
+  if (vol5m > 0) {
+    const ratio = (cvd5m * sgn) / vol5m;
+    if (ratio > 0.15) { score += 15; ok.push('flujo agresor fuerte a favor'); }
+    else if (ratio > 0.03) { score += 9; ok.push('flujo a favor'); }
+    else if (ratio > -0.05) { score += 4; }
+    else { bad.push('CVD en contra (divergencia de flujo)'); }
+  } else {
+    bad.push('sin volumen');
+  }
+
+  // Criterio 4: OI saludable (0-15 pts)
+  const oi1h = oiSeries.length >= 13 ? (oiSeries[oiSeries.length - 1].oi - oiSeries[oiSeries.length - 13].oi) / oiSeries[oiSeries.length - 13].oi : 0;
+  const oi4h = oiSeries.length >= 49 ? (oiSeries[oiSeries.length - 1].oi - oiSeries[oiSeries.length - 49].oi) / oiSeries[oiSeries.length - 49].oi : 0;
+  if (oi1h > 0.002 && oi4h > 0) { score += 10; ok.push('OI creciendo (dinero nuevo)'); }
+  else if (oi1h > 0) { score += 5; }
+  else { bad.push('OI cayendo'); }
+
+  // Streak de OI (últimos 3 snapshots incrementando)
+  const isIncreasing = oiSeries.length >= 4 && oiSeries.slice(-4).every((x, i, arr) => i === 0 || x.oi > arr[i-1].oi);
+  if (isIncreasing) { score += 5; ok.push('acumulación de OI sostenida'); }
+
+  // Criterio 5: Funding controlado (0-10 pts)
+  const fr = currentFunding ?? 0;
+  const overheated = dirUp ? fr > 0.0005 : fr < -0.0005;
+  if (overheated) { bad.push('funding sobrecalentado (euforia/apalancamiento estirado)'); }
+  else if (Math.abs(fr) <= 0.0002) { score += 10; ok.push('funding equilibrado'); }
+  else { score += 5; }
+
+  // Criterio 6: Sin liquidación en contra (0-10 pts)
+  let liqAgainst = 0;
+  const since5mLiqs = nowMs - 300_000;
+  for (const l of liqs) {
+    if (l.ts >= since5mLiqs) {
+      if (dirUp && l.side === 'Sell') liqAgainst += l.notional;
+      if (!dirUp && l.side === 'Buy') liqAgainst += l.notional;
+    }
+  }
+  if (liqAgainst > 100000) { bad.push('cascada de liquidaciones en contra'); }
+  else if (liqAgainst > 30000) { score += 4; }
+  else { score += 10; }
+
+  // Criterio 7: No sobre-extendida (0-10 pts)
+  const atr1h = atrVal * Math.sqrt(60);
+  const mv = closes.length >= 61 ? Math.abs(price - closes[closes.length - 61]) : 0;
+  if (atr1h > 0) {
+    const ext = mv / atr1h;
+    if (ext > 2.5) { bad.push(`sobre-extendida (${ext.toFixed(1)}xATR)`); }
+    else if (ext > 1.8) { score += 5; }
+    else { score += 10; }
+  } else {
+    score += 5;
+  }
+
+  // Si no cumple el score de salud mínimo configurado, no operamos
+  if (score < C.MIN_HEALTH_SCORE) return null;
+
+  const side = dirUp ? 'long' : 'short';
+  const { stop, takeProfit, risk } = levels(side, price, atrVal, price, C);
+  if (risk <= 0) return null;
+
+  return {
+    symbol: ctx.symbol,
+    side,
+    strategy: 'health',
+    price,
+    atr: atrVal,
+    stop,
+    takeProfit,
+    score,
+    reason: `Salud ${score}% | Criterios aprobados: ${ok.join(' · ')}${bad.length ? ' | Criterios fallidos: ' + bad.join(' · ') : ''}`,
+    components: { healthScore: score, okChecks: ok, badChecks: bad }
+  };
+}
+
 function lxrWrap(ctx) {
   return lxr.evaluate({
     symbol: ctx.symbol, klines: ctx.klines, oiSeries: ctx.oiSeries,
@@ -194,8 +319,10 @@ function lxrWrap(ctx) {
 
 const REGISTRY = {
   lxr: (ctx, atr) => { const s = lxrWrap(ctx); return s ? Object.assign(s, { strategy: 'lxr' }) : null; },
-  vwapReclaim, fundingFade, breakoutOiCvd, fakeoutFade, momentumDelta,
+  vwapReclaim, fundingFade, breakoutOiCvd, fakeoutFade, momentumDelta, health,
 };
+
+
 
 /**
  * Evalúa todas las estrategias permitidas por el régimen del símbolo.
@@ -208,7 +335,7 @@ function evaluateAll(ctx) {
   const reg = ind.regime(highs, lows, closes);
   ctx.regime = reg;
 
-  const allowed = ALLOWED[reg.regime] || [];
+  const allowed = (ALLOWED[reg.regime] || []).filter(name => !(C.DISABLED_STRATEGIES || []).includes(name));
   const candidates = [];
   for (const name of allowed) {
     try {

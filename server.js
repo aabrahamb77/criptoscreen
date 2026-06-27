@@ -81,6 +81,15 @@ app.post('/api/explain', rateLimit(10, 60_000), async (req, res) => {
 
 app.get('/api/bot/stats', (req, res) => res.json(lxrBot.getState()));
 app.post('/api/bot/reset', (req, res) => res.json(lxrBot.resetBreaker()));
+app.post('/api/bot/start', async (req, res) => {
+  try {
+    const botState = await lxrBot.startBot();
+    res.json({ ok: true, started: botState.started });
+  } catch (err) {
+    console.error('POST /api/bot/start error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Screener → http://localhost:${PORT}`));

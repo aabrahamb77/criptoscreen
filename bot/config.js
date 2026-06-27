@@ -11,7 +11,7 @@ module.exports = {
   ).split(',').map(s => s.trim()).filter(Boolean),
 
   KLINE_INTERVAL: '1',
-  KLINE_LIMIT: 200,
+  KLINE_LIMIT: 300,
   OI_INTERVAL: '5min',
   OI_LIMIT: 50,
   FUNDING_LIMIT: 60,
@@ -31,6 +31,7 @@ module.exports = {
   OI_DROP_PCT: 0.30,
   FUNDING_Z_CONFLUENCE: 1.5,
   MIN_SIGNAL_SCORE: 60,
+  MIN_HEALTH_SCORE: 75,
 
   // Riesgo / paper broker
   START_EQUITY: Number(process.env.LXR_EQUITY || 10000),
@@ -60,7 +61,11 @@ module.exports = {
 
   // ── Capa de edge (bot v2) ── LXR_EDGE=0 la desactiva por completo.
   EDGE_ENABLED: process.env.LXR_EDGE !== '0',
-  EDGE_MIN_QUALITY_PCT: Number(process.env.EDGE_MIN_QUALITY || 0.6), // salud mínima por operación (0-1)
+  EDGE_MIN_QUALITY_PCT: Number(process.env.EDGE_MIN_QUALITY || 0.8), // salud mínima por operación (0-1)
   EDGE_DISABLE_MIN_TRADES: 15,    // trades mínimos antes de poder desactivar una estrategia
   EDGE_DISABLE_EXPECTANCY: -0.05, // expectancy R por debajo de esto → estrategia desactivada
+
+  // Ajustes de exclusión personalizados
+  DISABLED_STRATEGIES: [],
+  DISABLE_SHORTS: true,
 };
