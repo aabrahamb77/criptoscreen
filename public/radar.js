@@ -212,6 +212,7 @@ function openInRadar(sym) {
 // ── Stats del bot (para el panel de detalle) ───────────────────────────────
 async function getBotStats() {
   if (Date.now() - _botStatsCache.ts < 10_000) return _botStatsCache.data;
+  if (document.hidden) return _botStatsCache.data; // segundo plano: usa lo último, no gasta ancho de banda
   try {
     const r = await fetch('/api/bot/stats');
     _botStatsCache = { ts: Date.now(), data: r.ok ? await r.json() : null };

@@ -1,13 +1,25 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const path = require('path');
 const db = require('./db');
 const ai = require('./ai');
 const lxrBot = require('./bot');
 
 const app = express();
+// gzip en TODAS las respuestas (HTML/JS/CSS/JSON). El index.html (~200 KB) y el
+// JSON de /api/bot/stats bajan ~5-10x → clave para no reventar el ancho de banda
+// del plan gratis de Render.
+app.use(compression());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Cache en el navegador: el HTML revalida (304 si no cambió, casi 0 bytes) y los
+// assets (js/css/img) se cachean 1h para no re-descargarse en cada navegación.
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  setHeaders: (res, filePath) => {
+    res.setHeader('Cache-Control', filePath.endsWith('.html') ? 'no-cache' : 'public, max-age=3600');
+  },
+}));
 
 // Auth opcional: si defines API_TOKEN en .env, los endpoints /api/* exigen
 // "Authorization: Bearer <token>". Sin API_TOKEN no cambia nada (uso local).

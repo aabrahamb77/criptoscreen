@@ -597,6 +597,15 @@ async function loadData() {
 pollSnapshots();
 setInterval(pollSnapshots, 60_000);
 
+// ── Safe Storage Helper ───────────────────────────────────────────────────
+function safeSetItem(key, val) {
+  try {
+    localStorage.setItem(key, val);
+  } catch (e) {
+    console.warn(`[Storage] Excedido el límite de localStorage al guardar ${key}:`, e.message);
+  }
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 let allRows = [];
 let sortCol = 'oi5m';
@@ -636,7 +645,7 @@ let autoTracked = new Map(Object.entries(JSON.parse(localStorage.getItem('scalp_
 const AUTOTRACK_TOP_N   = 5;
 const AUTOTRACK_TTL_MS  = 6 * 60 * 60_000; // 6h de seguimiento temporal
 function saveAutoTracked() {
-  localStorage.setItem('scalp_autotrack', JSON.stringify(Object.fromEntries(autoTracked)));
+  safeSetItem('scalp_autotrack', JSON.stringify(Object.fromEntries(autoTracked)));
 }
 
 // ── Comparador de estrategias del Lab (Actual/Percentil/Régimen/Z-Score) ───
@@ -2186,7 +2195,7 @@ const PT = { tp: 3, sl: 2, maxPos: 5, minConf: 3, timeout: 4 * 3600_000 };
 
 let paperTrades = JSON.parse(localStorage.getItem('scalp_pt') || '[]');
 
-function savePT() { localStorage.setItem('scalp_pt', JSON.stringify(paperTrades)); }
+function savePT() { safeSetItem('scalp_pt', JSON.stringify(paperTrades)); }
 function ptOpen()   { return paperTrades.filter(t => t.status === 'open'); }
 function ptClosed() { return paperTrades.filter(t => t.status === 'closed'); }
 
@@ -2310,7 +2319,7 @@ const PT2 = { tp: 3, sl: 2, maxPos: 5, minConf: 3, minScore: 5, timeout: 4 * 360
 
 let paperTrades2 = JSON.parse(localStorage.getItem('scalp_pt2') || '[]');
 
-function savePT2() { localStorage.setItem('scalp_pt2', JSON.stringify(paperTrades2)); }
+function savePT2() { safeSetItem('scalp_pt2', JSON.stringify(paperTrades2)); }
 function pt2Open()   { return paperTrades2.filter(t => t.status === 'open'); }
 function pt2Closed() { return paperTrades2.filter(t => t.status === 'closed'); }
 
@@ -3247,7 +3256,7 @@ function renderLab() {
 function toggleFav(sym) {
   if (favorites.has(sym)) favorites.delete(sym);
   else favorites.add(sym);
-  localStorage.setItem('scalp_favs', JSON.stringify([...favorites]));
+  safeSetItem('scalp_favs', JSON.stringify([...favorites]));
   syncToServer();
   render();
 }
@@ -3322,7 +3331,7 @@ async function syncFromServer() {
     trackLedger  = mergeTrackLedger(trackLedger, data.trackLedger);
     if (Array.isArray(data.favorites)) {
       for (const sym of data.favorites) favorites.add(sym);
-      localStorage.setItem('scalp_favs', JSON.stringify([...favorites]));
+      safeSetItem('scalp_favs', JSON.stringify([...favorites]));
     }
     if (Array.isArray(data.confSignals) && typeof confSignals !== 'undefined') {
       const seen = new Set(confSignals.map(s => `${s.ts}|${s.symbol}|${s.side}`));
@@ -3335,13 +3344,13 @@ async function syncFromServer() {
     }
     saveTrackLedger();
     saveTrackHistory();
-    localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+    safeSetItem('scalp_stratsig', JSON.stringify(stratSignals));
   } catch (e) { /* sin servidor o sin Turso — seguimos solo con localStorage */ }
 }
 
 // ── Seguimiento de favoritos ────────────────────────────────────────────────
 function saveTrackHistory() {
-  localStorage.setItem('scalp_track', JSON.stringify(trackHistory));
+  safeSetItem('scalp_track', JSON.stringify(trackHistory));
   syncToServer();
 }
 
@@ -3624,7 +3633,7 @@ let trackLedger = JSON.parse(localStorage.getItem('scalp_ledger') || '[]');
 const LEDGER_MAX = 500;
 function saveTrackLedger() {
   if (trackLedger.length > LEDGER_MAX) trackLedger = trackLedger.slice(-LEDGER_MAX);
-  try { localStorage.setItem('scalp_ledger', JSON.stringify(trackLedger)); } catch (_) {}
+  safeSetItem('scalp_ledger', JSON.stringify(trackLedger));
   if (typeof syncToServer === 'function') syncToServer(); // respaldo en Turso (debounced)
 }
 
@@ -3899,7 +3908,7 @@ function logPanelDetections(strategy, entries) {
     if (k.startsWith(strategy + '|') && !stillActive.has(k)) activePanelPick.delete(k);
   }
   for (const k of stillActive) activePanelPick.set(k, now);
-  if (added) { localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals)); syncToServer(); }
+  if (added) { safeSetItem('scalp_stratsig', JSON.stringify(stratSignals)); syncToServer(); }
 }
 
 function logStrategySignals(topFn) {
@@ -3925,7 +3934,7 @@ function logStrategySignals(topFn) {
   }
   for (const k of [...activeStratPick.keys()]) if (!stillActive.has(k)) activeStratPick.delete(k);
   for (const k of stillActive) activeStratPick.set(k, now);
-  localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+  safeSetItem('scalp_stratsig', JSON.stringify(stratSignals));
   syncToServer();
 }
 
@@ -3978,7 +3987,7 @@ function evalStrategySignals() {
             if (price) {
               const movePct = (price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
               sig.eval30 = { price, movePct, hit: movePct > 0 };
-              localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+              safeSetItem('scalp_stratsig', JSON.stringify(stratSignals));
               syncToServer();
               renderStrategyCompare();
             }
@@ -4010,7 +4019,7 @@ function evalStrategySignals() {
             if (price) {
               const movePct = (price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
               sig.eval60 = { price, movePct, hit: movePct > 0 };
-              localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+              safeSetItem('scalp_stratsig', JSON.stringify(stratSignals));
               syncToServer();
               renderStrategyCompare();
             }
@@ -4021,7 +4030,7 @@ function evalStrategySignals() {
   }
 
   if (changed) {
-    localStorage.setItem('scalp_stratsig', JSON.stringify(stratSignals));
+    safeSetItem('scalp_stratsig', JSON.stringify(stratSignals));
     syncToServer();
   }
 }

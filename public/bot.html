@@ -357,6 +357,7 @@ function render(data,demo){
 }
 
 async function tick(){
+  if(document.hidden) return; // pestaña en segundo plano: no gastar ancho de banda de Render
   try{
     const r=await fetch('/api/bot/stats',{cache:'no-store'});
     if(!r.ok) throw new Error('no endpoint');
@@ -367,6 +368,8 @@ async function tick(){
 }
 tick();
 setInterval(tick,5000);
+// Al volver a la pestaña, refresca al instante (no esperar al próximo intervalo)
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) tick(); });
 </script>
 </body>
 </html>
