@@ -1,0 +1,263 @@
+/* public/detail.js
+ * Panel lateral de detalle: clic en una fila del screener (o en un chip de
+ * patrón) → gráfico de velas 5m con el patrón W/M y sus niveles dibujados,
+ * checklist del radar, métricas clave y niveles ATR. Sin salir de la página.
+ */
+
+let detailSym = null;
+
+function openDetail(sym) {
+  detailSym = sym;
+  const panel = document.getElementById('detail-panel');
+  if (!panel) return;
+  panel.style.display = 'flex';
+  renderDetail();
+}
+
+function closeDetail() {
+  detailSym = null;
+  const panel = document.getElementById('detail-panel');
+  if (panel) panel.style.display = 'none';
+}
+
+// Refresca el contenido (se llama al abrir y en cada ciclo de datos)
+function renderDetail() {
+  if (!detailSym) return;
+  const panel = document.getElementById('detail-panel');
+  const row = allRows.find(r => r.symbol === detailSym);
+  if (!panel || !row) return;
+
+  const sc = scoreSymbol(row);
+  const isLong = sc.longScore >= sc.shortScore;
+  const score = Math.max(sc.longScore, sc.shortScore);
+  const atrPct = row.atr1h && row.price ? row.atr1h / row.price * 100 : null;
+  const p = row.pattern;
+  const tvUrl = `https://www.tradingview.com/chart/?symbol=BYBIT:${row.symbol}USDT.P`;
+
+  const f = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  const fc = v => v == null ? '#3a4a60' : v >= 0 ? '#55bb88' : '#ee6666';
+
+  // ── Patrón W/M ──
+  let patternHtml = '';
+  if (p) {
+    const isW = p.type === 'W';
+    const stTxt = p.state === 'breaking' ? '⚡ ROMPIENDO LA LÍNEA DE CUELLO'
+                : p.state === 'forming'  ? 'Formándose — aún sin romper el cuello'
+                : '✓ Cuello roto — patrón confirmado';
+    const stCol = p.state === 'breaking' ? '#ffbe3c' : isW ? '#2fe08a' : '#ff6666';
+    patternHtml = `<div class="dt-section" style="border-color:${stCol}40">
+      <div class="dt-sec-title" style="color:${stCol}">${isW ? '🟢 DOBLE SUELO (W)' : '🔴 DOBLE TECHO (M)'} · calidad ${p.quality}/10</div>
+      <div class="dt-row"><span>Estado</span><b style="color:${stCol}">${stTxt}</b></div>
+      <div class="dt-row"><span>Línea de cuello</span><b style="color:#ffd76a">${fmtPrice(p.neckline)}</b></div>
+      <div class="dt-row"><span>Objetivo (mov. medido)</span><b class="pos">${fmtPrice(p.target)} (${f((p.target - row.price) / row.price * 100)})</b></div>
+      <div class="dt-row"><span>Stop sugerido</span><b class="neg">${fmtPrice(p.stop)} (${f((p.stop - row.price) / row.price * 100)})</b></div>
+    </div>`;
+  }
+
+  // ── Checklist del radar de confluencia ──
+  let checksHtml = '';
+  try {
+    if (typeof computeConfluence === 'function') {
+      if (!confCache.has(detailSym)) {
+        const res = computeConfluence(allRows);
+        if (res) for (const c of res.confs) confCache.set(c.symbol, c);
+      }
+      const c = confCache.get(detailSym);
+      if (c) {
+        checksHtml = `<div class="dt-section">
+          <div class="dt-sec-title">🎯 Radar de confluencia — ${c.count}/7 (${c.side.toUpperCase()})</div>
+          ${c.checks.map(ch => `<div class="dt-row"><span style="color:${ch.ok ? '#2fe08a' : '#a05555'}">${ch.ok ? '✓' : '✗'} ${ch.k}</span><span style="color:#4a5870;text-align:right">${ch.d}</span></div>`).join('')}
+        </div>`;
+      }
+    }
+  } catch (_) { /* radar sin datos aún */ }
+
+  // ── Niveles ATR genéricos (si no hay patrón, guía de stop/TP) ──
+  const lvlHtml = atrPct ? `<div class="dt-section">
+    <div class="dt-sec-title">Niveles por ATR(1h) — ${atrPct.toFixed(2)}%</div>
+    <div class="dt-row"><span>Stop (1.2×ATR)</span><b class="neg">${fmtPrice(row.price * (1 - (isLong ? 1 : -1) * atrPct * 1.2 / 100))}</b></div>
+    <div class="dt-row"><span>TP (1.8×ATR)</span><b class="pos">${fmtPrice(row.price * (1 + (isLong ? 1 : -1) * atrPct * 1.8 / 100))}</b></div>
+  </div>` : '';
+
+  const lq = liqSumCache.get(row.symbol);
+  panel.innerHTML = `
+    <div class="dt-head">
+      <div class="sym-icon" style="background:${symColor(row.symbol)}">${row.symbol.slice(0, 3)}</div>
+      <b class="dt-sym">${row.symbol}</b>
+      <span class="dt-price">${fmtPrice(row.price)}</span>
+      ${quadBadge(row)}
+      <span class="score-pill" style="background:${isLong ? 'rgba(0,140,80,.85)' : 'rgba(160,20,0,.85)'};color:${isLong ? '#aaffdd' : '#ffaaaa'}">${isLong ? 'L' : 'S'}${score}</span>
+      <span class="star${favorites.has(row.symbol) ? ' on' : ''}" onclick="toggleFav('${row.symbol}')" style="cursor:pointer">★</span>
+      <button class="dt-close" onclick="closeDetail()" title="Cerrar (Esc)">✕</button>
+    </div>
+    <canvas id="dt-chart"></canvas>
+    <div class="dt-chart-hint">velas 15m · ~24h ${p ? '· <span style="color:#ffd76a">— cuello</span> · <span style="color:#2fe08a">···objetivo</span> · <span style="color:#ff6666">···stop</span>' : ''}</div>
+    ${patternHtml}
+    <div class="dt-section">
+      <div class="dt-sec-title">Métricas</div>
+      <div class="dt-grid">
+        <div class="dt-row"><span>OI 5m / 1h</span><span><b style="color:${fc(row.oi5m)}">${f(row.oi5m)}</b> / <b style="color:${fc(row.oi1h)}">${f(row.oi1h)}</b></span></div>
+        <div class="dt-row"><span>Precio 1h / 4h</span><span><b style="color:${fc(row.price1hPct)}">${f(row.price1hPct)}</b> / <b style="color:${fc(row.price4hPct)}">${f(row.price4hPct)}</b></span></div>
+        <div class="dt-row"><span>Vol 1h</span><b style="color:${fc(row.vol1hPct)}">${f(row.vol1hPct)}</b></div>
+        <div class="dt-row"><span>CVD 5m</span><b style="color:${row.cvd5m == null ? '#3a4a60' : row.cvd5m >= 0 ? '#55bb88' : '#ee6666'}">${row.cvd5m == null ? '—' : (row.cvd5m >= 0 ? '+' : '−') + fmtUSD(Math.abs(row.cvd5m))}</b></div>
+        <div class="dt-row"><span>Funding</span><b style="color:${row.fundingRate > 0.01 ? '#e09030' : row.fundingRate < -0.01 ? '#40a8e0' : '#5a6a85'}">${row.fundingRate == null ? '—' : (row.fundingRate >= 0 ? '+' : '') + row.fundingRate.toFixed(4) + '%'}</b></div>
+        <div class="dt-row"><span>P1h ×ATR</span><b style="color:${fc(row.moveAtr1h)}">${row.moveAtr1h == null ? '—' : (row.moveAtr1h >= 0 ? '+' : '') + row.moveAtr1h.toFixed(1) + '×'}</b></div>
+        <div class="dt-row"><span>ρ BTC / RS 1h</span><span><b>${row.btcCorr == null ? '—' : row.btcCorr.toFixed(2)}</b> / <b style="color:${fc(row.rsBtc1h)}">${f(row.rsBtc1h)}</b></span></div>
+        <div class="dt-row"><span>⚡ Liq 5m</span><b>${lq && (lq.l + lq.s) > 0 ? `${lq.s >= lq.l ? '↑S' : '↓L'} ${fmtUSD(lq.l + lq.s)}` : '—'}</b></div>
+        <div class="dt-row"><span>Liquidez 24h</span><b>${fmtOI(row.turnover24h)}</b></div>
+      </div>
+    </div>
+    ${lvlHtml}
+    ${checksHtml}
+    <div class="dt-actions">
+      <a class="pt-btn" href="${tvUrl}" target="_blank" style="text-decoration:none">📈 TradingView</a>
+      <button class="pt-btn" onclick="openInRadar('${row.symbol}')">🎯 Radar</button>
+      <button class="pt-btn" onclick="highlightScreenerRow('${row.symbol}')">📌 Ver en tabla</button>
+    </div>`;
+
+  requestAnimationFrame(() => drawDetailChart(row));
+}
+
+// ── Gráfico de velas 5m con el patrón dibujado ──────────────────────────────
+function drawDetailChart(row) {
+  const canvas = document.getElementById('dt-chart');
+  const k = row.k15;
+  if (!canvas || !k || k.c.length < 10) return;
+
+  const W = canvas.width = canvas.clientWidth || 380;
+  const H = canvas.height = 235;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const N = Math.min(k.c.length, 110);
+  const start = k.c.length - N;
+  const PADL = 4, PADR = 50, PADT = 10, PADB = 6;
+  const p = row.pattern;
+
+  let min = Infinity, max = -Infinity;
+  for (let i = start; i < k.c.length; i++) { min = Math.min(min, k.l[i]); max = Math.max(max, k.h[i]); }
+  if (p) { min = Math.min(min, p.stop, p.target); max = Math.max(max, p.stop, p.target); }
+  const pad = (max - min) * 0.05 || max * 0.001;
+  min -= pad; max += pad;
+
+  // ~15% de espacio libre a la derecha de la última vela: la ruptura no queda
+  // pegada al eje de precios y se distingue bien contra el cuello
+  const RGAP = Math.max(6, Math.round(N * 0.15));
+  const x = i => PADL + (i - start) / Math.max(1, N - 1 + RGAP) * (W - PADL - PADR);
+  const y = v => PADT + (max - v) / (max - min) * (H - PADT - PADB);
+
+  // Grid + eje derecho (tenue, pegado al borde)
+  ctx.font = '9px Inter,system-ui';
+  for (let g = 0; g <= 4; g++) {
+    const v = min + (max - min) * g / 4;
+    const gy = y(v);
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PADL, gy); ctx.lineTo(W - PADR, gy); ctx.stroke();
+    ctx.fillStyle = '#26334a'; ctx.textAlign = 'right';
+    ctx.fillText(fmtPrice(v).replace('$', ''), W - 3, gy + 3);
+  }
+
+  // Velas
+  const bw = Math.max(1.4, (W - PADL - PADR) / N * 0.68);
+  for (let i = start; i < k.c.length; i++) {
+    const up = k.c[i] >= k.o[i];
+    const col = up ? '#1fae74' : '#d24a4a';
+    ctx.strokeStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x(i), y(k.h[i])); ctx.lineTo(x(i), y(k.l[i])); ctx.stroke();
+    ctx.fillStyle = col;
+    const yo = y(k.o[i]), yc = y(k.c[i]);
+    ctx.fillRect(x(i) - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yc - yo)));
+  }
+
+  // Las etiquetas se acumulan y se pintan al final: chips con fondo, apiladas
+  // por altura para que nunca se tapen entre sí ni con el eje
+  const _labels = [];
+  const hline = (v, color, dash, label) => {
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+    if (dash) ctx.setLineDash(dash);
+    ctx.beginPath(); ctx.moveTo(PADL, y(v)); ctx.lineTo(W - PADR, y(v)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    _labels.push({ v, color, label });
+  };
+
+  if (p) {
+    const isW = p.type === 'W';
+    // Línea de cuello (desde el 1er extremo hasta el borde)
+    ctx.save();
+    ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 1.6; ctx.setLineDash([6, 3]);
+    ctx.shadowColor = 'rgba(255,215,106,.5)'; ctx.shadowBlur = 5;
+    ctx.beginPath(); ctx.moveTo(x(Math.max(start, p.p1.i)), y(p.neckline)); ctx.lineTo(W - PADR, y(p.neckline)); ctx.stroke();
+    ctx.restore();
+    _labels.push({ v: p.neckline, color: '#ffd76a', label: 'cuello' });
+
+    // Marcar los dos extremos (suelos o techos)
+    for (const pt of [p.p1, p.p2]) {
+      if (pt.i < start) continue;
+      ctx.save();
+      ctx.strokeStyle = isW ? '#2fe08a' : '#ff6666'; ctx.lineWidth = 1.8;
+      ctx.shadowColor = isW ? 'rgba(47,224,138,.6)' : 'rgba(255,102,102,.6)'; ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.arc(x(pt.i), y(pt.price), 7, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+    // Flecha en la vela de ruptura
+    if (p.breakIdx != null && p.breakIdx >= start) {
+      ctx.fillStyle = '#ffbe3c'; ctx.font = '900 13px Inter,system-ui'; ctx.textAlign = 'center';
+      ctx.fillText(isW ? '▲' : '▼', x(p.breakIdx), y(k.c[p.breakIdx]) + (isW ? 18 : -12));
+      ctx.textAlign = 'left';
+    }
+    hline(p.target, '#2fe08a', [2, 3], 'objetivo');
+    hline(p.stop, '#ff6666', [2, 3], 'stop');
+  } else {
+    // Sin patrón: niveles ATR de referencia
+    const atrPct = row.atr1h && row.price ? row.atr1h / row.price : null;
+    if (atrPct) {
+      const sc = scoreSymbol(row);
+      const dir = sc.longScore >= sc.shortScore ? 1 : -1;
+      hline(row.price * (1 - dir * atrPct * 1.2), '#ff6666', [2, 3], 'stop ATR');
+      hline(row.price * (1 + dir * atrPct * 1.8), '#2fe08a', [2, 3], 'TP ATR');
+    }
+  }
+
+  // Último precio
+  hline(k.c[k.c.length - 1], '#c8d8ff', [1, 2], fmtPrice(k.c[k.c.length - 1]).replace('$', ''));
+
+  // ── Pintar todas las etiquetas: chips apilados a la derecha, sin taparse ──
+  _labels.sort((a, b) => y(a.v) - y(b.v));
+  ctx.font = '700 9px Inter,system-ui';
+  let sy = PADT - 15;
+  for (const L2 of _labels) {
+    const ly0 = y(L2.v);
+    let ly = Math.max(ly0, sy + 14);
+    ly = Math.min(ly, H - PADB - 3);
+    sy = ly;
+    const tw = ctx.measureText(L2.label).width;
+    const x0 = W - tw - 10; // chip alineado al borde derecho
+    // conector desde la línea hasta el chip
+    ctx.strokeStyle = L2.color; ctx.globalAlpha = 0.5; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(W - PADR, ly0); ctx.lineTo(x0 - 2, ly); ctx.stroke();
+    ctx.globalAlpha = 1;
+    // chip con fondo
+    ctx.fillStyle = 'rgba(4,6,10,0.95)';
+    ctx.fillRect(x0 - 2, ly - 7, tw + 9, 14);
+    ctx.strokeStyle = L2.color; ctx.globalAlpha = 0.4; ctx.lineWidth = 1;
+    ctx.strokeRect(x0 - 2, ly - 7, tw + 9, 14);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = L2.color; ctx.textAlign = 'left';
+    ctx.fillText(L2.label, x0 + 2, ly + 3);
+  }
+}
+
+// ── Interacción: clic en cualquier fila abre el panel ───────────────────────
+(function initDetail() {
+  const tbody = document.getElementById('tbody');
+  if (tbody) {
+    tbody.addEventListener('click', e => {
+      if (e.target.closest('.star') || e.target.closest('.row-radar') || e.target.closest('.pat-badge')) return;
+      const tr = e.target.closest('tr[data-sym]');
+      if (tr) openDetail(tr.dataset.sym);
+    });
+  }
+  window.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+})();

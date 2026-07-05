@@ -30,6 +30,17 @@ function init() {
       .then(() => client.execute(`ALTER TABLE sync_data ADD COLUMN track_ledger TEXT NOT NULL DEFAULT '[]'`).catch(() => {}))
       .then(() => client.execute(`ALTER TABLE sync_data ADD COLUMN favorites TEXT NOT NULL DEFAULT '[]'`).catch(() => {}))
       .then(() => client.execute(`ALTER TABLE sync_data ADD COLUMN conf_signals TEXT NOT NULL DEFAULT '[]'`).catch(() => {}))
+      // snapshots de precio cada 5 min (para resolver señales con la pestaña cerrada)
+      .then(() => client.execute(`
+        CREATE TABLE IF NOT EXISTS price_snaps (
+          ts INTEGER NOT NULL,
+          symbol TEXT NOT NULL,
+          price REAL NOT NULL,
+          oi REAL,
+          PRIMARY KEY (symbol, ts)
+        )
+      `))
+      .then(() => client.execute(`CREATE INDEX IF NOT EXISTS idx_price_snaps_ts ON price_snaps (ts)`).catch(() => {}))
       .then(() => true)
       .catch(err => {
         console.error('Turso init error:', err.message);
@@ -73,4 +84,48 @@ async function saveSync(trackHistory, stratSignals, trackLedger, favorites, conf
   return true;
 }
 
-module.exports = { enabled: () => !!client, loadSync, saveSync };
+// ── Snapshots de precio (job de server.js cada 5 min) ───────────────────────
+
+async function savePriceSnaps(ts, rows) {
+  if (!await init()) return false;
+  const stmts = rows.map(r => ({
+    sql: 'INSERT OR REPLACE INTO price_snaps (ts, symbol, price, oi) VALUES (?, ?, ?, ?)',
+    args: [ts, r.symbol, r.price, r.oi ?? null],
+  }));
+  await client.batch(stmts, 'write');
+  return true;
+}
+
+async function prunePriceSnaps(beforeTs) {
+  if (!await init()) return false;
+  await client.execute({ sql: 'DELETE FROM price_snaps WHERE ts < ?', args: [beforeTs] });
+  return true;
+}
+
+// Precio más cercano a `ts` (dentro de ±tolMs) para un símbolo.
+async function priceAt(symbol, ts, tolMs) {
+  if (!await init()) return null;
+  const res = await client.execute({
+    sql: `SELECT ts, price FROM price_snaps
+          WHERE symbol = ? AND ts BETWEEN ? AND ?
+          ORDER BY ABS(ts - ?) LIMIT 1`,
+    args: [symbol, ts - tolMs, ts + tolMs, ts],
+  });
+  if (!res.rows.length) return null;
+  return { symbol, ts: Number(res.rows[0].ts), price: Number(res.rows[0].price) };
+}
+
+// Serie de precios desde `from` para una lista de símbolos (backfill del frontend).
+async function priceSeries(symbols, from) {
+  if (!await init()) return [];
+  const placeholders = symbols.map(() => '?').join(',');
+  const res = await client.execute({
+    sql: `SELECT ts, symbol, price FROM price_snaps
+          WHERE ts >= ? AND symbol IN (${placeholders})
+          ORDER BY ts ASC`,
+    args: [from, ...symbols],
+  });
+  return res.rows.map(r => ({ ts: Number(r.ts), symbol: String(r.symbol), price: Number(r.price) }));
+}
+
+module.exports = { enabled: () => !!client, loadSync, saveSync, savePriceSnaps, prunePriceSnaps, priceAt, priceSeries };

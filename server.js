@@ -4,11 +4,10 @@ const compression = require('compression');
 const path = require('path');
 const db = require('./db');
 const ai = require('./ai');
-const lxrBot = require('./bot');
 
 const app = express();
 // gzip en TODAS las respuestas (HTML/JS/CSS/JSON). El index.html (~200 KB) y el
-// JSON de /api/bot/stats bajan ~5-10x → clave para no reventar el ancho de banda
+// JSON de /api/sync bajan ~5-10x → clave para no reventar el ancho de banda
 // del plan gratis de Render.
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
@@ -44,7 +43,136 @@ function rateLimit(max, windowMs) {
   };
 }
 
-if (process.env.LXR_BOT === '1') lxrBot.startBot();
+// ── Snapshots de precio cada 5 min ──────────────────────────────────────────
+// Guarda un snapshot de precio/OI de los ~150 pares más líquidos aunque no haya
+// ninguna pestaña abierta. Con esto el frontend puede resolver señales viejas
+// (+30m/+1h) con el precio CORRECTO de ese momento y hacer backfill del
+// seguimiento. Con Turso configurado persiste 14 días; sin Turso, ring buffer
+// en memoria (48h, se pierde al reiniciar el server).
+// Nota: si Bybit bloquea la IP del servidor (algunos clouds), el job falla en
+// silencio y todo lo demás sigue funcionando igual que antes.
+const SNAP_INTERVAL_MS  = 5 * 60_000;
+const SNAP_RETENTION_MS = 14 * 24 * 3600_000;
+const memSnaps = []; // fallback en memoria: [{ ts, rows: [{symbol, price, oi}] }]
+let _snapErrLoggedAt = 0;
+
+async function captureSnapshot() {
+  try {
+    const res = await fetch('https://api.bybit.com/v5/market/tickers?category=linear', {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    const ts = Date.now();
+    const rows = (json.result?.list || [])
+      .filter(t => t.symbol.endsWith('USDT') && parseFloat(t.turnover24h) > 500_000)
+      .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
+      .slice(0, 150)
+      .map(t => ({
+        symbol: t.symbol.replace('USDT', ''),
+        price: parseFloat(t.lastPrice),
+        oi: parseFloat(t.openInterestValue) || null,
+      }))
+      .filter(r => Number.isFinite(r.price) && r.price > 0);
+    if (!rows.length) return;
+    if (db.enabled()) {
+      await db.savePriceSnaps(ts, rows);
+    } else {
+      memSnaps.push({ ts, rows });
+      const cut = ts - 48 * 3600_000;
+      while (memSnaps.length && memSnaps[0].ts < cut) memSnaps.shift();
+    }
+  } catch (err) {
+    if (Date.now() - _snapErrLoggedAt > 3600_000) {
+      console.error('snapshot job (no crítico):', err.message);
+      _snapErrLoggedAt = Date.now();
+    }
+  }
+}
+setInterval(captureSnapshot, SNAP_INTERVAL_MS);
+captureSnapshot();
+if (db.enabled()) {
+  setInterval(() => db.prunePriceSnaps(Date.now() - SNAP_RETENTION_MS).catch(() => {}), 3600_000);
+}
+
+function memPriceAt(symbol, ts, tolMs) {
+  let best = null, bestDist = Infinity;
+  for (const snap of memSnaps) {
+    const dist = Math.abs(snap.ts - ts);
+    if (dist > tolMs || dist >= bestDist) continue;
+    const r = snap.rows.find(x => x.symbol === symbol);
+    if (r) { best = { symbol, ts: snap.ts, price: r.price }; bestDist = dist; }
+  }
+  return best;
+}
+
+function memSeries(symbols, from) {
+  const set = new Set(symbols);
+  const out = [];
+  for (const snap of memSnaps) {
+    if (snap.ts < from) continue;
+    for (const r of snap.rows) if (set.has(r.symbol)) out.push({ ts: snap.ts, symbol: r.symbol, price: r.price });
+  }
+  return out;
+}
+
+// Lookup puntual: [{symbol, ts}] → precio más cercano dentro de ±tolMs (o null)
+app.post('/api/prices/lookup', rateLimit(30, 60_000), async (req, res) => {
+  const queries = Array.isArray(req.body?.queries) ? req.body.queries.slice(0, 200) : [];
+  const tolMs = Math.min(Math.max(+req.body?.tolMs || 5 * 60_000, 60_000), 15 * 60_000);
+  const results = [];
+  for (const q of queries) {
+    if (!q || !q.symbol || !q.ts) { results.push(null); continue; }
+    let hit = null;
+    try {
+      hit = db.enabled()
+        ? await db.priceAt(String(q.symbol), +q.ts, tolMs)
+        : memPriceAt(String(q.symbol), +q.ts, tolMs);
+    } catch (_) { /* sin datos */ }
+    results.push(hit);
+  }
+  res.json({ results });
+});
+
+// Serie desde `from` para varios símbolos (backfill del seguimiento)
+app.get('/api/prices/series', rateLimit(20, 60_000), async (req, res) => {
+  const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 60);
+  const from = +req.query.from || Date.now() - 24 * 3600_000;
+  if (!symbols.length) return res.json({ rows: [] });
+  try {
+    const rows = db.enabled() ? await db.priceSeries(symbols, from) : memSeries(symbols, from);
+    res.json({ rows });
+  } catch (err) {
+    console.error('GET /api/prices/series error:', err.message);
+    res.status(500).json({ error: 'series read failed' });
+  }
+});
+
+// ── Proxy CoinGlass (opcional) ───────────────────────────────────────────
+// Define COINGLASS_API_KEY en .env y el frontend podrá pedir cualquier endpoint
+// de open-api-v4.coinglass.com vía /api/cg/<ruta>?<params> sin exponer la key.
+// Caché de 60s por ruta+params para no quemar el rate limit del plan.
+const CG_KEY = process.env.COINGLASS_API_KEY;
+const _cgCache = new Map();
+app.get('/api/cg/*', rateLimit(60, 60_000), async (req, res) => {
+  if (!CG_KEY) return res.status(503).json({ error: 'CoinGlass no configurado (falta COINGLASS_API_KEY en .env)' });
+  const sub = req.params[0];
+  const qs = new URLSearchParams(req.query).toString();
+  const cacheKey = sub + '?' + qs;
+  const hit = _cgCache.get(cacheKey);
+  if (hit && Date.now() - hit.ts < 60_000) return res.json(hit.data);
+  try {
+    const r = await fetch(`https://open-api-v4.coinglass.com/api/${sub}${qs ? '?' + qs : ''}`, {
+      headers: { 'CG-API-KEY': CG_KEY, accept: 'application/json' },
+    });
+    const data = await r.json();
+    _cgCache.set(cacheKey, { ts: Date.now(), data });
+    if (_cgCache.size > 300) _cgCache.delete(_cgCache.keys().next().value);
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: 'cg proxy: ' + err.message });
+  }
+});
 
 // Respaldo en servidor de trackHistory + stratSignals (Turso). Si no está
 // configurado, responde 204/{} para que el frontend siga usando solo localStorage.
@@ -88,18 +216,6 @@ app.post('/api/explain', rateLimit(10, 60_000), async (req, res) => {
   } catch (err) {
     console.error('POST /api/explain error:', err.message);
     res.status(500).json({ error: 'explain failed' });
-  }
-});
-
-app.get('/api/bot/stats', (req, res) => res.json(lxrBot.getState()));
-app.post('/api/bot/reset', (req, res) => res.json(lxrBot.resetBreaker()));
-app.post('/api/bot/start', async (req, res) => {
-  try {
-    const botState = await lxrBot.startBot();
-    res.json({ ok: true, started: botState.started });
-  } catch (err) {
-    console.error('POST /api/bot/start error:', err.message);
-    res.status(500).json({ error: err.message });
   }
 });
 

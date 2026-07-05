@@ -22,7 +22,6 @@ let selectedBubble = null;      // símbolo seleccionado para el panel de detall
 let confCache     = new Map();  // symbol → resultado de confluencia del último render
 let prevConfCount = new Map();  // symbol → count anterior (para alertar al llegar a ≥6)
 let _oiSigCache   = new Map();  // symbol|tf → σ de cambios de OI (se limpia en cada load)
-let _botStatsCache = { ts: 0, data: null };
 let _qwrCache     = { ts: 0, html: '' };
 
 // ── Calibración del radar: señales registradas y su resultado ──────────────
@@ -209,17 +208,6 @@ function openInRadar(sym) {
   setTimeout(() => selectConfSymbol(sym), 180);
 }
 
-// ── Stats del bot (para el panel de detalle) ───────────────────────────────
-async function getBotStats() {
-  if (Date.now() - _botStatsCache.ts < 10_000) return _botStatsCache.data;
-  if (document.hidden) return _botStatsCache.data; // segundo plano: usa lo último, no gasta ancho de banda
-  try {
-    const r = await fetch('/api/bot/stats');
-    _botStatsCache = { ts: Date.now(), data: r.ok ? await r.json() : null };
-  } catch (_) { _botStatsCache = { ts: Date.now(), data: null }; }
-  return _botStatsCache.data;
-}
-
 // ── Régimen propio fallback (sin trackHistory) a partir de ATR ─────────────
 function fallbackSymbolRegime(row) {
   const n = v => v ?? 0;
@@ -297,13 +285,67 @@ function updateConfSignals(rows) {
     dirty = true;
   }
 
-  // 2) resolver resultados a +30m / +1h con el precio actual
+  // 2) resolver resultados a +30m / +1h con el precio actual — SOLO dentro de
+  //    la ventana (+30–35m / +60–65m). Antes, si la pestaña estuvo cerrada,
+  //    se usaba el precio actual aunque hubieran pasado horas → la calibración
+  //    quedaba contaminada. Las que se pasaron de ventana se resuelven retro
+  //    con el precio real de ese momento (servidor de snapshots o kline).
   const priceOf = new Map(rows.map(r => [r.symbol, r.price]));
   for (const s of confSignals) {
-    if (s.p30 == null && now - s.ts >= 30 * 60_000 && priceOf.has(s.symbol)) { s.p30 = priceOf.get(s.symbol); dirty = true; }
-    if (s.p60 == null && now - s.ts >= 60 * 60_000 && priceOf.has(s.symbol)) { s.p60 = priceOf.get(s.symbol); dirty = true; }
+    const age = now - s.ts;
+    if (s.p30 == null && age >= 30 * 60_000 && age < 35 * 60_000 && priceOf.has(s.symbol)) { s.p30 = priceOf.get(s.symbol); dirty = true; }
+    if (s.p60 == null && age >= 60 * 60_000 && age < 65 * 60_000 && priceOf.has(s.symbol)) { s.p60 = priceOf.get(s.symbol); dirty = true; }
   }
   if (dirty) saveConfSignals();
+  resolveStaleConfSignals(); // async — señales que quedaron fuera de ventana
+}
+
+// ── Resolución retrospectiva de señales del radar ───────────────────────────
+// Para señales cuya ventana de +30m/+1h pasó con la pestaña cerrada: pide el
+// precio de ESE momento al servidor de snapshots (/api/prices/lookup, 5 min de
+// resolución) y, si el servidor no lo tiene, cae a la kline 1m de Bybit.
+let _confResolving = false;
+async function resolveStaleConfSignals() {
+  if (_confResolving) return;
+  const now = Date.now();
+  const pending = [];
+  for (const s of confSignals) {
+    if (s.p30 == null && now - s.ts >= 35 * 60_000) pending.push({ sig: s, hz: 'p30', ts: s.ts + 30 * 60_000 });
+    if (s.p60 == null && now - s.ts >= 65 * 60_000) pending.push({ sig: s, hz: 'p60', ts: s.ts + 60 * 60_000 });
+  }
+  if (!pending.length) return;
+  _confResolving = true;
+  try {
+    const batch = pending.slice(0, 60);
+    let results = [];
+    try {
+      const res = await fetch('/api/prices/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queries: batch.map(p => ({ symbol: p.sig.symbol, ts: p.ts })), tolMs: 5 * 60_000 }),
+      });
+      if (res.ok) results = (await res.json()).results || [];
+    } catch (_) { /* servidor sin snapshots */ }
+
+    let dirty = false;
+    let klineCalls = 0;
+    for (let i = 0; i < batch.length; i++) {
+      const p = batch[i];
+      let price = results[i]?.price ?? null;
+      // Fallback kline (máx. 8 por ciclo para no gastar rate limit de Bybit)
+      if (price == null && typeof fetchPriceAtTime === 'function' && klineCalls < 8) {
+        klineCalls++;
+        price = await fetchPriceAtTime(p.sig.symbol, p.ts);
+      }
+      if (price != null) { p.sig[p.hz] = price; dirty = true; }
+    }
+    if (dirty) {
+      saveConfSignals();
+      renderConfCalib();
+    }
+  } finally {
+    _confResolving = false;
+  }
 }
 
 /** Win-rate por nivel (5/6/7) y por check individual (✓ vs ✗) a +30m/+1h. */
@@ -345,9 +387,20 @@ function renderConfCalib() {
   if (!confCalibOpen) { el.style.display = 'none'; return; }
   el.style.display = '';
 
-  const wr  = a => a.n ? (a.h / a.n * 100).toFixed(0) + '%' : '—';
+  const wr  = a => {
+    if (!a.n) return '—';
+    const pct = (a.h / a.n * 100).toFixed(0);
+    const ci = wilsonCI(a.h, a.n);
+    return `${pct}%<span style="font-weight:400;opacity:.55">±${Math.round(ci.pm)}</span>${a.n < WR_MIN_N ? ' ⚠' : ''}`;
+  };
   const avg = a => a.n ? ((a.sum / a.n >= 0 ? '+' : '') + (a.sum / a.n).toFixed(2) + '%') : '—';
-  const col = a => { if (!a.n) return '#5a6a85'; const w = a.h / a.n * 100; return w >= 55 ? '#2fe08a' : w <= 45 ? '#ee6666' : '#5a6a85'; };
+  // Gris si la muestra es chica o el IC 95% cruza el 50% (no significativo)
+  const col = a => {
+    if (!a.n || a.n < WR_MIN_N) return '#5a6a85';
+    const ci = wilsonCI(a.h, a.n);
+    if (!ci || (ci.lo <= 50 && ci.hi >= 50)) return '#5a6a85';
+    return a.h / a.n >= 0.5 ? '#2fe08a' : '#ee6666';
+  };
 
   const lvlRows = [5, 6, 7].map(k => {
     const L = st.lvl[k];
@@ -390,7 +443,7 @@ function renderConfluence(scored) {
   // Alerta cuando un símbolo alcanza ≥6/7
   for (const c of top) {
     const prev = prevConfCount.get(c.symbol) ?? 0;
-    if (c.count >= 6 && prev < 6) {
+    if (c.count >= 7 && prev < 7) {
       showToast(`🎯 ${c.symbol} ${c.count}/7 confluencia ${c.side.toUpperCase()}`, c.side);
       if (soundEnabled) beep(c.side === 'long' ? 1040 : 460, 'triangle', 180);
       notifyDesktop(`🎯 ${c.symbol} ${c.count}/7 ${c.side.toUpperCase()}`, c.checks.filter(ch => !ch.ok).map(ch => `✗ ${ch.k}`).join(' · ') || 'Todas las señales en verde');
@@ -443,25 +496,7 @@ async function renderConfDetail(sym) {
       <span class="cc-side ${c.side}">${c.side.toUpperCase()}</span>
       <span style="color:#3a4558;font-size:10px">cuadrante ${c.quad} · ${c.count}/7</span>
       <a href="https://www.tradingview.com/chart/?symbol=BYBIT:${sym}USDT.P" target="_blank" style="margin-left:auto;font-size:10px;color:#4a90d0;text-decoration:none">TradingView ↗</a>
-    </div>${rowsHtml}
-    <div id="conf-bot" style="margin-top:7px;border-top:1px solid #141c28;padding-top:6px;color:#3a4558;font-size:10px">Consultando bot…</div>`;
-  const bot = await getBotStats();
-  const botEl = document.getElementById('conf-bot');
-  if (!botEl) return;
-  if (!bot || !bot.started) {
-    botEl.textContent = '🤖 Bot apagado (LXR_BOT=1 para arrancarlo) — sin régimen/heatmap del bot.';
-    return;
-  }
-  const full = sym + 'USDT';
-  const reg = bot.regimes?.[full];
-  const hm  = (bot.heatmaps?.[full] || []).slice(0, 3);
-  const sig = (bot.lastSignals || []).filter(s => s.symbol === full).slice(-2);
-  const pos = (bot.openPositions || []).find(p => p.symbol === full);
-  botEl.innerHTML = `🤖 <b style="color:#7888aa">Bot:</b> ` +
-    (reg ? `régimen <b style="color:#c8d8ff">${reg.regime} ${reg.dir === 'up' ? '↑' : reg.dir === 'down' ? '↓' : '·'}</b> (ADX ${reg.adx} · ER ${reg.er}) · ` : 'sin régimen · ') +
-    (hm.length ? `imanes de liq: ${hm.map(h => fmtPrice(h.price)).join(', ')} · ` : '') +
-    (pos ? `<b style="color:#ffaa28">posición abierta ${pos.side}</b> @ ${fmtPrice(pos.entry)} · ` : '') +
-    (sig.length ? `señales: ${sig.map(s => `${s.strategy} ${s.side} (score ${s.score})`).join(' · ')}` : 'sin señales recientes');
+    </div>${rowsHtml}`;
 }
 
 // ── Win-rate histórico por cuadrante (de trackHistory, mirando +1h) ────────
@@ -493,8 +528,11 @@ function renderQuadWinrates() {
     : Object.entries(agg).map(([q, a]) => {
         if (!a.n) return `<span class="qwr-chip">${q} —</span>`;
         const wr = a.h / a.n * 100;
-        const col = wr >= 55 ? '#2fe08a' : wr <= 45 ? '#ee6666' : '#5a6a85';
-        return `<span class="qwr-chip" title="aciertos a +1h estando en ${q} (n=${a.n})">${q} <b style="color:${col}">${wr.toFixed(0)}%</b></span>`;
+        const ci = wilsonCI(a.h, a.n);
+        // Solo se colorea si es significativo: n suficiente Y el intervalo no cruza 50%
+        const sig = a.n >= WR_MIN_N && ci && (ci.lo > 50 || ci.hi < 50);
+        const col = !sig ? '#5a6a85' : wr >= 50 ? '#2fe08a' : '#ee6666';
+        return `<span class="qwr-chip" title="aciertos a +1h estando en ${q} — n=${a.n}, IC 95%: ${ci.lo.toFixed(0)}–${ci.hi.toFixed(0)}%${sig ? '' : ' (no significativo aún)'}">${q} <b style="color:${col}">${wr.toFixed(0)}%<span style="font-weight:400;opacity:.55">±${Math.round(ci.pm)}</span></b></span>`;
       }).join('');
   _qwrCache = { ts: Date.now(), html: `<span style="font-size:9px;color:#283040">WR +1h por cuadrante:</span>` + chips };
   el.innerHTML = _qwrCache.html;
@@ -505,7 +543,8 @@ function renderQuadWinrates() {
 // tendencia es consistente de punta a punta — ayuda visual para continuación.
 function renderQuadAligned(rows) {
   const el = document.getElementById('conf-aligned');
-  if (!el) return;
+  const strip = document.getElementById('aligned-strip'); // copia bajo el mapa (screener)
+  if (!el && !strip) return;
   const quadOf = (oi, p) => oi >= 0 && p >= 0 ? 'LONG' : oi >= 0 ? 'SHORT' : p >= 0 ? 'SQUEEZE' : 'LIQ';
   const TFS = [['oi15m', 'price15mPct'], ['oi1h', 'price1hPct'], ['oi4h', 'price4hPct'], ['oi24h', 'price24hPct']];
   const items = [];
@@ -532,15 +571,18 @@ function renderQuadAligned(rows) {
     const title = full
       ? `${it.symbol}: cuadrante ${it.quad} en 15m, 1h, 4h y 1d — tendencia consistente en todas las temporalidades`
       : `${it.symbol}: cuadrante ${it.quad} en ${it.tfs} de 4 temporalidades (falta el dato de 1d, suele completarse en el siguiente ciclo)`;
-    return `<span class="qal-chip" onclick="selectConfSymbol('${it.symbol}')" title="${title}"${full ? '' : ' style="opacity:.55"'}>
+    return `<span class="qal-chip" onclick="selectConfSymbol('${it.symbol}');if(typeof highlightScreenerRow==='function')highlightScreenerRow('${it.symbol}')" title="${title}"${full ? '' : ' style="opacity:.55"'}>
       ${it.symbol}
       <span class="qal-q" style="background:${bg};color:${fg}">${it.quad}</span>
       <span class="qal-pct" style="color:${pc}">${fmtPct(it.p1h) ?? '—'}</span>
       ${full ? '' : '<span class="qal-pct" style="color:#5a6a85">3/4</span>'}
     </span>`;
   }).join('');
-  el.innerHTML = `<div class="qal-head">🧭 Cuadrante alineado en 15m · 1h · 4h · 1d (${items.filter(i => i.tfs === 4).length} completas)</div>
+  const fullCount = items.filter(i => i.tfs === 4).length;
+  const html = `<div class="qal-head">🧭 Cuadrante alineado en 15m · 1h · 4h · 1d (${fullCount} completas)</div>
     <div class="qal-grid">${chips || '<span class="cc-note">Ninguna moneda con las temporalidades en el mismo cuadrante ahora mismo.</span>'}</div>`;
+  if (el) el.innerHTML = html;
+  if (strip) strip.innerHTML = html;
 }
 
 // ── 🚀 Monedas con potencial ────────────────────────────────────────────────
@@ -597,6 +639,11 @@ function potentialScore(row) {
   else if (sgn * cvd > 0) { score += 10; trigger = { state: 'go', txt: 'CVD a favor — gatillo activo' }; }
   else trigger = { state: 'wait', txt: 'esperar CVD a favor (gatillo)' };
 
+  // Piso de liquidez: sin esto, un funding/OI "extremo" en una moneda ilíquida
+  // suele ser ruido de libro delgado, no una tesis real. Mismo umbral que ya
+  // usa scoreSymbol() ($300k vol 1h) para ser consistentes en todo el sistema.
+  if ((row.vol1hUSD ?? 0) < 300_000) { score = Math.min(score, 30); reasons.push('⚠ liquidez baja (vol 1h < $300k) — score limitado'); }
+
   // exige el núcleo del setup: funding estirado + algo de acumulación de OI
   if (score < 40 || oiUp < 1) return null;
 
@@ -614,6 +661,16 @@ function renderPotentialPanel(scored) {
   if (!grid) return;
   const list = scored.map(potentialScore).filter(Boolean)
     .sort((a, b) => b.score - a.score);
+
+  // Registrar TODAS las candidatas (no solo las 8 que se muestran) en el mismo
+  // sistema de evidencia del Comparador — key 'squeeze' para no chocar con
+  // 'promising' (que ya usa la etiqueta "Potencial" en el Lab).
+  if (typeof logPanelDetections === 'function') {
+    logPanelDetections('squeeze', list.map(p => ({
+      symbol: p.symbol, side: p.side === 'long' ? 'l' : 's', score: p.score,
+    })));
+  }
+
   // ready = gatillo activo y score alto; watch = tesis viva, falta confirmación
   if (cnt) cnt.textContent = list.length
     ? `${list.filter(p => p.trigger.state === 'go').length} con gatillo activo · ${list.length} en total`

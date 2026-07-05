@@ -5,3 +5,4 @@ node_modules/
 server.log
 server-error.log
 *.log
+graphify-out/
