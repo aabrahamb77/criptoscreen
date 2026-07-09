@@ -276,6 +276,30 @@ header h1 {
 #pattern-strip:empty { display: none; }
 #pattern-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
 
+/* ── Outliers reales (sostenido vs. pico) ── */
+#outlier-strip {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 12px 4px;
+  background: #05070a; border-top: 1px solid #0c1119;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: #1a2535 transparent;
+}
+#outlier-strip:empty { display: none; }
+#outlier-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+
+/* ── Momentum confirmado (umbrales absolutos 5%/10%) ── */
+#momentum-strip {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 12px 4px;
+  background: #05070a; border-top: 1px solid #0c1119;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: #1a2535 transparent;
+}
+#momentum-strip:empty { display: none; }
+#momentum-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+
 .pat-badge {
   font-size: 8.5px; font-weight: 800; padding: 1px 5px; border-radius: 4px;
   cursor: pointer; letter-spacing: .3px; flex-shrink: 0;

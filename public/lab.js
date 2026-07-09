@@ -59,10 +59,14 @@ function closePT(trade, reason, currentPrice) {
   savePT();
 }
 
-// Solo las 10 estrategias de scoring por símbolo — 'confluence'/'health'/
-// 'promising' son paneles agregados sin estructura por símbolo+lado, no
-// estrategias operables por el bot.
-const BOT_STRAT_KEYS = ['cur', 'pct', 'reg', 'z', 'range', 'liq', 'sector', 'whale', 'beta', 'alpha'];
+// Las 10 estrategias core de scoring por símbolo, más 'confluence' y 'health'
+// — estas dos ERAN paneles agregados sin estructura por símbolo+lado, pero
+// resultaron ser las de MEJOR evidencia real (Confluencia ~62% WR, Saludable
+// ~56% WR a 1h) así que se les da la misma estructura {l,s} más abajo en
+// renderLab() para que el bot pueda operarlas igual que cualquier estrategia
+// core. 'promising'/'patternWM'/'squeeze' quedan fuera: su evidencia actual
+// no lo justifica (WR≈48% o menos) — no es limitación técnica, es la evidencia.
+const BOT_STRAT_KEYS = ['cur', 'pct', 'reg', 'z', 'range', 'liq', 'sector', 'whale', 'beta', 'alpha', 'confluence', 'health'];
 
 // Estrategias con evidencia real suficiente AHORA MISMO (Wilson, misma fuente
 // que el Comparador): n≥BOT_MIN_N señales evaluadas a 1h y WR≥BOT_MIN_WR%.
@@ -913,6 +917,11 @@ function renderActionableSignals(confMap, confStrats, totalStrats) {
   const grid = document.getElementById('lab-signals-grid');
   if (!grid) return;
 
+  // Evidencia de 'confluence' es la misma para toda tarjeta de esta lista (por
+  // construcción, cnt≥2 = ya califica como señal de confluencia) — se calcula
+  // una sola vez en vez de por candidato.
+  const confluenceEv = strategyEvidence('confluence');
+
   const candidates = [...confMap.entries()]
     .filter(([, cnt]) => cnt >= 2)
     .map(([k, cnt]) => {
@@ -920,18 +929,25 @@ function renderActionableSignals(confMap, confStrats, totalStrats) {
       const row = allRows.find(r => r.symbol === symbol);
       if (!row) return null;
       const isLong = side === 'l';
+      const health = healthScore(row);
 
-      // Mejor evidencia entre las estrategias que dispararon esta señal:
-      // solo cuentan las que ya tienen n suficiente (WR_MIN_N) para fiarse.
+      // Mejor evidencia disponible para esta señal: además de las estrategias
+      // core que dispararon (confStrats), se compite también con 'confluence'
+      // (siempre aplica aquí) y 'health' (si esta moneda ya califica como
+      // saludable) — ambas resultaron tener de la MEJOR evidencia real medida
+      // (~62% y ~56% WR), así que merecen competir por el puesto de "mejor".
       const strats = confStrats.get(k) || [];
       let best = null;
+      if (confluenceEv.n >= WR_MIN_N) best = { key: 'confluence', ...confluenceEv };
+      if (health.score >= 60) {
+        const healthEv = strategyEvidence('health');
+        if (healthEv.n >= WR_MIN_N && (!best || healthEv.lo > best.lo)) best = { key: 'health', ...healthEv };
+      }
       for (const key of strats) {
         const ev = strategyEvidence(key);
         if (ev.n < WR_MIN_N) continue;
         if (!best || ev.lo > best.lo) best = { key, ...ev };
       }
-
-      const health = healthScore(row);
       const atrPct = row.atr1h && row.price ? row.atr1h / row.price * 100 : null;
       const entry = row.price;
       const stop  = atrPct != null ? entry * (1 - (isLong ? 1 : -1) * atrPct * 1.2 / 100) : null;
@@ -1068,6 +1084,21 @@ function renderLab() {
 
   logPanelDetections('confluence', [...confMap.entries()].filter(([,cnt]) => cnt >= 2)
     .map(([k, cnt]) => ({ symbol: k.slice(0,-1), side: k.slice(-1), score: cnt })));
+
+  // Adjuntar 'confluence' y 'health' a `scored` con la misma forma {l,s} que
+  // las 10 estrategias core — mismo umbral (score≥60 = nota B+) que usa
+  // renderHealthPanel()/logPanelDetections('health',...) para loguear evidencia,
+  // así lo que cuenta aquí como "señal de salud" es exactamente lo mismo que
+  // lo que el Comparador está midiendo (56% WR real).
+  const healthBySymbol = new Map(allRows.map(r => [r.symbol, healthScore(r)]));
+  for (const r of scored) {
+    r.confluence = { l: confMap.get(r.symbol + 'l') || 0, s: confMap.get(r.symbol + 's') || 0 };
+    const h = healthBySymbol.get(r.symbol);
+    r.health = {
+      l: (h && h.side === 'long'  && h.score >= 60) ? h.score : 0,
+      s: (h && h.side === 'short' && h.score >= 60) ? h.score : 0,
+    };
+  }
 
   // Radar automático: sigue temporalmente las monedas "on fire" del momento
   // sin depender de marcarlas con ★ (alimenta Seguimiento); el panel "Radar"

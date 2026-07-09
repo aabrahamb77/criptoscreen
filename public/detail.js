@@ -6,12 +6,71 @@
 
 let detailSym = null;
 
+// ── Historial extendido de velas 15m por símbolo (~3 días) ──────────────────
+// row.k15 solo trae ~24h (agregado de 288 velas de 5m). Al abrir el panel se
+// pide un tramo más largo directo a Bybit (igual que hace btc.js con k15x)
+// para poder mostrar más barras de contexto a la izquierda del patrón.
+const DT_HIST_TTL = 5 * 60_000;
+let _dtHist = new Map(); // symbol → { ts, k:{t,o,h,l,c,v} }
+
+async function dtFetchHistory(symbol) {
+  try {
+    const r = await bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}USDT&interval=15&limit=300`);
+    const list = r.result?.list || [];
+    if (list.length < 20) return;
+    _dtHist.set(symbol, {
+      ts: Date.now(),
+      k: {
+        t: list.map(x => +x[0]).reverse(),
+        o: list.map(x => parseFloat(x[1])).reverse(),
+        h: list.map(x => parseFloat(x[2])).reverse(),
+        l: list.map(x => parseFloat(x[3])).reverse(),
+        c: list.map(x => parseFloat(x[4])).reverse(),
+        v: list.map(x => parseFloat(x[5])).reverse(),
+      },
+    });
+    if (detailSym === symbol) {
+      const row = allRows.find(r2 => r2.symbol === symbol);
+      if (row) drawDetailChart(row);
+    }
+  } catch (_) {}
+}
+
+// Combina el historial extendido (velas más antiguas que row.k15) con row.k15
+// (siempre el tramo más reciente, en vivo). Devuelve también `offset`: cuánto
+// hay que sumarle a los índices del patrón (p.p1.i, p.p2.i, breakIdx), que
+// fueron calculados contra row.k15 antes de la fusión.
+function dtBuildChartData(row) {
+  const k15 = row.k15;
+  const ext = _dtHist.get(row.symbol);
+  if (!ext || (Date.now() - ext.ts) > DT_HIST_TTL * 2 || !ext.k?.c?.length || !k15?.t?.length) {
+    return { k: k15, offset: 0 };
+  }
+  const cutoff = k15.t[0];
+  let cut = 0;
+  while (cut < ext.k.t.length && ext.k.t[cut] < cutoff) cut++;
+  if (cut === 0) return { k: k15, offset: 0 }; // nada más antiguo que aportar
+  return {
+    offset: cut,
+    k: {
+      t: ext.k.t.slice(0, cut).concat(k15.t),
+      o: ext.k.o.slice(0, cut).concat(k15.o),
+      h: ext.k.h.slice(0, cut).concat(k15.h),
+      l: ext.k.l.slice(0, cut).concat(k15.l),
+      c: ext.k.c.slice(0, cut).concat(k15.c),
+      v: ext.k.v.slice(0, cut).concat(k15.v),
+    },
+  };
+}
+
 function openDetail(sym) {
   detailSym = sym;
   const panel = document.getElementById('detail-panel');
   if (!panel) return;
   panel.style.display = 'flex';
   renderDetail();
+  const cached = _dtHist.get(sym);
+  if (!cached || (Date.now() - cached.ts) > DT_HIST_TTL) dtFetchHistory(sym);
 }
 
 function closeDetail() {
@@ -121,15 +180,18 @@ function renderDetail() {
 // ── Gráfico de velas 5m con el patrón dibujado ──────────────────────────────
 function drawDetailChart(row) {
   const canvas = document.getElementById('dt-chart');
-  const k = row.k15;
-  if (!canvas || !k || k.c.length < 10) return;
+  if (!canvas || !row.k15 || row.k15.c.length < 10) return;
+
+  const { k, offset } = dtBuildChartData(row);
 
   const W = canvas.width = canvas.clientWidth || 380;
   const H = canvas.height = 235;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  const N = Math.min(k.c.length, 110);
+  // Con historial extendido cargado se muestran más barras de contexto
+  // (hasta ~200, ~50h); si aún no llegó el fetch, se ve el tramo de siempre (24h).
+  const N = Math.min(k.c.length, offset > 0 ? 200 : 110);
   const start = k.c.length - N;
   const PADL = 4, PADR = 50, PADT = 10, PADB = 6;
   const p = row.pattern;
@@ -188,35 +250,38 @@ function drawDetailChart(row) {
     ctx.save();
     ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 1.6; ctx.setLineDash([6, 3]);
     ctx.shadowColor = 'rgba(255,215,106,.5)'; ctx.shadowBlur = 5;
-    ctx.beginPath(); ctx.moveTo(x(Math.max(start, p.p1.i)), y(p.neckline)); ctx.lineTo(W - PADR, y(p.neckline)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x(Math.max(start, p.p1.i + offset)), y(p.neckline)); ctx.lineTo(W - PADR, y(p.neckline)); ctx.stroke();
     ctx.restore();
-    _labels.push({ v: p.neckline, color: '#ffd76a', label: 'cuello' });
+    _labels.push({ v: p.neckline, color: '#ffd76a', label: 'cuello ' + fmtPrice(p.neckline).replace('$', '') });
 
     // Marcar los dos extremos (suelos o techos)
     for (const pt of [p.p1, p.p2]) {
-      if (pt.i < start) continue;
+      const pi = pt.i + offset;
+      if (pi < start) continue;
       ctx.save();
       ctx.strokeStyle = isW ? '#2fe08a' : '#ff6666'; ctx.lineWidth = 1.8;
       ctx.shadowColor = isW ? 'rgba(47,224,138,.6)' : 'rgba(255,102,102,.6)'; ctx.shadowBlur = 6;
-      ctx.beginPath(); ctx.arc(x(pt.i), y(pt.price), 7, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x(pi), y(pt.price), 7, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
     }
     // Flecha en la vela de ruptura
-    if (p.breakIdx != null && p.breakIdx >= start) {
+    if (p.breakIdx != null && p.breakIdx + offset >= start) {
+      const bi = p.breakIdx + offset;
       ctx.fillStyle = '#ffbe3c'; ctx.font = '900 13px Inter,system-ui'; ctx.textAlign = 'center';
-      ctx.fillText(isW ? '▲' : '▼', x(p.breakIdx), y(k.c[p.breakIdx]) + (isW ? 18 : -12));
+      ctx.fillText(isW ? '▲' : '▼', x(bi), y(k.c[bi]) + (isW ? 18 : -12));
       ctx.textAlign = 'left';
     }
-    hline(p.target, '#2fe08a', [2, 3], 'objetivo');
-    hline(p.stop, '#ff6666', [2, 3], 'stop');
+    hline(p.target, '#2fe08a', [2, 3], 'objetivo ' + fmtPrice(p.target).replace('$', ''));
+    hline(p.stop, '#ff6666', [2, 3], 'stop ' + fmtPrice(p.stop).replace('$', ''));
   } else {
     // Sin patrón: niveles ATR de referencia
     const atrPct = row.atr1h && row.price ? row.atr1h / row.price : null;
     if (atrPct) {
       const sc = scoreSymbol(row);
       const dir = sc.longScore >= sc.shortScore ? 1 : -1;
-      hline(row.price * (1 - dir * atrPct * 1.2), '#ff6666', [2, 3], 'stop ATR');
-      hline(row.price * (1 + dir * atrPct * 1.8), '#2fe08a', [2, 3], 'TP ATR');
+      const stopAtr = row.price * (1 - dir * atrPct * 1.2), tpAtr = row.price * (1 + dir * atrPct * 1.8);
+      hline(stopAtr, '#ff6666', [2, 3], 'stop ATR ' + fmtPrice(stopAtr).replace('$', ''));
+      hline(tpAtr, '#2fe08a', [2, 3], 'TP ATR ' + fmtPrice(tpAtr).replace('$', ''));
     }
   }
 

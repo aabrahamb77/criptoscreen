@@ -660,14 +660,18 @@ function clearTrackHistory() {
   renderSeguimiento();
 }
 
-// Descarga trackHistory + stratSignals como un único archivo JSON, para
-// respaldar el historial fuera de localStorage (se pierde al limpiar el navegador).
+// Descarga trackHistory + stratSignals + confSignals como un único archivo
+// JSON, para respaldar el historial fuera de localStorage (se pierde al
+// limpiar el navegador) y para poder auditar offline la calibración del Radar
+// de Confluencia (antes faltaba confSignals — sin eso no se podía revisar esa
+// parte de Estrategia con datos reales).
 function exportHistory() {
   const payload = {
     exportedAt: new Date().toISOString(),
     trackHistory,
     stratSignals,
     trackLedger, // 📒 libro de detecciones cerradas
+    confSignals: typeof confSignals !== 'undefined' ? confSignals : [], // calibración del Radar de Confluencia
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);

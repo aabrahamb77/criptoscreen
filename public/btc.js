@@ -37,17 +37,46 @@ const BTC = {
 
 // ── Fetchers (cadencias propias, solo BTC = coste mínimo) ───────────────────
 
+// Order book COMBINADO de los 3 exchanges más grandes (Bybit directo desde el
+// navegador + Binance/OKX vía /api/exch/depth, proxeado por el server para
+// evitar CORS). Los muros se buscan sobre la profundidad SUMADA, no solo la
+// de Bybit — un muro que solo existe en un exchange pequeño ya no cuela.
 async function btcFetchOB() {
   BTC.ob = { ...(BTC.ob || {}), ts: Date.now() }; // marca throttle aunque falle
   try {
-    const r = await bybitGet('/v5/market/orderbook?category=linear&symbol=BTCUSDT&limit=500');
-    const bids = (r.result?.b || []).map(([p, s]) => [+p, +s]);
-    const asks = (r.result?.a || []).map(([p, s]) => [+p, +s]);
-    if (!bids.length || !asks.length) return;
-    const mid = (bids[0][0] + asks[0][0]) / 2;
+    const [byRes, bnRes, okRes] = await Promise.all([
+      bybitGet('/v5/market/orderbook?category=linear&symbol=BTCUSDT&limit=500').catch(() => null),
+      fetch('/api/exch/depth?exchange=binance&symbol=BTCUSDT&limit=500').then(r => r.json()).catch(() => null),
+      fetch('/api/exch/depth?exchange=okx&symbol=BTC-USDT-SWAP&limit=400').then(r => r.json()).catch(() => null),
+    ]);
+
+    const byBids = (byRes?.result?.b || []).map(([p, s]) => [+p, +s]);
+    const byAsks = (byRes?.result?.a || []).map(([p, s]) => [+p, +s]);
+    const bnBids = (bnRes?.bids || []).map(([p, s]) => [+p, +s]);
+    const bnAsks = (bnRes?.asks || []).map(([p, s]) => [+p, +s]);
+    const okBids = (okRes?.data?.[0]?.bids || []).map(([p, s]) => [+p, +s]);
+    const okAsks = (okRes?.data?.[0]?.asks || []).map(([p, s]) => [+p, +s]);
+    const exch = { bybit: !!byBids.length, binance: !!bnBids.length, okx: !!okBids.length };
+
+    const allBids = [...byBids, ...bnBids, ...okBids];
+    const allAsks = [...byAsks, ...bnAsks, ...okAsks];
+    if (!allBids.length || !allAsks.length) return;
+    const mid = (allBids[0][0] + allAsks[0][0]) / 2; // aprox: mejor bid/ask combinado
+
+    // Agrupa niveles casi idénticos ENTRE exchanges (cada uno cotiza a un tick
+    // ligeramente distinto) antes de buscar muros, para que el tamaño se sume de verdad.
+    const bucketed = levels => {
+      const bucket = mid * 0.0004; // ~0.04%
+      const map = new Map();
+      for (const [p, s] of levels) {
+        const b = Math.round(p / bucket) * bucket;
+        map.set(b, (map.get(b) || 0) + s);
+      }
+      return [...map.entries()];
+    };
     const inRange = lv => Math.abs(lv[0] - mid) / mid <= 0.03; // ±3%
     const detect = side => {
-      const lvls = side.filter(inRange);
+      const lvls = bucketed(side).filter(inRange);
       if (lvls.length < 10) return { walls: [], usd: 0 };
       const sizes = lvls.map(l => l[1]).sort((a, b) => a - b);
       const median = sizes[Math.floor(sizes.length / 2)] || 1;
@@ -62,11 +91,11 @@ async function btcFetchOB() {
         else merged.push({ ...w });
       }
       merged.sort((a, b) => b.usd - a.usd);
-      return { walls: merged.slice(0, 3), usd: lvls.reduce((a, l) => a + l[0] * l[1], 0) };
+      return { walls: merged.slice(0, 4), usd: lvls.reduce((a, l) => a + l[0] * l[1], 0) };
     };
-    const B = detect(bids), A = detect(asks);
-    BTC.ob = { bidWalls: B.walls, askWalls: A.walls, bidUSD: B.usd, askUSD: A.usd, mid, ts: Date.now() };
-  } catch (_) {}
+    const B = detect(allBids), A = detect(allAsks);
+    BTC.ob = { bidWalls: B.walls, askWalls: A.walls, bidUSD: B.usd, askUSD: A.usd, mid, exch, ts: Date.now() };
+  } catch (err) { console.error('btcFetchOB falló:', err); }
 }
 
 async function btcFetchLS() {
@@ -297,6 +326,7 @@ function btcComputeFactors() {
   const row = allRows.find(r => r.symbol === 'BTC');
   if (!row) return;
   BTC.liq = btcLiquidity(row);
+  if (typeof btcComputeSMC === 'function') btcComputeSMC();
   const F = [];
   const add = (name, score, weight, reason) =>
     F.push({ name, score: Math.max(-1, Math.min(1, score)), weight, reason });
@@ -353,6 +383,26 @@ function btcComputeFactors() {
     } else {
       add('🧹 Barrido de liquidez', 0, 15, 'sin barridos recientes (últimas 2h) — la liquidez sigue intacta');
     }
+  }
+
+  // 3b) Estructura SMC (12) — BOS (continuación) / CHoCH (posible giro) sobre
+  //     los swings confirmados de las velas 15m. CHoCH pesa más que BOS
+  //     porque marca un cambio de carácter, no solo la continuación de lo ya sabido.
+  {
+    const smc = BTC.smc;
+    const events = smc?.events;
+    if (events && events.length) {
+      const last = events[events.length - 1];
+      const k = btcChartData();
+      const barsAgo = (k?.c?.length || 0) - 1 - last.i;
+      const recent = barsAgo <= 20; // ~5h a 15m
+      let s = last.dir === 'up' ? 0.7 : -0.7;
+      if (last.type === 'CHoCH') s *= 1.25;
+      if (!recent) s *= 0.4; // rupturas viejas pesan mucho menos
+      add('🧠 Estructura SMC', s, 12,
+        `${last.type} ${last.dir === 'up' ? 'ALCISTA' : 'BAJISTA'} hace ${barsAgo * 15}min en ${fp(last.price)}` +
+        (last.type === 'CHoCH' ? ' — cambio de carácter: la estructura previa se rompió, posible giro' : ' — continuación de la estructura vigente'));
+    } else add('🧠 Estructura SMC', 0, 12, 'sin rupturas de estructura (BOS/CHoCH) claras en el historial analizado');
   }
 
   // 4) Liquidez pendiente / imanes (15) — heatmap REAL de CoinGlass si el plan
@@ -520,13 +570,13 @@ function renderBTC() {
   const L = BTC.liq || {};
   const lvls = [];
   for (const p of (L.poolsAbove || [])) lvls.push({ price: p.level, label: '🧲 pool de liquidez (equal highs sin barrer)', col: '#4aa8d8' });
-  for (const w of (BTC.ob?.askWalls || []).slice(0, 2)) lvls.push({ price: w.price, label: `🧱 muro de VENTA ${fmtUSD(w.usd)}`, col: '#ff8866' });
+  for (const w of (BTC.ob?.askWalls || []).slice(0, 3)) lvls.push({ price: w.price, label: `🧱 muro de VENTA ${fmtUSD(w.usd)} (3 exch.)`, col: '#ff8866' });
   const mpL = BTC.cg?.mp?.price ? { ...BTC.cg.mp, src: ' · Deribit' } : BTC.mp?.price ? { ...BTC.mp, src: '' } : null;
   if (mpL) lvls.push({ price: mpL.price, label: `🎯 max pain opciones (${mpL.expiry})${mpL.src}`, col: '#ffd76a' });
   if (BTC.cg?.clusters?.above) lvls.push({ price: BTC.cg.clusters.above.level, label: `🔥 cluster de liquidaciones ${fmtUSD(BTC.cg.clusters.above.usd)} (heatmap CG)`, col: '#ff9a3c' });
   if (BTC.cg?.clusters?.below) lvls.push({ price: BTC.cg.clusters.below.level, label: `🔥 cluster de liquidaciones ${fmtUSD(BTC.cg.clusters.below.usd)} (heatmap CG)`, col: '#ff9a3c' });
   lvls.push({ price: row.price, label: '● PRECIO ACTUAL', col: '#e8edf8', now: true });
-  for (const w of (BTC.ob?.bidWalls || []).slice(0, 2)) lvls.push({ price: w.price, label: `🧱 muro de COMPRA ${fmtUSD(w.usd)}`, col: '#55dd99' });
+  for (const w of (BTC.ob?.bidWalls || []).slice(0, 3)) lvls.push({ price: w.price, label: `🧱 muro de COMPRA ${fmtUSD(w.usd)} (3 exch.)`, col: '#55dd99' });
   for (const p of (L.poolsBelow || [])) lvls.push({ price: p.level, label: '🧲 pool de liquidez (equal lows sin barrer)', col: '#4aa8d8' });
   lvls.sort((a, b) => b.price - a.price);
   const ladder = lvls.map(l => {
@@ -590,8 +640,10 @@ function renderBTC() {
       <canvas id="btc-chart"></canvas>
       <div class="dt-chart-hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <button class="chart-tf-btn" id="btc-expand-btn" onclick="btcToggleExpand()">${localStorage.getItem('scalp_btc_big') === '1' ? '⛶ Compactar' : '⛶ Expandir'}</button>
+        <button class="chart-tf-btn${typeof _btcSmcOn !== 'undefined' && _btcSmcOn ? ' active' : ''}" id="btc-smc-btn" onclick="btcToggleSMC()" title="Smart Money Concepts: order blocks, fair value gaps y rupturas de estructura (BOS/CHoCH)">🧠 SMC</button>
         <span><b style="color:#4a5870">rueda: zoom · arrastrar: mover · doble clic: hoy</b> · velas 15m (hasta ~10 días)</span>
         <span><span style="color:#4aa8d8">— 🧲 pools</span> · <span style="color:#55dd99">— 🧱 compra</span> · <span style="color:#ff8866">— 🧱 venta</span> · <span style="color:#ffd76a">— 🎯 max pain</span> · <span style="color:#ff9a3c">— 🔥 clusters liq</span> · ⚡ barrido · verticales = sesiones</span>
+        <span><span style="color:#2fe08a">— OB/FVG alcista</span> · <span style="color:#ff6666">— OB/FVG bajista</span> · <span style="color:#eef4ff;background:#0b0e14;padding:0 3px;border-radius:2px">texto BOS/CHoCH/OB</span> siempre en blanco: el borde del chip indica la dirección</span>
       </div>
     </div>
     <div class="dt-sec-title" style="margin-top:4px">Factores de confluencia — sesgo total ${BTC.bias >= 0 ? '+' : ''}${BTC.bias}/100</div>
@@ -600,13 +652,17 @@ function renderBTC() {
     <div class="btc-sessions">${sessRows}</div>
     <div class="cc-note">${(() => {
       const cg = [];
+      if (BTC.ob?.exch) {
+        const e = BTC.ob.exch;
+        cg.push(`🧱 muros: Bybit${e.bybit ? '✓' : '✗'} · Binance${e.binance ? '✓' : '✗'} · OKX${e.okx ? '✓' : '✗'}`);
+      }
       cg.push(BTC.cg?.top ? '🐋 top traders ✓' : `🐋 top traders ✗${BTC.cg?.err?.top ? ' (' + BTC.cg.err.top + ')' : ''}`);
       cg.push(BTC.cg?.mp ? '🎯 max pain Deribit ✓' : `🎯 max pain Deribit ✗${BTC.cg?.err?.mp ? ' (' + BTC.cg.err.mp + ')' : ''}`);
       cg.push(BTC.cg?.clusters ? '🔥 heatmap liq. ✓' : `🔥 heatmap liq. ✗${BTC.cg?.err?.hm ? ' (' + BTC.cg.err.hm + ')' : ''}`);
       cg.push(BTC.cg?.cbp ? '🇺🇸 premium ✓' : '🇺🇸 premium ✗');
       cg.push(BTC.cg?.etf ? '🏦 ETF ✓' : '🏦 ETF ✗');
       cg.push(BTC.cg?.taker ? '🔀 spot/perp ✓' : '🔀 spot/perp ✗');
-      return `Pesos normalizados sobre los factores activos. Datos Bybit (gratis) + CoinGlass: ${cg.join(' · ')}. El heatmap requiere plan Professional de CoinGlass — sin él se usa la inferencia estructural.`;
+      return `Pesos normalizados sobre los factores activos. Muros de compra/venta: profundidad combinada de Bybit+Binance+OKX. Datos Bybit (gratis) + CoinGlass: ${cg.join(' · ')}. El heatmap de liquidaciones (🔥) requiere plan Professional de CoinGlass — sin él se usa la inferencia estructural (equal highs/lows).`;
     })()}</div>`;
 
   requestAnimationFrame(() => {
@@ -661,6 +717,14 @@ function btcToggleExpand() {
 
 // Zoom (rueda) · pan (arrastre) · reset (doble clic). Se re-vincula en cada
 // render porque el canvas se reconstruye — usar propiedades on* lo hace idempotente.
+//
+// El arrastre (mousemove/mouseup) se escucha en `document`, NO en el canvas:
+// si solo se escucha en el canvas, en cuanto el mouse sale de sus bordes
+// mientras arrastras (muy fácil, el canvas no es toda la pantalla) el
+// onmouseleave cortaba el drag de inmediato — se sentía como que "no se
+// puede arrastrar". Los listeners de document se enlazan UNA sola vez
+// (_btcDragBound) para no acumular duplicados en cada render.
+let _btcDragBound = false;
 function btcBindChart(canvas) {
   if (!canvas) return;
   const plotW = () => canvas.getBoundingClientRect().width - 216;
@@ -679,21 +743,35 @@ function btcBindChart(canvas) {
     safeSetItem('scalp_btc_span', String(newSpan));
     const row = allRows.find(r => r.symbol === 'BTC'); if (row) drawBTCChart(row);
   };
-  canvas.onmousedown = e => { _btcDrag = { x: e.clientX, offset: _btcView.offset }; canvas.style.cursor = 'grabbing'; };
-  canvas.onmousemove = e => {
-    if (!_btcDrag) return;
-    const k = btcChartData(); if (!k) return;
-    const pxPerBar = plotW() / _btcView.span;
-    const dBars = Math.round((e.clientX - _btcDrag.x) / pxPerBar);
-    _btcView.offset = Math.max(0, Math.min(k.c.length - _btcView.span, _btcDrag.offset + dBars));
-    const row = allRows.find(r => r.symbol === 'BTC'); if (row) drawBTCChart(row);
+  canvas.onmousedown = e => {
+    e.preventDefault();
+    _btcDrag = { x: e.clientX, offset: _btcView.offset };
+    canvas.style.cursor = 'grabbing';
   };
-  canvas.onmouseup = canvas.onmouseleave = () => { _btcDrag = null; canvas.style.cursor = 'crosshair'; };
   canvas.ondblclick = () => {
     _btcView = { span: 96, offset: 0 };
     safeSetItem('scalp_btc_span', '96');
     const row = allRows.find(r => r.symbol === 'BTC'); if (row) drawBTCChart(row);
   };
+
+  if (!_btcDragBound) {
+    _btcDragBound = true;
+    document.addEventListener('mousemove', e => {
+      if (!_btcDrag) return;
+      const cv = document.getElementById('btc-chart'); if (!cv) return;
+      const k = btcChartData(); if (!k) return;
+      const pw = cv.getBoundingClientRect().width - 216;
+      const pxPerBar = pw / _btcView.span;
+      const dBars = Math.round((e.clientX - _btcDrag.x) / pxPerBar);
+      _btcView.offset = Math.max(0, Math.min(k.c.length - _btcView.span, _btcDrag.offset + dBars));
+      cv.style.cursor = 'grabbing';
+      const row = allRows.find(r => r.symbol === 'BTC'); if (row) drawBTCChart(row);
+    });
+    document.addEventListener('mouseup', () => {
+      _btcDrag = null;
+      const cv = document.getElementById('btc-chart'); if (cv) cv.style.cursor = 'crosshair';
+    });
+  }
 }
 
 function drawBTCChart(row) {
@@ -720,8 +798,8 @@ function drawBTCChart(row) {
   const levels = [];
   for (const p of (L.poolsAbove || [])) levels.push({ v: p.level, col: '#4aa8d8', dash: [5, 4], label: '🧲 pool liquidez' });
   for (const p of (L.poolsBelow || [])) levels.push({ v: p.level, col: '#4aa8d8', dash: [5, 4], label: '🧲 pool liquidez' });
-  for (const w of (BTC.ob?.askWalls || []).slice(0, 2)) levels.push({ v: w.price, col: '#ff8866', dash: [], label: `🧱 venta ${fmtUSD(w.usd)}` });
-  for (const w of (BTC.ob?.bidWalls || []).slice(0, 2)) levels.push({ v: w.price, col: '#55dd99', dash: [], label: `🧱 compra ${fmtUSD(w.usd)}` });
+  for (const w of (BTC.ob?.askWalls || []).slice(0, 3)) levels.push({ v: w.price, col: '#ff8866', dash: [], label: `🧱 venta ${fmtUSD(w.usd)}` });
+  for (const w of (BTC.ob?.bidWalls || []).slice(0, 3)) levels.push({ v: w.price, col: '#55dd99', dash: [], label: `🧱 compra ${fmtUSD(w.usd)}` });
   const mpL = BTC.cg?.mp?.price ? BTC.cg.mp : BTC.mp;
   if (mpL?.price) levels.push({ v: mpL.price, col: '#ffd76a', dash: [8, 4], label: `🎯 max pain ${mpL.expiry}` });
   if (BTC.cg?.clusters?.above) levels.push({ v: BTC.cg.clusters.above.level, col: '#ff9a3c', dash: [2, 3], label: `🔥 liqs ${fmtUSD(BTC.cg.clusters.above.usd)}` });
@@ -776,6 +854,9 @@ function drawBTCChart(row) {
     }
   }
 
+  // ── Smart Money Concepts: zonas de OB/FVG DETRÁS de las velas ──
+  if (typeof smcDrawZones === 'function') smcDrawZones(ctx, x, y, s0, s1);
+
   // ── Velas (solo las visibles) ──
   const bw = Math.max(1.2, (W - PADL - PADR) / _btcView.span * 0.66);
   for (let i = s0; i < s1; i++) {
@@ -787,6 +868,9 @@ function drawBTCChart(row) {
     const yo = y(k.o[i]), yc = y(k.c[i]);
     ctx.fillRect(x(i) - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yc - yo)));
   }
+
+  // ── Smart Money Concepts: rupturas de estructura (BOS/CHoCH) sobre las velas ──
+  if (typeof smcDrawStructure === 'function') smcDrawStructure(ctx, x, y, s0, s1);
 
   // ── Niveles analizados: línea + etiqueta con FONDO (chip) apilada sin taparse ──
   const sorted = [...nearby].sort((a, b) => b.v - a.v);

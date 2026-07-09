@@ -304,7 +304,8 @@ const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-
   range: 'Ruptura rango', liq: 'Cascada liq.', sector: 'Rotación sectorial', whale: 'Ballenas',
   beta: 'Beta rezagada', alpha: 'Alpha propio',
   confluence: 'Confluencia', health: 'Saludable', promising: 'Prometedoras (heat)',
-  patternWM: 'Patrón W/M', squeeze: 'Squeeze/Acum. (potencial)' };
+  patternWM: 'Patrón W/M', squeeze: 'Squeeze/Acum. (potencial)', outlier: 'Outlier real',
+  momentum: 'Momentum confirmado (5%/10%)' };
 let stratRegimeFilter = 'ALL'; // 'ALL' | 'ALCISTA' | 'BAJISTA' | 'VOLÁTIL' | 'LATERAL'
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;

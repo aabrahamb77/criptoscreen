@@ -6,7 +6,7 @@
 <title>Scalp Screener</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css?v=12">
+<link rel="stylesheet" href="/styles.css?v=14">
 
 </head>
 <body>
@@ -76,6 +76,8 @@
   </div>
   <div id="aligned-strip" title="Monedas con el MISMO cuadrante en 15m·1h·4h·1d — tendencia consistente de punta a punta. Clic: localizar en la tabla."></div>
   <div id="pattern-strip" title="Dobles suelos (W) y dobles techos (M) detectados en velas 15m (~24h). ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico con el patrón dibujado."></div>
+  <div id="outlier-strip" title="Monedas que se separan del resto del mercado (OI+precio 1h) con liquidez real detrás. 🔥 sostenido = ≥15min seguidas fuera de rango · ⚡ pico puntual = acaba de saltar fuerte. Clic: abrir en el radar."></div>
+  <div id="momentum-strip" title="Momentum confirmado por umbrales absolutos: precio 1h ≥5% Y OI 1h ≥10% expandiéndose (dinero nuevo, no cierre de posiciones), con liquidez real. Clic: abrir en el radar."></div>
   <div id="map-resizer" title="Arrastra para ajustar la altura del mapa"></div>
 <div id="filter-bar">
   <input id="filter-search" placeholder="🔍 Buscar..." oninput="render()">
@@ -157,8 +159,9 @@
   <div id="conf-section">
     <div class="conf-head">
       <span class="conf-title">🎯 Radar de confluencia</span>
-      <span class="conf-sub">checklist de 7 señales · ≥5 ✓ = setup vigilable · 7/7 = entrada A+ · clic en burbuja o tarjeta para el detalle</span>
+      <span class="conf-sub">checklist de 5 señales · ≥4 ✓ = setup vigilable · 5/5 = entrada A+ · clic en burbuja o tarjeta para el detalle</span>
       <button class="chart-tf-btn" id="calib-btn" onclick="toggleConfCalib()" title="Win-rate real de las señales del radar a +30m/+1h, por nivel y por check">📐 Calibración</button>
+      <button class="pt-btn pt-btn-danger" onclick="clearConfSignals()">Limpiar</button>
       <div id="quad-wr"></div>
     </div>
     <div id="conf-grid"><div class="cc-note">Esperando datos…</div></div>
@@ -357,16 +360,17 @@
 
 <!-- ── Módulos JS (el orden importa: main.js arranca la app y va al final) ── -->
 <script src="/lxr.js?v=8"></script>
-<script src="/radar.js?v=11"></script>
-<script src="/core.js?v=10"></script>
+<script src="/radar.js?v=15"></script>
+<script src="/core.js?v=12"></script>
 <script src="/screener.js?v=10"></script>
 <script src="/map.js?v=8"></script>
 <script src="/patterns.js?v=10"></script>
-<script src="/detail.js?v=12"></script>
-<script src="/btc.js?v=13"></script>
-<script src="/lab.js?v=13"></script>
-<script src="/track.js?v=11"></script>
+<script src="/detail.js?v=14"></script>
+<script src="/smc.js?v=4"></script>
+<script src="/btc.js?v=16"></script>
+<script src="/lab.js?v=14"></script>
+<script src="/track.js?v=12"></script>
 <script src="/backtest.js?v=8"></script>
-<script src="/main.js?v=9"></script>
+<script src="/main.js?v=11"></script>
 </body>
 </html>

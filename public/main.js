@@ -35,10 +35,12 @@ async function load() {
     checkQuadrantChanges(allRows);
     recordTrails(allRows);
     _oiSigCache.clear();
-    updateConfSignals(allRows); // calibración del radar: registra ≥5/7 y resuelve +30m/+1h
+    updateConfSignals(allRows); // calibración del radar: registra ≥4/5 y resuelve +30m/+1h
     updateMarketSentiment(allRows);
     renderRiskLight(); // semáforo de riesgo de mercado (header)
     renderQuadAligned(allRows); // barra "cuadrante alineado" bajo el mapa (y en Estrategia)
+    renderOutlierStrip(allRows); // 🎯 outliers reales: dist real + liquidez + sostenido vs. pico
+    renderMomentumStrip(allRows); // 🚀 momentum confirmado: umbrales absolutos precio 5% + OI 10%
     scanPatterns(allRows); // detector W/M + alertas de ruptura de cuello (antes de render: pinta badges)
     btcOnCycle(); // ₿ direccionalidad BTC: factores, sesiones y alertas de cambio de sesgo
     if (firstLoad && allRows.length) connectLiqWS(allRows.map(r => r.symbol));

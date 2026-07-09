@@ -174,6 +174,37 @@ app.get('/api/cg/*', rateLimit(60, 60_000), async (req, res) => {
   }
 });
 
+// ── Proxy de order book (Binance/OKX) ───────────────────────────────────────
+// Solo lectura pública (sin API key, sin autenticación). Se proxea desde el
+// server para no depender de que esos exchanges habiliten CORS en el navegador
+// — mismo patrón que /api/cg. Usado para combinar los muros de compra/venta
+// de los 3 exchanges más grandes (Bybit se pide directo desde el navegador,
+// como siempre; este proxy cubre Binance y OKX).
+const _exchCache = new Map();
+const EXCH_URLS = {
+  binance: (symbol, limit) => `https://fapi.binance.com/fapi/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+  okx:     (symbol, limit) => `https://www.okx.com/api/v5/market/books?instId=${encodeURIComponent(symbol)}&sz=${limit}`,
+};
+app.get('/api/exch/depth', rateLimit(60, 60_000), async (req, res) => {
+  const exchange = String(req.query.exchange || '');
+  const symbol = String(req.query.symbol || '');
+  const limit = Math.min(Math.max(+req.query.limit || 200, 5), 500);
+  const build = EXCH_URLS[exchange];
+  if (!build || !symbol) return res.status(400).json({ error: 'exchange/symbol inválido' });
+  const cacheKey = `${exchange}:${symbol}:${limit}`;
+  const hit = _exchCache.get(cacheKey);
+  if (hit && Date.now() - hit.ts < 10_000) return res.json(hit.data);
+  try {
+    const r = await fetch(build(symbol, limit), { headers: { Accept: 'application/json' } });
+    const data = await r.json();
+    _exchCache.set(cacheKey, { ts: Date.now(), data });
+    if (_exchCache.size > 50) _exchCache.delete(_exchCache.keys().next().value);
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: 'exch proxy: ' + err.message });
+  }
+});
+
 // Respaldo en servidor de trackHistory + stratSignals (Turso). Si no está
 // configurado, responde 204/{} para que el frontend siga usando solo localStorage.
 app.get('/api/sync', async (req, res) => {

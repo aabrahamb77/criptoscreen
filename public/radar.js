@@ -6,9 +6,10 @@
  *
  * Contiene:
  *  - estado del radar (normalización σ, outliers, estelas, filtro liquidez)
- *  - motor de confluencia (checklist de 7 señales)
- *  - CALIBRACIÓN: registra señales ≥5/7 y mide win-rate real a +30m/+1h,
- *    por nivel (5/6/7) y por check individual (ablación)
+ *  - motor de confluencia (checklist de 5 señales — se quitaron 'Outlier real'
+ *    y 'Sesgo global a favor' tras medir su edge real: +0pt y -33pt)
+ *  - CALIBRACIÓN: registra señales ≥4/5 y mide win-rate real a +30m/+1h,
+ *    por nivel (4/5) y por check individual (ablación)
  *  - paneles: radar, detalle + bot, WR por cuadrante, cruces, alineación 4TF
  *  - countdown de funding, σ de OI por símbolo, estelas
  */
@@ -25,8 +26,8 @@ let _oiSigCache   = new Map();  // symbol|tf → σ de cambios de OI (se limpia 
 let _qwrCache     = { ts: 0, html: '' };
 
 // ── Calibración del radar: señales registradas y su resultado ──────────────
-const CONF_CHECK_NAMES   = ['Outlier', 'Sesgo global', 'Multi-TF', 'CVD+funding', 'Régimen', 'Liquidez', 'Riesgo'];
-const CONF_SIG_MIN_COUNT = 5;            // se registra como señal a partir de 5/7
+const CONF_CHECK_NAMES   = ['Multi-TF', 'CVD+funding', 'Régimen', 'Liquidez', 'Riesgo'];
+const CONF_SIG_MIN_COUNT = 4;            // se registra como señal a partir de 4/5
 const CONF_SIG_COOLDOWN  = 60 * 60_000;  // máx. 1 señal/h por símbolo+lado
 const CONF_SIG_MAX       = 2000;
 let confSignals  = JSON.parse(localStorage.getItem('scalp_confsig2') || '[]');
@@ -36,6 +37,18 @@ function saveConfSignals() {
   if (confSignals.length > CONF_SIG_MAX) confSignals = confSignals.slice(-CONF_SIG_MAX);
   try { localStorage.setItem('scalp_confsig2', JSON.stringify(confSignals)); } catch (_) {}
   if (typeof syncToServer === 'function') syncToServer();
+}
+
+// Borra la calibración del Radar de Confluencia. Necesario tras cambiar la
+// composición del checklist (ej. de 7 a 5 checks): las señales viejas tienen
+// 'count' y 'oks' indexados contra el checklist anterior — mezclarlas con las
+// nuevas da lecturas sin sentido, hay que arrancar de cero.
+function clearConfSignals() {
+  if (!confirm('¿Borrar toda la calibración del Radar de Confluencia? Esto reinicia el winrate por check y por nivel desde cero.')) return;
+  confSignals = [];
+  prevConfCount.clear();
+  saveConfSignals();
+  renderConfCalib();
 }
 
 // ── σ de cambios de OI por símbolo (desde oiSnaps, cadencia ~1min) ─────────
@@ -182,7 +195,7 @@ function marketRiskLight() {
   else if (reg.regime === 'ALCISTA')   dir = 'sesgo LONG · continuaciones a favor';
   else if (reg.regime === 'BAJISTA')   dir = 'sesgo SHORT · evita longs en alts';
   else if (reg.regime === 'VOLÁTIL')   dir = 'reversiones (LXR/fades) · tamaño reducido';
-  else                                 dir = 'lateral · solo setups A+ (≥6/7) o esperar';
+  else                                 dir = 'lateral · solo setups A+ (≥4/5) o esperar';
   const level = risk >= 60 ? 'r' : risk >= 30 ? 'a' : 'v';
   return { risk, level, why, dir, regime: reg.regime, up, total: valid.length };
 }
@@ -218,7 +231,10 @@ function fallbackSymbolRegime(row) {
   return { regime: 'EN RANGO' };
 }
 
-// ── Motor de confluencia: el checklist de 7 señales por símbolo ────────────
+// ── Motor de confluencia: el checklist de 5 señales por símbolo ────────────
+// 'dist' (distancia σ del centro del mercado) se sigue calculando — ya no
+// entra al checklist (edge medido +0pt, no aportaba) pero queda disponible
+// para el estudio aparte de "outlier sostenido en el tiempo" pendiente.
 function confluenceFor(row, mreg, cross) {
   const n = v => v ?? 0;
   const side = n(row.price1hPct) >= 0 ? 'long' : 'short';
@@ -238,9 +254,6 @@ function confluenceFor(row, mreg, cross) {
     // COMPRIMIDO → esperando ruptura, sin confirmación todavía
   }
   const checks = [
-    { k: 'Outlier real',         ok: dist >= 1.5, d: `dist ${dist.toFixed(1)}σ del centro (≥1.5)` },
-    { k: 'Sesgo global a favor', ok: (mreg.regime === 'ALCISTA' && side === 'long') || (mreg.regime === 'BAJISTA' && side === 'short'),
-      d: `mercado ${mreg.regime} · señal ${side.toUpperCase()}` },
     { k: 'Multi-timeframe',      ok: !!al && al.count >= 3 && ((al.dir === 'up') === (side === 'long')),
       d: al ? `precio ${al.count}/${al.total} ${al.dir === 'up' ? '↑' : '↓'}` : 'sin datos' },
     { k: 'CVD + funding',        ok: cvdOk && !fundAgainst,
@@ -267,7 +280,7 @@ function computeConfluence(rows) {
   return { valid, confs, mreg, cross };
 }
 
-// ── CALIBRACIÓN: registrar señales ≥5/7 y resolver resultados ──────────────
+// ── CALIBRACIÓN: registrar señales ≥4/5 y resolver resultados ──────────────
 // Se llama en CADA ciclo de datos (desde load()), no solo al ver la pestaña.
 function updateConfSignals(rows) {
   const res = computeConfluence(rows);
@@ -275,7 +288,7 @@ function updateConfSignals(rows) {
   const now = Date.now();
   let dirty = false;
 
-  // 1) registrar señales nuevas (≥5/7, con cooldown por símbolo+lado)
+  // 1) registrar señales nuevas (≥4/5, con cooldown por símbolo+lado)
   for (const c of res.confs) {
     if (c.count < CONF_SIG_MIN_COUNT) continue;
     const recent = confSignals.some(s => s.symbol === c.symbol && s.side === c.side && now - s.ts < CONF_SIG_COOLDOWN);
@@ -348,17 +361,17 @@ async function resolveStaleConfSignals() {
   }
 }
 
-/** Win-rate por nivel (5/6/7) y por check individual (✓ vs ✗) a +30m/+1h. */
+/** Win-rate por nivel (4/5) y por check individual (✓ vs ✗) a +30m/+1h. */
 function confCalibStats() {
   const mk = () => ({ n: 0, h: 0, sum: 0 });
-  const lvl = { 5: { p30: mk(), p60: mk() }, 6: { p30: mk(), p60: mk() }, 7: { p30: mk(), p60: mk() } };
+  const lvl = { 4: { p30: mk(), p60: mk() }, 5: { p30: mk(), p60: mk() } };
   const checks = CONF_CHECK_NAMES.map(() => ({ ok: mk(), ko: mk() })); // a +1h
   let resolved = 0;
   for (const s of confSignals) {
     for (const hz of ['p30', 'p60']) {
       if (s[hz] == null || !s.price) continue;
       const move = (s[hz] - s.price) / s.price * 100 * (s.side === 'long' ? 1 : -1);
-      const L = lvl[Math.min(s.count, 7)]?.[hz];
+      const L = lvl[Math.min(s.count, 5)]?.[hz];
       if (L) { L.n++; if (move > 0) L.h++; L.sum += move; }
       if (hz === 'p60') {
         resolved++;
@@ -402,9 +415,9 @@ function renderConfCalib() {
     return a.h / a.n >= 0.5 ? '#2fe08a' : '#ee6666';
   };
 
-  const lvlRows = [5, 6, 7].map(k => {
+  const lvlRows = [4, 5].map(k => {
     const L = st.lvl[k];
-    return `<div class="calib-row"><span class="calib-name">${k}/7</span>
+    return `<div class="calib-row"><span class="calib-name">${k}/5</span>
       <span>+30m <b style="color:${col(L.p30)}">${wr(L.p30)}</b> <i>(n=${L.p30.n}, ${avg(L.p30)})</i></span>
       <span>+1h <b style="color:${col(L.p60)}">${wr(L.p60)}</b> <i>(n=${L.p60.n}, ${avg(L.p60)})</i></span></div>`;
   }).join('');
@@ -440,26 +453,26 @@ function renderConfluence(scored) {
   const confs = res.confs.slice().sort((a, b) => b.count - a.count || b.dist - a.dist);
   const top = confs.slice(0, 8);
 
-  // Alerta cuando un símbolo alcanza ≥6/7
+  // Alerta cuando un símbolo alcanza el máximo (5/5)
   for (const c of top) {
     const prev = prevConfCount.get(c.symbol) ?? 0;
-    if (c.count >= 7 && prev < 7) {
-      showToast(`🎯 ${c.symbol} ${c.count}/7 confluencia ${c.side.toUpperCase()}`, c.side);
+    if (c.count >= 5 && prev < 5) {
+      showToast(`🎯 ${c.symbol} ${c.count}/5 confluencia ${c.side.toUpperCase()}`, c.side);
       if (soundEnabled) beep(c.side === 'long' ? 1040 : 460, 'triangle', 180);
-      notifyDesktop(`🎯 ${c.symbol} ${c.count}/7 ${c.side.toUpperCase()}`, c.checks.filter(ch => !ch.ok).map(ch => `✗ ${ch.k}`).join(' · ') || 'Todas las señales en verde');
+      notifyDesktop(`🎯 ${c.symbol} ${c.count}/5 ${c.side.toUpperCase()}`, c.checks.filter(ch => !ch.ok).map(ch => `✗ ${ch.k}`).join(' · ') || 'Todas las señales en verde');
     }
     prevConfCount.set(c.symbol, c.count);
   }
 
   grid.innerHTML = top.map(c => {
-    const color = c.count >= 6 ? '#ffaa28' : c.count >= 5 ? '#2fe08a' : '#5a6a85';
+    const color = c.count >= 5 ? '#ffaa28' : c.count >= 4 ? '#2fe08a' : '#5a6a85';
     const fails = c.checks.filter(ch => !ch.ok).slice(0, 2).map(ch => `✗ ${ch.k}`).join(' · ');
-    return `<div class="conf-card${c.count === 7 ? ' conf-full' : ''}${selectedBubble === c.symbol ? ' selected' : ''}" onclick="selectConfSymbol('${c.symbol}')">
+    return `<div class="conf-card${c.count === 5 ? ' conf-full' : ''}${selectedBubble === c.symbol ? ' selected' : ''}" onclick="selectConfSymbol('${c.symbol}')">
       <div class="cc-top">
         <span class="cc-sym">${c.symbol}</span>
         <span class="cc-side ${c.side}">${c.side.toUpperCase()}</span>
         <span style="font-size:9px;color:#3a4558">${c.quad}</span>
-        <span class="cc-count" style="color:${color}">${c.count}/7${c.count === 7 ? ' 🔥' : ''}</span>
+        <span class="cc-count" style="color:${color}">${c.count}/5${c.count === 5 ? ' 🔥' : ''}</span>
       </div>
       <div class="cc-dots">${c.checks.map(ch => `<div class="cc-dot${ch.ok ? ' ok' : ''}" title="${ch.k}: ${ch.d}">${ch.ok ? '✓' : '·'}</div>`).join('')}</div>
       <div class="cc-note">${fails || 'Todas las señales en verde'}</div>
@@ -494,7 +507,7 @@ async function renderConfDetail(sym) {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#e8edf8">${sym}</b>
       <span class="cc-side ${c.side}">${c.side.toUpperCase()}</span>
-      <span style="color:#3a4558;font-size:10px">cuadrante ${c.quad} · ${c.count}/7</span>
+      <span style="color:#3a4558;font-size:10px">cuadrante ${c.quad} · ${c.count}/5</span>
       <a href="https://www.tradingview.com/chart/?symbol=BYBIT:${sym}USDT.P" target="_blank" style="margin-left:auto;font-size:10px;color:#4a90d0;text-decoration:none">TradingView ↗</a>
     </div>${rowsHtml}`;
 }
@@ -583,6 +596,138 @@ function renderQuadAligned(rows) {
     <div class="qal-grid">${chips || '<span class="cc-note">Ninguna moneda con las temporalidades en el mismo cuadrante ahora mismo.</span>'}</div>`;
   if (el) el.innerHTML = html;
   if (strip) strip.innerHTML = html;
+}
+
+// ── 🎯 Outliers reales: se separa del resto con fuerza + liquidez real ─────
+// 'dist' (misma fórmula que usaba el check "Outlier real" del checklist, y el
+// filtro "Outliers" del mapa) mide cuántas σ combinadas de OI+precio (1h) está
+// una moneda lejos del centro del mercado. Aquí se le suma piso de liquidez
+// (mismo umbral que el check "Liquidez": turnover24h≥$20M, vol1h≥$500K — sin
+// esto un pico ilíquido cuenta igual que uno real) y rastreo de PERSISTENCIA
+// para distinguir un pico puntual de un movimiento sostenido.
+const OUTLIER_DIST_MIN   = 1.5;          // mismo bar que tenía "Outlier real"
+const OUTLIER_DIST_SPIKE = 2.2;          // "pico fuerte"
+const OUTLIER_SUSTAIN_MS = 15 * 60_000;  // 15min seguidas por encima del piso = sostenido
+let outlierTrack = new Map(); // symbol → { sinceTs, peakDist, side }
+
+function computeOutliers(rows) {
+  const res = computeConfluence(rows);
+  if (!res) return [];
+  const now = Date.now();
+  const active = new Set();
+  const out = [];
+  for (const c of res.confs) {
+    const row = rows.find(r => r.symbol === c.symbol);
+    if (!row) continue;
+    const liquid = (row.turnover24h ?? 0) >= 20e6 && (row.vol1hUSD ?? 0) >= 500_000;
+    if (!liquid || c.dist < OUTLIER_DIST_MIN) continue;
+
+    active.add(c.symbol);
+    let t = outlierTrack.get(c.symbol);
+    if (!t) { t = { sinceTs: now, peakDist: c.dist, side: c.side }; outlierTrack.set(c.symbol, t); }
+    else     { t.peakDist = Math.max(t.peakDist, c.dist); t.side = c.side; }
+
+    const durationMs = now - t.sinceTs;
+    const sustained  = durationMs >= OUTLIER_SUSTAIN_MS;
+    const spike      = c.dist >= OUTLIER_DIST_SPIKE;
+    let label;
+    if      (sustained && spike) label = '🔥⚡ sostenido + pico fuerte';
+    else if (sustained)          label = '🔥 sostenido';
+    else if (spike)              label = '⚡ pico puntual';
+    else                         label = 'formándose';
+
+    out.push({ symbol: c.symbol, side: c.side, dist: c.dist, peakDist: t.peakDist,
+      sinceTs: t.sinceTs, durationMs, sustained, spike, label, price: row.price });
+  }
+  // se le acabó la racha: ya no califica, se borra el rastro
+  for (const sym of [...outlierTrack.keys()]) if (!active.has(sym)) outlierTrack.delete(sym);
+
+  out.sort((a, b) => b.dist - a.dist);
+
+  if (typeof logPanelDetections === 'function') {
+    logPanelDetections('outlier', out.map(o => ({
+      symbol: o.symbol, side: o.side === 'long' ? 'l' : 's', score: Math.round(o.dist * 10),
+    })));
+  }
+  return out;
+}
+
+function fmtOutlierDuration(ms) {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const min = Math.round(ms / 60_000);
+  return min < 60 ? `${min}min` : `${(min / 60).toFixed(1)}h`;
+}
+
+function renderOutlierStrip(rows) {
+  const el = document.getElementById('outlier-strip');
+  if (!el) return;
+  const list = computeOutliers(rows).slice(0, 16);
+  if (!list.length) { el.innerHTML = ''; return; }
+
+  const sustainedCount = list.filter(o => o.sustained).length;
+  const chips = list.map(o => {
+    const color = o.sustained ? '#ffbe3c' : o.spike ? '#2fe08a' : '#5a6a85';
+    const symColor = o.side === 'long' ? '#00cc88' : '#ff5555';
+    return `<span class="pat-chip${o.sustained ? ' pat-breaking' : ''}" onclick="openInRadar('${o.symbol}')"
+      title="${o.symbol} ${o.side.toUpperCase()} · ${o.dist.toFixed(1)}σ del centro (pico máx ${o.peakDist.toFixed(1)}σ) · lleva ${fmtOutlierDuration(o.durationMs)} fuera de rango">
+      <b style="color:${symColor}">${o.symbol}</b> <span class="cc-side ${o.side}" style="font-size:8.5px">${o.side === 'long' ? '▲' : '▼'}</span>
+      <b style="color:${color}">${o.dist.toFixed(1)}σ</b>
+      <span style="color:${color};font-size:9px">${o.label}</span>
+    </span>`;
+  }).join('');
+
+  el.innerHTML = `<span class="qal-head">🎯 Outliers reales${sustainedCount ? ` — <b style="color:#ffbe3c">${sustainedCount} sostenidos</b>` : ''}</span>${chips}`;
+}
+
+// ── 🚀 Momentum confirmado: umbrales absolutos, no σ ────────────────────────
+// Distinto del "Outliers reales" de arriba (que mide distancia relativa al
+// centro del mercado): aquí se piden números reales fijos — precio 1h ≥5% Y
+// OI 1h ≥10% EXPANDIÉNDOSE (no basta con que se mueva, tiene que crecer).
+// OI creciendo junto al precio = dinero nuevo entrando en esa dirección
+// (alcista si precio+OI suben juntos, bajista si precio cae mientras el OI
+// sube = shorts nuevos). Si el precio se mueve pero el OI cae, es cierre de
+// posiciones (cobertura de cortos / liquidación de largos) — no cuenta como
+// momentum "confirmado", puede revertir en cualquier momento.
+const MOM_PRICE_MIN = 5;   // % precio 1h (abs)
+const MOM_OI_MIN     = 10; // % OI 1h, debe ser POSITIVO (expandiéndose)
+
+function computeMomentumConfirmed(rows) {
+  const out = [];
+  for (const row of rows) {
+    const price1h = row.price1hPct, oi1h = row.oi1h;
+    if (price1h == null || oi1h == null) continue;
+    if (Math.abs(price1h) < MOM_PRICE_MIN) continue;
+    if (oi1h < MOM_OI_MIN) continue; // debe crecer, no solo moverse
+    // mismo piso de liquidez que el resto del sistema (turnover24h/vol1h)
+    if ((row.turnover24h ?? 0) < 20e6 || (row.vol1hUSD ?? 0) < 500_000) continue;
+    out.push({ symbol: row.symbol, side: price1h >= 0 ? 'long' : 'short', price1h, oi1h, price: row.price });
+  }
+  out.sort((a, b) => Math.abs(b.price1h) - Math.abs(a.price1h));
+  if (typeof logPanelDetections === 'function') {
+    logPanelDetections('momentum', out.map(o => ({
+      symbol: o.symbol, side: o.side === 'long' ? 'l' : 's', score: Math.round(Math.abs(o.price1h) * 10),
+    })));
+  }
+  return out;
+}
+
+function renderMomentumStrip(rows) {
+  const el = document.getElementById('momentum-strip');
+  if (!el) return;
+  const list = computeMomentumConfirmed(rows).slice(0, 16);
+  if (!list.length) { el.innerHTML = ''; return; }
+
+  const chips = list.map(o => {
+    const symColor = o.side === 'long' ? '#00cc88' : '#ff5555';
+    return `<span class="pat-chip" onclick="openInRadar('${o.symbol}')"
+      title="${o.symbol} ${o.side.toUpperCase()} · precio 1h ${o.price1h >= 0 ? '+' : ''}${o.price1h.toFixed(1)}% · OI 1h +${o.oi1h.toFixed(1)}% (expandiéndose) · liquidez real detrás">
+      <b style="color:${symColor}">${o.symbol}</b> <span class="cc-side ${o.side}" style="font-size:8.5px">${o.side === 'long' ? '▲' : '▼'}</span>
+      <b style="color:${symColor}">${o.price1h >= 0 ? '+' : ''}${o.price1h.toFixed(1)}%</b>
+      <span style="color:#8aa0c0;font-size:9px">OI +${o.oi1h.toFixed(1)}%</span>
+    </span>`;
+  }).join('');
+
+  el.innerHTML = `<span class="qal-head">🚀 Momentum confirmado</span>${chips}`;
 }
 
 // ── 🚀 Monedas con potencial ────────────────────────────────────────────────
