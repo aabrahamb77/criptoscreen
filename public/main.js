@@ -42,6 +42,7 @@ async function load() {
     renderOutlierStrip(allRows); // 🎯 outliers reales: dist real + liquidez + sostenido vs. pico
     renderMomentumStrip(allRows); // 🚀 momentum confirmado: umbrales absolutos precio 5% + OI 10%
     scanPatterns(allRows); // detector W/M + alertas de ruptura de cuello (antes de render: pinta badges)
+    scanIndicatorConfluence(allRows); // 🧭 RSI/MACD/ADX/TSI/Andean en 15m: alertas 4/4 + evidencia
     btcOnCycle(); // ₿ direccionalidad BTC: factores, sesiones y alertas de cambio de sesgo
     if (firstLoad && allRows.length) connectLiqWS(allRows.map(r => r.symbol));
     countdownVal = 10;

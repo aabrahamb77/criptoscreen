@@ -63,11 +63,65 @@ function dtBuildChartData(row) {
   };
 }
 
+// ── Panel redimensionable: arrastra el borde izquierdo con el mouse ─────────
+let _dtW = Math.max(340, parseInt(localStorage.getItem('scalp_dt_w')) || 400);
+let _dtResizerReady = false;
+
+function _dtApplyW() {
+  _dtW = Math.max(340, Math.min(_dtW, Math.min(960, window.innerWidth - 60)));
+  const panel = document.getElementById('detail-panel');
+  const rz = document.getElementById('dt-resizer');
+  if (panel) panel.style.width = _dtW + 'px';
+  if (rz) rz.style.right = _dtW + 'px'; // el asa vive pegada al borde izquierdo del panel
+}
+
+function _dtInitResizer() {
+  if (_dtResizerReady) return;
+  const rz = document.getElementById('dt-resizer');
+  if (!rz) return;
+  _dtResizerReady = true;
+  let startX = 0, startW = 0, raf = null;
+  rz.addEventListener('mousedown', ev => {
+    ev.preventDefault();
+    startX = ev.clientX; startW = _dtW;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ew-resize';
+    const move = e => {
+      _dtW = startW + (startX - e.clientX); // arrastrar a la izquierda = más ancho
+      _dtApplyW();
+      if (!raf) raf = requestAnimationFrame(() => { // redibuja el gráfico mientras arrastras
+        raf = null;
+        const row = detailSym && allRows.find(r => r.symbol === detailSym);
+        if (row) drawDetailChart(row);
+      });
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      safeSetItem('scalp_dt_w', String(_dtW));
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  rz.addEventListener('dblclick', () => { // doble clic: volver al tamaño original
+    _dtW = 400; _dtApplyW();
+    safeSetItem('scalp_dt_w', '400');
+    const row = detailSym && allRows.find(r => r.symbol === detailSym);
+    if (row) drawDetailChart(row);
+  });
+}
+
 function openDetail(sym) {
   detailSym = sym;
   const panel = document.getElementById('detail-panel');
   if (!panel) return;
   panel.style.display = 'flex';
+  const rz = document.getElementById('dt-resizer');
+  if (rz) rz.style.display = 'block';
+  _dtApplyW();
+  _dtInitResizer();
   renderDetail();
   const cached = _dtHist.get(sym);
   if (!cached || (Date.now() - cached.ts) > DT_HIST_TTL) dtFetchHistory(sym);
@@ -77,6 +131,8 @@ function closeDetail() {
   detailSym = null;
   const panel = document.getElementById('detail-panel');
   if (panel) panel.style.display = 'none';
+  const rz = document.getElementById('dt-resizer');
+  if (rz) rz.style.display = 'none';
 }
 
 // Refresca el contenido (se llama al abrir y en cada ciclo de datos)
@@ -96,22 +152,24 @@ function renderDetail() {
   const f = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
   const fc = v => v == null ? '#3a4a60' : v >= 0 ? '#55bb88' : '#ee6666';
 
-  // ── Patrón W/M ──
-  let patternHtml = '';
-  if (p) {
-    const isW = p.type === 'W';
-    const stTxt = p.state === 'breaking' ? '⚡ ROMPIENDO LA LÍNEA DE CUELLO'
-                : p.state === 'forming'  ? 'Formándose — aún sin romper el cuello'
+  // ── Patrón W/M (15m y 1h, cada uno con su sección) ──
+  const patternSection = (pp, tfLabel) => {
+    if (!pp) return '';
+    const isW = pp.type === 'W';
+    const stTxt = pp.state === 'breaking'   ? '⚡ RUPTURA CONFIRMADA — la vela cerró más allá del cuello'
+                : pp.state === 'confirming' ? '⏳ Cruzando el cuello — esperando el CIERRE de vela que confirme'
+                : pp.state === 'forming'    ? 'Formándose — aún sin romper el cuello'
                 : '✓ Cuello roto — patrón confirmado';
-    const stCol = p.state === 'breaking' ? '#ffbe3c' : isW ? '#2fe08a' : '#ff6666';
-    patternHtml = `<div class="dt-section" style="border-color:${stCol}40">
-      <div class="dt-sec-title" style="color:${stCol}">${isW ? '🟢 DOBLE SUELO (W)' : '🔴 DOBLE TECHO (M)'} · calidad ${p.quality}/10</div>
+    const stCol = pp.state === 'breaking' ? '#ffbe3c' : pp.state === 'confirming' ? '#e0a830' : isW ? '#2fe08a' : '#ff6666';
+    return `<div class="dt-section" style="border-color:${stCol}40">
+      <div class="dt-sec-title" style="color:${stCol}">${isW ? '🟢 DOBLE SUELO (W)' : '🔴 DOBLE TECHO (M)'} · ${tfLabel} · calidad ${pp.quality}/10</div>
       <div class="dt-row"><span>Estado</span><b style="color:${stCol}">${stTxt}</b></div>
-      <div class="dt-row"><span>Línea de cuello</span><b style="color:#ffd76a">${fmtPrice(p.neckline)}</b></div>
-      <div class="dt-row"><span>Objetivo (mov. medido)</span><b class="pos">${fmtPrice(p.target)} (${f((p.target - row.price) / row.price * 100)})</b></div>
-      <div class="dt-row"><span>Stop sugerido</span><b class="neg">${fmtPrice(p.stop)} (${f((p.stop - row.price) / row.price * 100)})</b></div>
+      <div class="dt-row"><span>Línea de cuello</span><b style="color:${tfLabel === '1h' ? '#c9a2ff' : '#ffd76a'}">${fmtPrice(pp.neckline)}</b></div>
+      <div class="dt-row"><span>Objetivo (mov. medido)</span><b class="pos">${fmtPrice(pp.target)} (${f((pp.target - row.price) / row.price * 100)})</b></div>
+      <div class="dt-row"><span>Stop sugerido</span><b class="neg">${fmtPrice(pp.stop)} (${f((pp.stop - row.price) / row.price * 100)})</b></div>
     </div>`;
-  }
+  };
+  const patternHtml = patternSection(p, '15m') + patternSection(row.pattern1h, '1h');
 
   // ── Checklist del radar de confluencia ──
   let checksHtml = '';
@@ -185,7 +243,9 @@ function drawDetailChart(row) {
   const { k, offset } = dtBuildChartData(row);
 
   const W = canvas.width = canvas.clientWidth || 380;
-  const H = canvas.height = 235;
+  // La altura escala con el ancho del panel (redimensionable): más panel = más gráfico
+  const H = canvas.height = Math.round(Math.min(460, Math.max(235, W * 0.55)));
+  canvas.style.height = H + 'px';
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
@@ -195,10 +255,15 @@ function drawDetailChart(row) {
   const start = k.c.length - N;
   const PADL = 4, PADR = 50, PADT = 10, PADB = 6;
   const p = row.pattern;
+  const p1h = row.pattern1h;
 
   let min = Infinity, max = -Infinity;
   for (let i = start; i < k.c.length; i++) { min = Math.min(min, k.l[i]); max = Math.max(max, k.h[i]); }
   if (p) { min = Math.min(min, p.stop, p.target); max = Math.max(max, p.stop, p.target); }
+  // niveles del patrón 1h: solo si caen a ±6% del precio (no aplastar velas)
+  if (p1h) for (const v of [p1h.neckline, p1h.target, p1h.stop]) {
+    if (v > row.price * 0.94 && v < row.price * 1.06) { min = Math.min(min, v); max = Math.max(max, v); }
+  }
   const pad = (max - min) * 0.05 || max * 0.001;
   min -= pad; max += pad;
 
@@ -283,6 +348,15 @@ function drawDetailChart(row) {
       hline(stopAtr, '#ff6666', [2, 3], 'stop ATR ' + fmtPrice(stopAtr).replace('$', ''));
       hline(tpAtr, '#2fe08a', [2, 3], 'TP ATR ' + fmtPrice(tpAtr).replace('$', ''));
     }
+  }
+
+  // Niveles del patrón 1h: la estructura vive en velas de 1h, así que aquí solo
+  // se proyectan sus PRECIOS (cuello violeta, objetivo/stop punteados) sobre el 15m
+  if (p1h) {
+    const inR = v => v >= min && v <= max;
+    if (inR(p1h.neckline)) hline(p1h.neckline, '#c9a2ff', [6, 3], 'cuello 1h ' + fmtPrice(p1h.neckline).replace('$', ''));
+    if (inR(p1h.target))   hline(p1h.target,   '#7fe0b0', [2, 4], 'obj 1h ' + fmtPrice(p1h.target).replace('$', ''));
+    if (inR(p1h.stop))     hline(p1h.stop,     '#ff9a9a', [2, 4], 'stop 1h ' + fmtPrice(p1h.stop).replace('$', ''));
   }
 
   // Último precio

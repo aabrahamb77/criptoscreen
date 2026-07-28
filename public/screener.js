@@ -168,6 +168,32 @@ function toggleSound() {
   if (soundEnabled) beep(880, 'sine', 80);
 }
 
+// ── Panel de configuración de alertas (botón ⚙️ del header) ─────────────────
+function toggleAlertCfg() {
+  const panel = document.getElementById('alert-cfg-panel');
+  if (!panel) return;
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  if (!open) renderAlertCfg();
+}
+
+function renderAlertCfg() {
+  const panel = document.getElementById('alert-cfg-panel');
+  if (!panel) return;
+  const rows = Object.keys(ALERT_DEFAULTS).map(cat => `
+    <label class="acfg-row">
+      <input type="checkbox" ${canAlert(cat) ? 'checked' : ''}
+        onchange="setAlertCfg('${cat}', this.checked)">
+      <span>${ALERT_LABELS[cat] || cat}</span>
+    </label>`).join('');
+  panel.innerHTML = `
+    <div class="acfg-head">⚙️ Alertas — qué puede avisarte
+      <button class="dt-close" onclick="toggleAlertCfg()" style="margin-left:auto">✕</button>
+    </div>
+    ${rows}
+    <div class="acfg-note">El toast, el sonido (🔔) y la notificación de escritorio (🖥) de cada categoría se activan o silencian juntos. Los cambios se guardan solos.</div>`;
+}
+
 function showToast(msg, type = '') {
   const wrap = document.getElementById('toast-wrap');
   if (!wrap) return;
@@ -175,7 +201,11 @@ function showToast(msg, type = '') {
   el.className = 'toast' + (type === 'long' ? ' t-long' : type === 'short' ? ' t-short' : '');
   el.textContent = msg;
   wrap.appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 3500);
+  // 10s en pantalla (antes 3.5s: sonaba y desaparecía sin tiempo de leerlo).
+  // Clic en el toast lo cierra al instante.
+  el.style.cursor = 'pointer';
+  el.onclick = () => { el.style.opacity = '0'; setTimeout(() => el.remove(), 320); };
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 10_000);
 }
 
 // ── Filtro cuadrante ───────────────────────────────────────────────────────
@@ -262,7 +292,7 @@ function checkQuadrantChanges(rows) {
       && nv(r.oi5m) > 0 && nv(r.oi1h) > 0.2 && nv(r.oi4h) > 0
       && nv(r.price5mPct) < 0 && nv(r.price4hPct) < 0 && nv(r.vol1hPct) > 5;
     const isAl = longAl || shortAl;
-    if (isAl && !prevAligned.has(r.symbol) && soundEnabled && prev) {
+    if (canAlert('align') && isAl && !prevAligned.has(r.symbol) && soundEnabled && prev) {
       beep(longAl ? 880 : 440, 'sine', 130);
     }
     if (isAl) prevAligned.add(r.symbol); else prevAligned.delete(r.symbol);
@@ -585,6 +615,32 @@ function liqCell(row) {
   return `<div class="pct-wrap"><span class="pct-val" style="background:${bg};color:${tc};font-weight:700" title="Últimos 5 min — largos liquidados: ${fmtUSD(lq.l)} · cortos liquidados: ${fmtUSD(lq.s)}">${bull ? '↑S' : '↓L'} ${fmtUSD(tot)}</span></div>`;
 }
 
+// ── Serie del mini-gráfico según la temporalidad seleccionada en el mapa ────
+// 15m → velas 15m (~6h) · 1h → velas 1h (~25h) · 4h → 1 punto por 4h (~2d) ·
+// 1d → todo el rango disponible (~2d). Sin llamadas extra: reutiliza k15/k60.
+function sparkSeries(row) {
+  const tf = typeof chartTf !== 'undefined' ? chartTf : '1h';
+  if (tf === '15m' && row.k15?.c?.length) return row.k15.c.slice(-25);
+  if (tf === '1h'  && row.k60?.c?.length) return row.k60.c.slice(-25);
+  if (tf === '4h'  && row.k60?.c?.length) {
+    const c = row.k60.c, out = [];
+    for (let i = c.length - 1; i >= 0; i -= 4) out.unshift(c[i]); // cierre de cada bloque de 4h
+    return out;
+  }
+  if (tf === '1d' && row.k60?.c?.length) return row.k60.c; // máx. disponible (~2 días)
+  return row.spark; // fallback: velas 5m · ~2h
+}
+
+function sparkTitle() {
+  const tf = typeof chartTf !== 'undefined' ? chartTf : '1h';
+  return {
+    '15m': 'velas 15m · ~6h',
+    '1h':  'velas 1h · ~25h',
+    '4h':  'velas 4h · ~2 días',
+    '1d':  'rango completo (~2 días, máx. disponible)',
+  }[tf] || 'velas 5m · ~2h';
+}
+
 function sparkSVG(vals, w = 54, h = 14) {
   if (!vals || vals.length < 3) return '';
   const min = Math.min(...vals), max = Math.max(...vals);
@@ -783,8 +839,8 @@ function render() {
     const score = Math.max(sc.longScore, sc.shortScore);
     const isLong = sc.longScore >= sc.shortScore;
     const prev = scoreSnap.get(row.symbol);
-    // Alerta sonora cuando el score salta de < 8 a ≥ 8
-    if (prev !== undefined && prev.score < 8 && score >= 8) {
+    // Alerta cuando el score salta de < 8 a ≥ 8 (categoría 'score' — OFF por defecto)
+    if (canAlert('score') && prev !== undefined && prev.score < 8 && score >= 8) {
       if (soundEnabled) {
         beep(660, 'square', 110);
         showToast(`${row.symbol} ${isLong ? 'L' : 'S'}${score} — score subió`, isLong ? 'long' : 'short');
@@ -800,7 +856,7 @@ function render() {
 
   const tbody = document.getElementById('tbody');
   if (!sorted.length) {
-    tbody.innerHTML = `<tr class="state-row"><td colspan="22">Sin datos</td></tr>`;
+    tbody.innerHTML = `<tr class="state-row"><td colspan="24">Sin datos</td></tr>`;
     return;
   }
 
@@ -819,7 +875,7 @@ function render() {
         <span class="star${isFav?' on':''}" onclick="toggleFav('${row.symbol}')">★</span>
       </div></td>
       <td class="left-align"><div class="sym-cell">${icon}<span class="sym-name">${row.symbol}</span>${gem}${quadBadge(row)}${patternBadge(row)}${streakBadge(row)}<span class="row-radar" title="Abrir en el radar de confluencia (checklist de 7 señales)" onclick="event.stopPropagation();openInRadar('${row.symbol}')">🎯</span></div></td>
-      <td><div class="price-cell">${sparkSVG(row.spark)}<span style="margin-left:6px">${fmtPrice(row.price)}</span></div></td>
+      <td><div class="price-cell"><span title="Mini-gráfico: ${sparkTitle()} — cambia con la temporalidad seleccionada en el mapa">${sparkSVG(sparkSeries(row))}</span><span style="margin-left:6px">${fmtPrice(row.price)}</span></div></td>
       <td>${fundingCell(row.fundingRate)}</td>
       <td>${cvdCell(row.cvd1m)}</td>
       <td>${pctCell(row.oi5m)}</td>
@@ -827,10 +883,12 @@ function render() {
       <td>${pctCell(row.oi1h)}</td>
       <td>${pctCell(row.oi4h)}</td>
       <td>${pctCell(row.oi24h)}</td>
+      <td>${pctCell(row.vol15mPct)}</td>
       <td>${pctCell(row.vol1hPct)}</td>
       <td>${pctCell(row.vol12hPct)}</td>
       <td>${pctCell(row.vol24hPct)}</td>
       <td>${pctCell(row.price5mPct)}</td>
+      <td>${pctCell(row.price15mPct)}</td>
       <td>${pctCell(row.price1hPct)}</td>
       <td>${pctCell(row.price4hPct)}</td>
       <td>${pctCell(row.price24hPct)}</td>

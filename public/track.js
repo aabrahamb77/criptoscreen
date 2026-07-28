@@ -548,9 +548,11 @@ function renderSeguimiento() {
     aggN++; aggSum += th.movePct; if (th.movePct > 0) aggWins++;
     const prev = _trackStateMap.get(sym);
     if (prev && prev !== 'inv' && th.estado === 'inv') {
-      showToast(`❌ ${sym}: tesis ${th.dirUp ? 'LONG' : 'SHORT'} invalidada (${th.movePct.toFixed(1)}%)`, th.dirUp ? 'short' : 'long');
-      if (soundEnabled) beep(330, 'sine', 200);
-      notifyDesktop(`❌ ${sym} — tesis invalidada`, `Movió ${th.movePct.toFixed(1)}% en contra desde la detección`);
+      if (canAlert('thesisInv')) {
+        showToast(`❌ ${sym}: tesis ${th.dirUp ? 'LONG' : 'SHORT'} invalidada (${th.movePct.toFixed(1)}%)`, th.dirUp ? 'short' : 'long');
+        if (soundEnabled) beep(330, 'sine', 200);
+        notifyDesktop(`❌ ${sym} — tesis invalidada`, `Movió ${th.movePct.toFixed(1)}% en contra desde la detección`);
+      }
     }
     _trackStateMap.set(sym, th.estado);
   }

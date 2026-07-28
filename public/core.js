@@ -5,12 +5,52 @@
  */
 
 // ── Cliente Bybit API (browser llama directamente, evita bloqueos cloud) ───
-const BYBIT_BASE = 'https://api.bybit.com';
+// Resistente a "Failed to fetch": si api.bybit.com no responde (CORS/WAF/DNS),
+// 1º intenta el dominio de respaldo oficial (api.bytick.com) y 2º cae al proxy
+// del propio server (/api/exch/bybit) — así un bloqueo del navegador no deja
+// el screener en blanco.
+const BYBIT_BASES = ['https://api.bybit.com', 'https://api.bytick.com'];
+let _bybitBaseIdx = 0;
+let _bybitNetFails = 0;
+
+// Baneo temporal de Bybit ("Access too frequent"): pausa global para dejar de
+// insistir mientras dura (insistir lo alarga). loadData lo respeta.
+let _bybitBanUntil = 0;
+
+// ¿La app se sirve desde localhost? En despliegues remotos (Render, 5GB/mes de
+// ancho de banda) los fallbacks pesados vía server se DESACTIVAN: canalizar el
+// mercado entero por el server comería la cuota en días. En local no cuesta nada.
+const IS_LOCAL_SRV = ['localhost', '127.0.0.1'].includes(location.hostname);
 
 async function bybitGet(endpoint) {
-  const res = await fetch(BYBIT_BASE + endpoint, { headers: { 'Accept': 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  try {
+    const res = await fetch(BYBIT_BASES[_bybitBaseIdx] + endpoint, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) {
+      if (res.status === 403 || res.status === 429) _bybitBanUntil = Date.now() + 90_000;
+      throw new Error(`HTTP ${res.status}`);
+    }
+    _bybitNetFails = 0;
+    return res.json();
+  } catch (err) {
+    const isNet = err instanceof TypeError || String(err.message || '').includes('Failed to fetch');
+    if (isNet) {
+      // tras 3 fallos de red seguidos, rotar al dominio de respaldo de Bybit
+      if (++_bybitNetFails >= 3) {
+        _bybitNetFails = 0;
+        _bybitBaseIdx = (_bybitBaseIdx + 1) % BYBIT_BASES.length;
+        console.warn('Bybit REST: sin respuesta — rotando a', BYBIT_BASES[_bybitBaseIdx]);
+      }
+      // último recurso: proxy del server — SOLO en localhost (en Render este
+      // volumen de datos devoraría el ancho de banda del plan gratuito)
+      if (IS_LOCAL_SRV) {
+        try {
+          const r2 = await fetch('/api/exch/bybit?path=' + encodeURIComponent(endpoint));
+          if (r2.ok) return r2.json();
+        } catch (_) { /* el server tampoco pudo */ }
+      }
+    }
+    throw err;
+  }
 }
 
 const pctCalc = (curr, prev) =>
@@ -89,17 +129,54 @@ async function oi24hAgoUSD(symbol, currentPrice) {
   return val;
 }
 
+// ── Caché por símbolo de las series pesadas ─────────────────────────────────
+// El historial de OI y las velas NO cambian cada 10s (son buckets de 5min/1h):
+// re-descargarlos en cada ciclo para 100 monedas era ~1.800 peticiones/min y
+// Bybit banea la IP ("Access too frequent"). Con estos TTL el tráfico baja ~90%
+// y el precio sigue siendo EN VIVO: la vela en curso se parchea con el último
+// precio del ticker (que sí llega cada ciclo en una única llamada).
+const _symCache = new Map(); // symbol → { k5m, ts5, k1h, ts60, oiList, tsOi }
+const TTL_K5  = 90_000;   // velas 5m: refrescar cada 90s
+const TTL_K60 = 300_000;  // velas 1h: cada 5 min
+const TTL_OI  = 120_000;  // historial OI 5min: cada 2 min
+
 async function fetchSymbolData(symbol, currentOIusd, currentPrice) {
-  const [oiRes, k1hRes, k5mRes, oi24Ago] = await Promise.all([
-    bybitGet(`/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=200`),
-    bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=60&limit=50`),
-    bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=5&limit=288`),
-    oi24hAgoUSD(symbol, currentPrice),
-  ]);
-  const oiList = oiRes.result?.list;
-  const k1h = k1hRes.result?.list;
-  const k5m = k5mRes.result?.list;
+  const now = Date.now();
+  let c = _symCache.get(symbol);
+  if (!c) { c = {}; _symCache.set(symbol, c); }
+
+  const jobs = [];
+  if (!c.oiList || now - (c.tsOi || 0) > TTL_OI) {
+    jobs.push(bybitGet(`/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=200`)
+      .then(r => { if (r.result?.list?.length) { c.oiList = r.result.list; c.tsOi = now; } }));
+  }
+  if (!c.k1h || now - (c.ts60 || 0) > TTL_K60) {
+    // 200 velas 1h (~8 días): necesarias para RSI/MACD/ADX/TSI/Andean sin sesgo
+    // de arranque (el Andean usa longitud 50 y el TSI 25+13 de warmup)
+    jobs.push(bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=60&limit=200`)
+      .then(r => { if (r.result?.list?.length) { c.k1h = r.result.list; c.ts60 = now; } }));
+  }
+  if (!c.k5m || now - (c.ts5 || 0) > TTL_K5) {
+    jobs.push(bybitGet(`/v5/market/kline?category=linear&symbol=${symbol}&interval=5&limit=288`)
+      .then(r => { if (r.result?.list?.length) { c.k5m = r.result.list; c.ts5 = now; } }));
+  }
+  const [oi24Ago] = await Promise.all([oi24hAgoUSD(symbol, currentPrice), ...jobs]);
+
+  const oiList = c.oiList;
+  const k1h = c.k1h;
+  let k5m = c.k5m;
   if (!oiList?.length || !k1h?.length || !k5m?.length) return null;
+
+  // Vela en curso al precio VIVO del ticker (las series pueden tener hasta
+  // TTL de retraso, pero el precio actual siempre es el del ciclo).
+  k5m = k5m.slice();
+  k5m[0] = k5m[0].slice();
+  k5m[0][4] = String(currentPrice);
+  k5m[0][2] = String(Math.max(parseFloat(k5m[0][2]), currentPrice)); // high
+  k5m[0][3] = String(Math.min(parseFloat(k5m[0][3]), currentPrice)); // low
+  const k1hLive = k1h.slice();
+  k1hLive[0] = k1hLive[0].slice();
+  k1hLive[0][4] = String(currentPrice);
 
   const oi_usd = oiList.map(x => parseFloat(x.openInterest) * currentPrice);
   const oi5m  = pctCalc(currentOIusd, snapAt(symbol, 5*60_000)       ?? oi_usd[1]);
@@ -109,10 +186,13 @@ async function fetchSymbolData(symbol, currentOIusd, currentPrice) {
   const oi24h = pctCalc(currentOIusd, snapAt(symbol, 24*60*60_000)   ?? oi24Ago);
 
   const vol1h = k1h.map(k => parseFloat(k[6]));
-  const cls1h = k1h.map(k => parseFloat(k[4]));
+  const cls1h = k1hLive.map(k => parseFloat(k[4]));
   const vol1hPct  = k1h.length > 2  ? pctCalc(vol1h[1], vol1h[2]) : null;
   const vol12hPct = k1h.length > 24 ? pctCalc(sumArr(vol1h.slice(1,13)), sumArr(vol1h.slice(13,25))) : null;
   const vol24hPct = k1h.length > 48 ? pctCalc(sumArr(vol1h.slice(1,25)), sumArr(vol1h.slice(25,49))) : null;
+  // Vol 15m: últimos 3×5m CERRADOS vs los 3 anteriores — alinea el set con OI/Precio 15m
+  const to5 = k5m.map(k => parseFloat(k[6]));
+  const vol15mPct = to5.length > 6 ? pctCalc(sumArr(to5.slice(1,4)), sumArr(to5.slice(4,7))) : null;
   const cls5m = k5m.map(k => parseFloat(k[4]));
   const price5mPct  = cls5m.length > 2 ? pctCalc(cls5m[1], cls5m[2]) : null;
   const price15mPct = cls5m.length > 4 ? pctCalc(cls5m[1], cls5m[4]) : null;
@@ -165,13 +245,33 @@ async function fetchSymbolData(symbol, currentOIusd, currentPrice) {
     }
   }
 
-  return { oi5m, oi15m, oi1h, oi4h, oi24h, vol1hPct, vol12hPct, vol24hPct,
+  // Velas 1h completas (viejo→nuevo, ~200h/8 días): detector de patrones W/M en 1h
+  // y sparklines de 4h/1d. Sin coste extra: reutiliza la kline de 1h del ATR.
+  const k60 = {
+    t: k1h.map(k => +k[0]).reverse(),
+    o: k1h.map(k => parseFloat(k[1])).reverse(),
+    h: hi1hRev,
+    l: lo1hRev,
+    c: cl1hRev,
+    v: k1h.map(k => parseFloat(k[5])).reverse(),
+  };
+
+  return { oi5m, oi15m, oi1h, oi4h, oi24h, vol15mPct, vol1hPct, vol12hPct, vol24hPct,
            price5mPct, price15mPct, price1hPct, price4hPct, vol1hUSD: vol1h[1] ?? 0,
-           cvd1m, cvd5m, atr1h, spark, k15 };
+           cvd1m, cvd5m, atr1h, spark, k15, k60 };
 }
 
 async function loadData() {
+  // Respetar el baneo temporal de Bybit: insistir durante el ban lo alarga
+  if (Date.now() < _bybitBanUntil) {
+    throw new Error(`Bybit rate limit — pausado, reintento en ${Math.ceil((_bybitBanUntil - Date.now()) / 1000)}s`);
+  }
   const tickRes = await bybitGet('/v5/market/tickers?category=linear');
+  if (!tickRes?.result?.list) {
+    // respuesta vacía = probable ban silencioso → backoff de 60s
+    _bybitBanUntil = Date.now() + 60_000;
+    throw new Error('Bybit sin datos (posible rate limit) — pausado 60s');
+  }
   const tickers = tickRes.result.list
     .filter(t => t.symbol.endsWith('USDT') && parseFloat(t.turnover24h) > 500_000)
     .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
@@ -241,6 +341,39 @@ function wrChip(winRate, n) {
     : `${winRate}% ${pmTxt}`;
 }
 
+// ── Central de alertas ──────────────────────────────────────────────────────
+// Cada categoría se puede activar/desactivar desde el botón ⚙️ del header.
+// Las ruidosas (score, confluencia, alineación) vienen APAGADAS por defecto:
+// con 100 monedas generaban decenas de avisos por hora sin ser accionables.
+const ALERT_DEFAULTS = {
+  pattern15:   true,   // ◭ ruptura de cuello W/M en 15m
+  pattern1h:   true,   // ◭ ruptura de cuello W/M en 1h
+  patternDone: true,   // 🎯 patrón completado (tocó objetivo o stop)
+  btcBias:     true,   // ₿ el sesgo de BTC cambió de dirección
+  thesisInv:   true,   // ❌ tesis del seguimiento invalidada
+  indConf:     true,   // 🧭 confluencia de indicadores 4/4 (RSI/MACD/ADX/TSI en 15m)
+  confluence:  false,  // 🎯 confluencia alta en el radar (ruidosa)
+  score:       false,  // 📈 score salta a ≥8 (ruidosa)
+  align:       false,  // 🔊 beep de alineación total (ruidosa)
+};
+const ALERT_LABELS = {
+  pattern15:   '◭ Ruptura de cuello W/M (15m)',
+  pattern1h:   '◭ Ruptura de cuello W/M (1h)',
+  patternDone: '🎯 Patrón completado (objetivo/stop)',
+  btcBias:     '₿ Cambio de sesgo de BTC',
+  thesisInv:   '❌ Tesis invalidada (seguimiento)',
+  indConf:     '🧭 Indicadores 4/4 — RSI·MACD·ADX·TSI (15m)',
+  confluence:  '🎯 Confluencia alta del radar — ruidosa',
+  score:       '📈 Score salta a ≥8 — ruidosa',
+  align:       '🔊 Beep de alineación total — ruidosa',
+};
+let alertCfg = { ...ALERT_DEFAULTS, ...JSON.parse(localStorage.getItem('scalp_alert_cfg') || '{}') };
+function canAlert(cat) { return alertCfg[cat] !== false; }
+function setAlertCfg(cat, on) {
+  alertCfg[cat] = !!on;
+  safeSetItem('scalp_alert_cfg', JSON.stringify(alertCfg));
+}
+
 // ── Safe Storage Helper ───────────────────────────────────────────────────
 function safeSetItem(key, val) {
   try {
@@ -304,8 +437,10 @@ const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-
   range: 'Ruptura rango', liq: 'Cascada liq.', sector: 'Rotación sectorial', whale: 'Ballenas',
   beta: 'Beta rezagada', alpha: 'Alpha propio',
   confluence: 'Confluencia', health: 'Saludable', promising: 'Prometedoras (heat)',
-  patternWM: 'Patrón W/M', squeeze: 'Squeeze/Acum. (potencial)', outlier: 'Outlier real',
-  momentum: 'Momentum confirmado (5%/10%)' };
+  patternWM: 'Patrón W/M 15m', patternWM1h: 'Patrón W/M 1h',
+  squeeze: 'Squeeze/Acum. (potencial)', outlier: 'Outlier real',
+  momentum: 'Momentum confirmado (5%/10%)',
+  indConf: 'Indicadores 4/4 (15m)' };
 let stratRegimeFilter = 'ALL'; // 'ALL' | 'ALCISTA' | 'BAJISTA' | 'VOLÁTIL' | 'LATERAL'
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;

@@ -391,6 +391,32 @@ function toggleConfCalib() {
   renderConfCalib();
 }
 
+// ── Expectativa histórica REAL de una configuración del radar ───────────────
+// Busca en las ~2000 señales resueltas las que tuvieron el MISMO nivel + lado
+// (+ cuadrante, si hay muestra suficiente) y devuelve su WR a +1h con Wilson.
+// Así cada tarjeta dice cuánto ha ganado históricamente ESA configuración.
+function confExpectation(count, side, quad) {
+  const lvl = Math.min(count, 5);
+  const evalOf = useQuad => {
+    let n = 0, h = 0;
+    for (const s of confSignals) {
+      if (s.p60 == null || !s.price) continue;
+      if (Math.min(s.count, 5) !== lvl || s.side !== side) continue;
+      if (useQuad && s.quad !== quad) continue;
+      n++;
+      const move = (s.p60 - s.price) / s.price * 100 * (s.side === 'long' ? 1 : -1);
+      if (move > 0) h++;
+    }
+    return { n, h };
+  };
+  let grp = `${lvl}/5 ${side} en ${quad}`;
+  let r = evalOf(true);
+  if (r.n < 15) { grp = `${lvl}/5 ${side} (todos los cuadrantes)`; r = evalOf(false); }
+  if (r.n < 15) return null;
+  const ci = wilsonCI(r.h, r.n);
+  return { wr: Math.round(r.h / r.n * 100), n: r.n, pm: Math.round(ci.pm), lo: ci.lo, hi: ci.hi, grp };
+}
+
 function renderConfCalib() {
   const btn = document.getElementById('calib-btn');
   const el = document.getElementById('conf-calib');
@@ -453,10 +479,10 @@ function renderConfluence(scored) {
   const confs = res.confs.slice().sort((a, b) => b.count - a.count || b.dist - a.dist);
   const top = confs.slice(0, 8);
 
-  // Alerta cuando un símbolo alcanza el máximo (5/5)
+  // Alerta cuando un símbolo alcanza el máximo (5/5) — categoría 'confluence' (OFF por defecto)
   for (const c of top) {
     const prev = prevConfCount.get(c.symbol) ?? 0;
-    if (c.count >= 5 && prev < 5) {
+    if (canAlert('confluence') && c.count >= 5 && prev < 5) {
       showToast(`🎯 ${c.symbol} ${c.count}/5 confluencia ${c.side.toUpperCase()}`, c.side);
       if (soundEnabled) beep(c.side === 'long' ? 1040 : 460, 'triangle', 180);
       notifyDesktop(`🎯 ${c.symbol} ${c.count}/5 ${c.side.toUpperCase()}`, c.checks.filter(ch => !ch.ok).map(ch => `✗ ${ch.k}`).join(' · ') || 'Todas las señales en verde');
@@ -467,7 +493,34 @@ function renderConfluence(scored) {
   grid.innerHTML = top.map(c => {
     const color = c.count >= 5 ? '#ffaa28' : c.count >= 4 ? '#2fe08a' : '#5a6a85';
     const fails = c.checks.filter(ch => !ch.ok).slice(0, 2).map(ch => `✗ ${ch.k}`).join(' · ');
-    return `<div class="conf-card${c.count === 5 ? ' conf-full' : ''}${selectedBubble === c.symbol ? ' selected' : ''}" onclick="selectConfSymbol('${c.symbol}')">
+
+    // 📐 Expectativa histórica de ESTA configuración (nivel+lado+cuadrante)
+    const exp = confExpectation(c.count, c.side, c.quad);
+    const expCol = !exp ? '#3a5070'
+      : exp.lo > 50 ? '#2fe08a'
+      : exp.hi < 50 ? '#ee6666' : '#8aa0c8';
+    const expHtml = exp
+      ? `<div class="cc-exp" style="color:${expCol}" title="WR real a +1h de señales pasadas con esta configuración (${exp.grp}) — IC 95%: ${exp.lo.toFixed(0)}–${exp.hi.toFixed(0)}%">📐 histórico ${exp.wr}%±${exp.pm} a +1h <span style="opacity:.6">(n=${exp.n})</span></div>`
+      : `<div class="cc-exp" style="color:#3a5070">📐 sin histórico suficiente para esta configuración</div>`;
+
+    // Niveles por ATR: de la señal a la orden sin salir de la tarjeta
+    const rw = allRows.find(r2 => r2.symbol === c.symbol);
+    const atrP = rw?.atr1h && rw.price ? rw.atr1h / rw.price : null;
+    const dirn = c.side === 'long' ? 1 : -1;
+    const lvlHtml = atrP
+      ? `<div class="cc-lvls">entra <b>${fmtPrice(rw.price)}</b> · stop <b class="neg">${fmtPrice(rw.price * (1 - dirn * atrP * 1.2))}</b> · TP <b class="pos">${fmtPrice(rw.price * (1 + dirn * atrP * 1.8))}</b> <span style="color:#2e4060">(ATR 1.2×/1.8×)</span></div>`
+      : '';
+
+    // Filtro de régimen ACTIVO: si el cuadrante de la señal está rindiendo mal
+    // históricamente (WR<45%, n≥20) y la señal va en su dirección típica → atenuar
+    const typical = (c.quad === 'LONG' || c.quad === 'SQUEEZE') ? 'long' : 'short';
+    const qd = _qwrData?.[c.quad];
+    const against = qd && qd.n >= 20 && (qd.h / qd.n) < 0.45 && c.side === typical;
+    const againstHtml = against
+      ? `<div class="cc-note" style="color:#a05555">⚠ cuadrante ${c.quad} rinde ${Math.round(qd.h / qd.n * 100)}% hist. — señal a contracorriente del régimen</div>`
+      : '';
+
+    return `<div class="conf-card${c.count === 5 ? ' conf-full' : ''}${against ? ' cc-dim' : ''}${selectedBubble === c.symbol ? ' selected' : ''}" onclick="selectConfSymbol('${c.symbol}')">
       <div class="cc-top">
         <span class="cc-sym">${c.symbol}</span>
         <span class="cc-side ${c.side}">${c.side.toUpperCase()}</span>
@@ -475,13 +528,23 @@ function renderConfluence(scored) {
         <span class="cc-count" style="color:${color}">${c.count}/5${c.count === 5 ? ' 🔥' : ''}</span>
       </div>
       <div class="cc-dots">${c.checks.map(ch => `<div class="cc-dot${ch.ok ? ' ok' : ''}" title="${ch.k}: ${ch.d}">${ch.ok ? '✓' : '·'}</div>`).join('')}</div>
+      ${expHtml}
+      ${lvlHtml}
       <div class="cc-note">${fails || 'Todas las señales en verde'}</div>
+      ${againstHtml}
     </div>`;
   }).join('');
 
   renderQuadWinrates();
   renderQuadAligned(res.valid);
   renderPotentialPanel(res.valid);
+  // Rendimiento histórico del método "potencial" (se registra como 'squeeze'
+  // en el Comparador) — visible en la cabecera del panel
+  const pc = document.getElementById('potential-count');
+  if (pc && typeof strategyEvidence === 'function') {
+    const ev = strategyEvidence('squeeze');
+    if (ev && ev.n >= 10) pc.textContent = `${pc.textContent ? pc.textContent + ' · ' : ''}histórico de esta lista: ${ev.winRate}% a 1h (n=${ev.n})`;
+  }
   renderConfCalib();
   if (selectedBubble && confCache.has(selectedBubble)) renderConfDetail(selectedBubble);
 }
@@ -513,6 +576,7 @@ async function renderConfDetail(sym) {
 }
 
 // ── Win-rate histórico por cuadrante (de trackHistory, mirando +1h) ────────
+let _qwrData = null; // último agregado por cuadrante — lo usa el filtro de régimen de las cards
 function renderQuadWinrates() {
   const el = document.getElementById('quad-wr');
   if (!el) return;
@@ -535,6 +599,7 @@ function renderQuadWinrates() {
       if ((q === 'LONG' || q === 'SQUEEZE') ? up : !up) agg[q].h++;
     }
   }
+  _qwrData = agg; // disponible para el filtro de régimen de las tarjetas
   const anyData = Object.values(agg).some(a => a.n > 0);
   const chips = !anyData
     ? '<span class="qwr-chip">acumulando datos…</span>'
@@ -658,25 +723,29 @@ function fmtOutlierDuration(ms) {
   return min < 60 ? `${min}min` : `${(min / 60).toFixed(1)}h`;
 }
 
+const OUTLIER_DIST_EXTREME = 9; // σ: número ANORMAL — la tira entera se enciende
 function renderOutlierStrip(rows) {
   const el = document.getElementById('outlier-strip');
   if (!el) return;
   const list = computeOutliers(rows).slice(0, 16);
-  if (!list.length) { el.innerHTML = ''; return; }
+  if (!list.length) { el.innerHTML = ''; el.classList.remove('strip-hot'); return; }
 
   const sustainedCount = list.filter(o => o.sustained).length;
+  const extremes = list.filter(o => o.dist >= OUTLIER_DIST_EXTREME);
+  el.classList.toggle('strip-hot', extremes.length > 0);
   const chips = list.map(o => {
-    const color = o.sustained ? '#ffbe3c' : o.spike ? '#2fe08a' : '#5a6a85';
+    const extreme = o.dist >= OUTLIER_DIST_EXTREME;
+    const color = extreme ? '#ff4444' : o.sustained ? '#ffbe3c' : o.spike ? '#2fe08a' : '#5a6a85';
     const symColor = o.side === 'long' ? '#00cc88' : '#ff5555';
-    return `<span class="pat-chip${o.sustained ? ' pat-breaking' : ''}" onclick="openInRadar('${o.symbol}')"
-      title="${o.symbol} ${o.side.toUpperCase()} · ${o.dist.toFixed(1)}σ del centro (pico máx ${o.peakDist.toFixed(1)}σ) · lleva ${fmtOutlierDuration(o.durationMs)} fuera de rango">
+    return `<span class="pat-chip${extreme ? ' chip-extreme' : o.sustained ? ' pat-breaking' : ''}" onclick="openInRadar('${o.symbol}')"
+      title="${o.symbol} ${o.side.toUpperCase()} · ${o.dist.toFixed(1)}σ del centro (pico máx ${o.peakDist.toFixed(1)}σ) · lleva ${fmtOutlierDuration(o.durationMs)} fuera de rango${extreme ? ' · ‼ EXTREMO: ≥' + OUTLIER_DIST_EXTREME + 'σ, movimiento fuera de toda norma' : ''}">
       <b style="color:${symColor}">${o.symbol}</b> <span class="cc-side ${o.side}" style="font-size:8.5px">${o.side === 'long' ? '▲' : '▼'}</span>
-      <b style="color:${color}">${o.dist.toFixed(1)}σ</b>
+      <b style="color:${color}${extreme ? ';font-size:12px' : ''}">${extreme ? '‼ ' : ''}${o.dist.toFixed(1)}σ</b>
       <span style="color:${color};font-size:9px">${o.label}</span>
     </span>`;
   }).join('');
 
-  el.innerHTML = `<span class="qal-head">🎯 Outliers reales${sustainedCount ? ` — <b style="color:#ffbe3c">${sustainedCount} sostenidos</b>` : ''}</span>${chips}`;
+  el.innerHTML = `<span class="qal-head">🎯 Outliers reales${extremes.length ? ` — <b style="color:#ff4444">‼ ${extremes.length} EXTREMO${extremes.length > 1 ? 'S' : ''} ≥${OUTLIER_DIST_EXTREME}σ</b>` : ''}${sustainedCount ? ` — <b style="color:#ffbe3c">${sustainedCount} sostenidos</b>` : ''}</span>${chips}`;
 }
 
 // ── 🚀 Momentum confirmado: umbrales absolutos, no σ ────────────────────────
@@ -715,7 +784,10 @@ function renderMomentumStrip(rows) {
   const el = document.getElementById('momentum-strip');
   if (!el) return;
   const list = computeMomentumConfirmed(rows).slice(0, 16);
-  if (!list.length) { el.innerHTML = ''; return; }
+  if (!list.length) { el.innerHTML = ''; el.classList.remove('strip-hot'); return; }
+  // Momentum confirmado es raro por diseño (5% precio + 10% OI + liquidez):
+  // si hay AL MENOS UNA moneda, la tira entera se enciende para que no pase inadvertida
+  el.classList.add('strip-hot');
 
   const chips = list.map(o => {
     const symColor = o.side === 'long' ? '#00cc88' : '#ff5555';

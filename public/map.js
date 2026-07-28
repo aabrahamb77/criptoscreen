@@ -426,22 +426,17 @@ function setChartTf(tf) {
   );
   chartZoom = { scale: 1, offsetX: 0, offsetY: 0 };
   drawBubbleChart(null);
+  render(); // los mini-gráficos de la tabla siguen la misma temporalidad
 }
 
 function renderStrategy() {
   if (!allRows.length) return;
-
   const scored = allRows.map(r => ({ ...r, ...scoreSymbol(r) }));
-
-  const longs  = scored.filter(r => r.tipo === 'LONG'  && r.longScore  >= 4)
-    .sort((a, b) => b.longScore  - a.longScore ).slice(0, 5);
-  const shorts = scored.filter(r => r.tipo === 'SHORT' && r.shortScore >= 4)
-    .sort((a, b) => b.shortScore - a.shortScore).slice(0, 5);
-
-  document.getElementById('long-cards').innerHTML  = longs.map(r => makeCard(r, true)).join('');
-  document.getElementById('short-cards').innerHTML = shorts.map(r => makeCard(r, false)).join('');
-
+  // Los Top-5 de momentum se retiraron: duplicaban la tabla del screener
+  // ordenada por score y las "Señales accionables" del Lab (que además llevan
+  // evidencia histórica y niveles). Estrategia queda enfocada: radar + potencial.
   renderConfluence(scored);
+  renderIndConf(); // 🧭 confluencia de indicadores (RSI/MACD/ADX/TSI/Andean, 15m)
 }
 
 // El mapa vive ahora en la página del screener — se dibuja con cada refresh

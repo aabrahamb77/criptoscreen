@@ -33,6 +33,7 @@ const BTC = {
   bias: 0, prob: 50, dir: 'NEUTRAL',
   lastDir: null,
   cg: { ts: 0, top: null, mp: null, clusters: null, err: {} }, // CoinGlass (vía /api/cg)
+  free: { ts: 0, topLS: null, prem: null, taker: null },       // respaldo gratuito (Binance/Coinbase/Bybit)
 };
 
 // ── Fetchers (cadencias propias, solo BTC = coste mínimo) ───────────────────
@@ -44,18 +45,22 @@ const BTC = {
 async function btcFetchOB() {
   BTC.ob = { ...(BTC.ob || {}), ts: Date.now() }; // marca throttle aunque falle
   try {
+    // Multi-exchange SOLO en localhost: en Render (5GB/mes) cada libro de
+    // Binance+OKX vía proxy son ~50KB/30s ≈ 1.4GB/mes — en remoto usamos
+    // únicamente Bybit directo desde el navegador (cero tráfico del server).
+    const multi = typeof IS_LOCAL_SRV !== 'undefined' ? IS_LOCAL_SRV : true;
     const [byRes, bnRes, okRes] = await Promise.all([
       bybitGet('/v5/market/orderbook?category=linear&symbol=BTCUSDT&limit=500').catch(() => null),
-      fetch('/api/exch/depth?exchange=binance&symbol=BTCUSDT&limit=500').then(r => r.json()).catch(() => null),
-      fetch('/api/exch/depth?exchange=okx&symbol=BTC-USDT-SWAP&limit=400').then(r => r.json()).catch(() => null),
+      multi ? fetch('/api/exch/depth?exchange=binance&symbol=BTCUSDT&limit=500').then(r => r.json()).catch(() => null) : Promise.resolve(null),
+      multi ? fetch('/api/exch/depth?exchange=okx&symbol=BTC-USDT-SWAP&limit=400').then(r => r.json()).catch(() => null) : Promise.resolve(null),
     ]);
 
     const byBids = (byRes?.result?.b || []).map(([p, s]) => [+p, +s]);
     const byAsks = (byRes?.result?.a || []).map(([p, s]) => [+p, +s]);
     const bnBids = (bnRes?.bids || []).map(([p, s]) => [+p, +s]);
     const bnAsks = (bnRes?.asks || []).map(([p, s]) => [+p, +s]);
-    const okBids = (okRes?.data?.[0]?.bids || []).map(([p, s]) => [+p, +s]);
-    const okAsks = (okRes?.data?.[0]?.asks || []).map(([p, s]) => [+p, +s]);
+    const okBids = (okRes?.bids || okRes?.data?.[0]?.bids || []).map(([p, s]) => [+p, +s]);
+    const okAsks = (okRes?.asks || okRes?.data?.[0]?.asks || []).map(([p, s]) => [+p, +s]);
     const exch = { bybit: !!byBids.length, binance: !!bnBids.length, okx: !!okBids.length };
 
     const allBids = [...byBids, ...bnBids, ...okBids];
@@ -77,11 +82,15 @@ async function btcFetchOB() {
     const inRange = lv => Math.abs(lv[0] - mid) / mid <= 0.03; // ±3%
     const detect = side => {
       const lvls = bucketed(side).filter(inRange);
-      if (lvls.length < 10) return { walls: [], usd: 0 };
-      const sizes = lvls.map(l => l[1]).sort((a, b) => a - b);
-      const median = sizes[Math.floor(sizes.length / 2)] || 1;
-      let walls = lvls.filter(l => l[1] >= median * 12)
-        .map(l => ({ price: l[0], usd: l[0] * l[1] }));
+      if (lvls.length < 5) return { walls: [], usd: 0 };
+      const totalUSD = lvls.reduce((a, l) => a + l[0] * l[1], 0);
+      // Muro = nivel con ≥2.5% de la profundidad del lado (±3%) y mínimo $400K.
+      // Y SIEMPRE se muestran los 2 clusters más grandes aunque no lleguen al
+      // umbral — en libros tranquilos antes desaparecían todos los muros.
+      const TH = Math.max(totalUSD * 0.025, 400_000);
+      const ranked = lvls.map(l => ({ price: l[0], usd: l[0] * l[1] })).sort((a, b) => b.usd - a.usd);
+      let walls = ranked.filter(w => w.usd >= TH);
+      if (walls.length < 2) walls = ranked.slice(0, 2);
       // agrupar muros a <0.1% de distancia
       walls.sort((a, b) => a.price - b.price);
       const merged = [];
@@ -91,7 +100,7 @@ async function btcFetchOB() {
         else merged.push({ ...w });
       }
       merged.sort((a, b) => b.usd - a.usd);
-      return { walls: merged.slice(0, 4), usd: lvls.reduce((a, l) => a + l[0] * l[1], 0) };
+      return { walls: merged.slice(0, 4), usd: totalUSD };
     };
     const B = detect(allBids), A = detect(allAsks);
     BTC.ob = { bidWalls: B.walls, askWalls: A.walls, bidUSD: B.usd, askUSD: A.usd, mid, exch, ts: Date.now() };
@@ -267,8 +276,88 @@ async function btcFetchCG() {
   if (rFut != null && rSpot != null) { BTC.cg.taker = { spot: rSpot, fut: rFut }; BTC.cg.err.taker = null; }
   else { BTC.cg.taker = null; BTC.cg.err.taker = tbF.err || tbS.err || 'sin datos'; }
 
+  // 7) Historial de liquidaciones agregado multi-exchange (para el gráfico)
+  const lh = await get('futures/liquidation/aggregated-history?exchange_list=Binance,OKX,Bybit&symbol=BTC&interval=4h&limit=120');
+  if (Array.isArray(lh.data) && lh.data.length) {
+    BTC.cg.liqHist = lh.data.map(x => ({
+      t: +x.time,
+      l: +x.aggregated_long_liquidation_usd || 0,
+      s: +x.aggregated_short_liquidation_usd || 0,
+    }));
+    BTC.cg.err.liqHist = null;
+  } else { BTC.cg.liqHist = null; BTC.cg.err.liqHist = lh.err || 'sin datos'; }
+
   btcComputeFactors();
   if (activeTab === 'btc') renderBTC();
+}
+
+// ── Fuentes GRATUITAS de respaldo (cuando tu plan de CoinGlass no llega) ─────
+// Mismos datos, directo de fuentes públicas sin API key: los factores usan
+// CoinGlass si responde y si no caen aquí — nada se queda en peso 0.
+async function btcFetchFree() {
+  BTC.free = { ...(BTC.free || {}), ts: Date.now() };
+
+  // 🐋 Top traders de Binance (endpoint público de Binance Futures, sin key)
+  try {
+    const r = await fetch('/api/exch/top-ls').then(x => x.json());
+    if (Array.isArray(r) && r.length) {
+      const last = r[r.length - 1];
+      const prev = r.length > 2 ? r[r.length - 3] : last;
+      const cur = parseFloat(last.longAccount) * 100;
+      if (Number.isFinite(cur)) BTC.free.topLS = { longPct: cur, prev: parseFloat(prev.longAccount) * 100 };
+    }
+  } catch (_) {}
+
+  // 🇺🇸 Premium Coinbase vs Binance calculado en vivo con precios spot públicos
+  try {
+    const r = await fetch('/api/exch/premium').then(x => x.json());
+    if (Number.isFinite(r?.coinbase) && Number.isFinite(r?.binance) && r.binance > 0) {
+      const prevRate = BTC.free.prem?.rate ?? null;
+      BTC.free.prem = { rate: (r.coinbase - r.binance) / r.binance * 100, prevRate };
+    }
+  } catch (_) {}
+
+  // 🔀 Agresión spot vs perp: últimos ~1000 trades de Bybit en cada mercado
+  // (ventana corta, ~15-40 min — más reactivo que las velas 4h de CoinGlass)
+  try {
+    const [sp, ln] = await Promise.all([
+      bybitGet('/v5/market/recent-trade?category=spot&symbol=BTCUSDT&limit=1000'),
+      bybitGet('/v5/market/recent-trade?category=linear&symbol=BTCUSDT&limit=1000'),
+    ]);
+    const ratio = res2 => {
+      const list = res2?.result?.list || [];
+      let b = 0, s = 0;
+      for (const t of list) { const v = (+t.size) * (+t.price); if (t.side === 'Buy') b += v; else s += v; }
+      return b + s > 0 ? b / (b + s) : null;
+    };
+    const rS = ratio(sp), rF = ratio(ln);
+    if (rS != null && rF != null) BTC.free.taker = { spot: rS, fut: rF };
+  } catch (_) {}
+
+  btcComputeFactors();
+  if (activeTab === 'btc') renderBTC();
+}
+
+// ── Liquidaciones de BTC capturadas EN VIVO (WS de Bybit), por vela de 15m ──
+// Persisten en localStorage (~10 días): alimentan la banda del gráfico cuando
+// el historial de CoinGlass no está disponible en tu plan.
+let _btcLiqB = JSON.parse(localStorage.getItem('scalp_btc_liqb') || '{}');
+let _btcLiqLastTs = 0;
+function btcAccumLiqs() {
+  let dirty = false;
+  for (const e of liqEvents) {
+    if (e.symbol !== 'BTC' || e.ts <= _btcLiqLastTs) continue;
+    const b = Math.floor(e.ts / 900_000) * 900_000;
+    if (!_btcLiqB[b]) _btcLiqB[b] = { l: 0, s: 0 };
+    _btcLiqB[b][e.isLong ? 'l' : 's'] += e.usdVal;
+    dirty = true;
+  }
+  for (const e of liqEvents) if (e.ts > _btcLiqLastTs) _btcLiqLastTs = e.ts;
+  if (dirty) {
+    const cut = Date.now() - 10 * 86_400_000;
+    for (const kk of Object.keys(_btcLiqB)) if (+kk < cut) delete _btcLiqB[kk];
+    safeSetItem('scalp_btc_liqb', JSON.stringify(_btcLiqB));
+  }
 }
 
 // ── Liquidez: pools (equal highs/lows sin barrer) y barridos recientes ──────
@@ -363,14 +452,18 @@ function btcComputeFactors() {
         : 'equilibrado, sin ventaja contrarian'));
   } else add('⚖️ Long/Short ratio', 0, 15, 'cargando ratio de Bybit…');
 
-  // 2b) Top traders (CoinGlass, Binance 4h) — dinero grande: se SIGUE, no contrarian
-  if (BTC.cg?.top) {
-    const t = BTC.cg.top.longPct;
-    const d = t - (BTC.cg.top.prev ?? t);
-    add('🐋 Top traders (CG)', (t - 50) / 12, 12,
-      `top traders de Binance ${t.toFixed(1)}% en LONG${Math.abs(d) >= 0.5 ? (d > 0 ? ' y aumentando' : ' y reduciendo') : ''} — el dinero grande está ${t > 52 ? 'comprado' : t < 48 ? 'vendido' : 'neutral'}`);
-  } else if (BTC.cg?.err?.top) {
-    add('🐋 Top traders (CG)', 0, 0, `CoinGlass no disponible: ${BTC.cg.err.top}`);
+  // 2b) Top traders — dinero grande: se SIGUE, no contrarian. Fuente CoinGlass
+  //     si tu plan lo incluye; si no, el endpoint PÚBLICO de Binance Futures
+  //     (mismo dato, gratis). Si ninguna responde, la tarjeta no aparece.
+  {
+    const src = BTC.cg?.top ? { ...BTC.cg.top, lbl: 'CoinGlass' }
+              : BTC.free?.topLS ? { ...BTC.free.topLS, lbl: 'Binance público' } : null;
+    if (src) {
+      const t = src.longPct;
+      const d = t - (src.prev ?? t);
+      add('🐋 Top traders', (t - 50) / 12, 12,
+        `top traders de Binance ${t.toFixed(1)}% en LONG${Math.abs(d) >= 0.5 ? (d > 0 ? ' y aumentando' : ' y reduciendo') : ''} — el dinero grande está ${t > 52 ? 'comprado' : t < 48 ? 'vendido' : 'neutral'} · fuente: ${src.lbl}`);
+    }
   }
 
   // 3) Barridos de liquidez (15)
@@ -385,24 +478,52 @@ function btcComputeFactors() {
     }
   }
 
-  // 3b) Estructura SMC (12) — BOS (continuación) / CHoCH (posible giro) sobre
-  //     los swings confirmados de las velas 15m. CHoCH pesa más que BOS
-  //     porque marca un cambio de carácter, no solo la continuación de lo ya sabido.
+  // 3b) Estructura SMC (12) — jerarquía mayor/interna + premium/discount.
+  //     La estructura MAYOR (swings ±8 velas) manda la dirección; la interna
+  //     (±3) matiza: si contradice a la mayor con un CHoCH reciente es un
+  //     retroceso/posible giro en desarrollo y el score se amortigua.
+  //     El equilibrium añade contexto de precio: comprar en discount y vender
+  //     en premium suma; perseguir precio en la zona contraria resta.
   {
     const smc = BTC.smc;
-    const events = smc?.events;
-    if (events && events.length) {
-      const last = events[events.length - 1];
+    const maj = smc?.major?.events;
+    if (maj && maj.length) {
+      const last = maj[maj.length - 1];
       const k = btcChartData();
-      const barsAgo = (k?.c?.length || 0) - 1 - last.i;
-      const recent = barsAgo <= 20; // ~5h a 15m
-      let s = last.dir === 'up' ? 0.7 : -0.7;
+      const nBars = k?.c?.length || 0;
+      const barsAgo = nBars - 1 - last.i;
+      const up = last.dir === 'up';
+      let s = up ? 0.7 : -0.7;
       if (last.type === 'CHoCH') s *= 1.25;
-      if (!recent) s *= 0.4; // rupturas viejas pesan mucho menos
-      add('🧠 Estructura SMC', s, 12,
-        `${last.type} ${last.dir === 'up' ? 'ALCISTA' : 'BAJISTA'} hace ${barsAgo * 15}min en ${fp(last.price)}` +
-        (last.type === 'CHoCH' ? ' — cambio de carácter: la estructura previa se rompió, posible giro' : ' — continuación de la estructura vigente'));
-    } else add('🧠 Estructura SMC', 0, 12, 'sin rupturas de estructura (BOS/CHoCH) claras en el historial analizado');
+      if (barsAgo > 32) s *= 0.4; // mayor de ~8h: pesa mucho menos
+      let txt = `${last.type} mayor ${up ? 'ALCISTA' : 'BAJISTA'} hace ${barsAgo * 15}min en ${fp(last.price)}` +
+        (last.type === 'CHoCH' ? ' — cambio de carácter en la estructura mayor' : ' — continuación de la estructura mayor') +
+        (smc.tf === '1h' ? ' · análisis en 1h' : '');
+
+      // Interna: ¿acompaña o contradice?
+      const intE = smc.internal?.events;
+      if (intE?.length) {
+        const li = intE[intE.length - 1];
+        const liAgo = nBars - 1 - li.i;
+        if (liAgo <= 12) { // interna reciente (~3h)
+          if ((li.dir === 'up') === up) { s *= 1.1; txt += ' · interna alineada'; }
+          else if (li.type === 'CHoCH') { s *= 0.55; txt += ` · ⚠ CHoCH interno ${li.dir === 'up' ? 'alcista' : 'bajista'} hace ${liAgo * 15}min — retroceso/posible giro en desarrollo`; }
+          else { s *= 0.8; txt += ' · interna corrigiendo'; }
+        }
+      }
+
+      // Equilibrium: contexto de zona (comprar barato / vender caro)
+      const eq = smc.eq;
+      if (eq) {
+        const prem = eq.posPct >= 50;
+        txt += ` · precio en ${prem ? 'PREMIUM' : 'DISCOUNT'} (${eq.posPct.toFixed(0)}% del rango mayor)`;
+        if (up && !prem) { s *= 1.15; txt += ' — largo en zona barata ✓'; }
+        else if (!up && prem) { s *= 1.15; txt += ' — corto en zona cara ✓'; }
+        else if (up && eq.posPct > 75) { s *= 0.8; txt += ' — ojo: perseguir largos en zona cara'; }
+        else if (!up && eq.posPct < 25) { s *= 0.8; txt += ' — ojo: perseguir cortos en zona barata'; }
+      }
+      add('🧠 Estructura SMC', Math.max(-1, Math.min(1, s)), 12, txt);
+    } else add('🧠 Estructura SMC', 0, 12, 'sin rupturas de estructura mayor (BOS/CHoCH) claras en el historial analizado');
   }
 
   // 4) Liquidez pendiente / imanes (15) — heatmap REAL de CoinGlass si el plan
@@ -421,7 +542,7 @@ function btcComputeFactors() {
     } else {
       const L = BTC.liq;
       const up = L?.poolsAbove?.[0], dn = L?.poolsBelow?.[0];
-      const tag = BTC.cg?.err?.hm ? ' (heatmap CG: ' + BTC.cg.err.hm + ' — usando estructura)' : '';
+      const tag = BTC.cg?.err?.hm ? ' · estructura propia (equal highs/lows)' : '';
       if (up && dn) {
         const dUp = (up.level - row.price) / row.price;
         const dDn = (row.price - dn.level) / row.price;
@@ -472,36 +593,49 @@ function btcComputeFactors() {
       (b > 0.04 ? 'apalancamiento long caro/eufórico (riesgo de flush)' : b < -0.02 ? 'perp con descuento: miedo, suele ser suelo' : 'neutral'));
   } else add('📐 Basis perp-spot', 0, 10, 'comparando spot vs perp…');
 
-  // 8) Coinbase Premium (CG, peso 8) — demanda institucional americana real
-  if (BTC.cg?.cbp) {
-    const r = BTC.cg.cbp.rate;
-    const rising  = r > BTC.cg.cbp.prevAvg + 0.005;
-    const falling = r < BTC.cg.cbp.prevAvg - 0.005;
-    add('🇺🇸 Coinbase Premium (CG)', Math.max(-1, Math.min(1, r * 12)), 8,
-      `premium ${r >= 0 ? '+' : ''}${r.toFixed(3)}% vs Binance${rising ? ' y subiendo' : falling ? ' y bajando' : ''} — ` +
-      (r > 0.03 ? 'institucionales americanos COMPRANDO spot en Coinbase' : r < -0.03 ? 'institucionales VENDIENDO en Coinbase' : 'sin presión institucional clara'));
-  } else if (BTC.cg?.err?.cbp) add('🇺🇸 Coinbase Premium (CG)', 0, 0, `CoinGlass: ${BTC.cg.err.cbp}`);
+  // 8) Coinbase Premium (peso 8) — demanda institucional americana real.
+  //    CoinGlass si está; si no, CALCULADO en vivo (Coinbase spot vs Binance spot).
+  {
+    const src = BTC.cg?.cbp ? { rate: BTC.cg.cbp.rate, prev: BTC.cg.cbp.prevAvg, lbl: 'CoinGlass 4h' }
+              : BTC.free?.prem ? { rate: BTC.free.prem.rate, prev: BTC.free.prem.prevRate ?? BTC.free.prem.rate, lbl: 'calculado en vivo' } : null;
+    if (src) {
+      const r = src.rate;
+      const rising  = r > src.prev + 0.005;
+      const falling = r < src.prev - 0.005;
+      add('🇺🇸 Coinbase Premium', Math.max(-1, Math.min(1, r * 12)), 8,
+        `premium ${r >= 0 ? '+' : ''}${r.toFixed(3)}% vs Binance${rising ? ' y subiendo' : falling ? ' y bajando' : ''} — ` +
+        (r > 0.03 ? 'institucionales americanos COMPRANDO spot en Coinbase' : r < -0.03 ? 'institucionales VENDIENDO en Coinbase' : 'sin presión institucional clara') +
+        ` · fuente: ${src.lbl}`);
+    }
+  }
 
-  // 9) Flujos ETF (CG, peso 8) — el dato macro de BTC (actualiza a diario)
+  // 9) Flujos ETF (peso 8) — solo con CoinGlass (no hay fuente gratuita fiable);
+  //    si el plan no lo incluye, la tarjeta simplemente no aparece.
   if (BTC.cg?.etf) {
     const f = BTC.cg.etf.lastFlow, s3 = BTC.cg.etf.sum3;
     add('🏦 Flujos ETF (CG)', Math.max(-1, Math.min(1, f / 500e6 * 0.7 + s3 / 1500e6 * 0.3)), 8,
       `último día ${f >= 0 ? '+' : '−'}${fmtUSD(Math.abs(f))} · acumulado 3d ${s3 >= 0 ? '+' : '−'}${fmtUSD(Math.abs(s3))} — ` +
       (f > 100e6 ? 'los ETF están absorbiendo BTC (demanda estructural)' : f < -100e6 ? 'salidas de los ETF (presión estructural)' : 'flujo neutro'));
-  } else if (BTC.cg?.err?.etf) add('🏦 Flujos ETF (CG)', 0, 0, `CoinGlass: ${BTC.cg.err.etf}`);
+  }
 
-  // 10) Agresión spot vs perp (CG, peso 10) — las divergencias anticipan squeezes
-  if (BTC.cg?.taker) {
-    const { spot, fut } = BTC.cg.taker;
-    let s, why;
-    if (spot > 0.52 && fut < 0.48)      { s = 0.9;  why = 'SPOT comprando mientras PERPS venden — divergencia clásica de squeeze ALCISTA'; }
-    else if (spot < 0.48 && fut > 0.52) { s = -0.9; why = 'PERPS comprando mientras SPOT vende — rally apalancado sin respaldo real, riesgo de flush'; }
-    else if (spot > 0.52 && fut > 0.52) { s = 0.5;  why = 'compra agresiva en spot y perps a la vez — demanda amplia'; }
-    else if (spot < 0.48 && fut < 0.48) { s = -0.5; why = 'venta agresiva en spot y perps a la vez — distribución amplia'; }
-    else { s = (spot + fut - 1) * 3; why = 'sin dominancia clara de agresión'; }
-    add('🔀 Spot vs Perp (CG)', s, 10,
-      `taker buy: spot ${(spot * 100).toFixed(1)}% · perps ${(fut * 100).toFixed(1)}% (Binance+OKX+Bybit, ~8h) — ${why}`);
-  } else if (BTC.cg?.err?.taker) add('🔀 Spot vs Perp (CG)', 0, 0, `CoinGlass: ${BTC.cg.err.taker}`);
+  // 10) Agresión spot vs perp (peso 10) — las divergencias anticipan squeezes.
+  //     CoinGlass multi-exchange si está; si no, los últimos ~1000 trades de
+  //     Bybit en spot y perp (ventana corta pero en vivo).
+  {
+    const src = BTC.cg?.taker ? { ...BTC.cg.taker, lbl: 'CoinGlass Binance+OKX+Bybit ~8h' }
+              : BTC.free?.taker ? { ...BTC.free.taker, lbl: 'Bybit en vivo, ventana corta' } : null;
+    if (src) {
+      const { spot, fut } = src;
+      let s, why;
+      if (spot > 0.52 && fut < 0.48)      { s = 0.9;  why = 'SPOT comprando mientras PERPS venden — divergencia clásica de squeeze ALCISTA'; }
+      else if (spot < 0.48 && fut > 0.52) { s = -0.9; why = 'PERPS comprando mientras SPOT vende — rally apalancado sin respaldo real, riesgo de flush'; }
+      else if (spot > 0.52 && fut > 0.52) { s = 0.5;  why = 'compra agresiva en spot y perps a la vez — demanda amplia'; }
+      else if (spot < 0.48 && fut < 0.48) { s = -0.5; why = 'venta agresiva en spot y perps a la vez — distribución amplia'; }
+      else { s = (spot + fut - 1) * 3; why = 'sin dominancia clara de agresión'; }
+      add('🔀 Spot vs Perp', s, 10,
+        `taker buy: spot ${(spot * 100).toFixed(1)}% · perps ${(fut * 100).toFixed(1)}% (${src.lbl}) — ${why}`);
+    }
+  }
 
   BTC.factors = F;
   // Normalizado por la suma de pesos activos: el sesgo se mantiene en −100..+100
@@ -513,7 +647,7 @@ function btcComputeFactors() {
   BTC.dir  = BTC.bias >= 15 ? 'ALCISTA' : BTC.bias <= -15 ? 'BAJISTA' : 'NEUTRAL';
 
   // Alerta al cambiar la dirección del sesgo
-  if (BTC.lastDir && BTC.dir !== 'NEUTRAL' && BTC.dir !== BTC.lastDir) {
+  if (BTC.lastDir && BTC.dir !== 'NEUTRAL' && BTC.dir !== BTC.lastDir && canAlert('btcBias')) {
     showToast(`₿ Sesgo BTC → ${BTC.dir} (${BTC.prob}%)`, BTC.dir === 'ALCISTA' ? 'long' : 'short');
     if (soundEnabled) beep(BTC.dir === 'ALCISTA' ? 1000 : 420, 'triangle', 250);
     notifyDesktop(`₿ BTC cambió a ${BTC.dir}`, `Probabilidad ${BTC.prob}% — abre la pestaña BTC para ver los factores`);
@@ -640,7 +774,8 @@ function renderBTC() {
       <canvas id="btc-chart"></canvas>
       <div class="dt-chart-hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <button class="chart-tf-btn" id="btc-expand-btn" onclick="btcToggleExpand()">${localStorage.getItem('scalp_btc_big') === '1' ? '⛶ Compactar' : '⛶ Expandir'}</button>
-        <button class="chart-tf-btn${typeof _btcSmcOn !== 'undefined' && _btcSmcOn ? ' active' : ''}" id="btc-smc-btn" onclick="btcToggleSMC()" title="Smart Money Concepts: order blocks, fair value gaps y rupturas de estructura (BOS/CHoCH)">🧠 SMC</button>
+        <button class="chart-tf-btn${typeof _btcSmcOn !== 'undefined' && _btcSmcOn ? ' active' : ''}" id="btc-smc-btn" onclick="btcToggleSMC()" title="Smart Money Concepts: estructura mayor (chips BOS/CHoCH) e interna (triángulos), order blocks vigentes, FVG operables y equilibrium 50% con zonas premium/discount">🧠 SMC</button>
+        <button class="chart-tf-btn${typeof _btcSmcTf !== 'undefined' && _btcSmcTf === '1h' ? ' active' : ''}" id="btc-smc-tf-btn" onclick="btcToggleSMCTf()" title="Temporalidad del análisis SMC: 15m (rápida) o 1h (estructura más fiable, proyectada sobre las velas 15m)">⏱ ${typeof _btcSmcTf !== 'undefined' ? _btcSmcTf : '15m'}</button>
         <span><b style="color:#4a5870">rueda: zoom · arrastrar: mover · doble clic: hoy</b> · velas 15m (hasta ~10 días)</span>
         <span><span style="color:#4aa8d8">— 🧲 pools</span> · <span style="color:#55dd99">— 🧱 compra</span> · <span style="color:#ff8866">— 🧱 venta</span> · <span style="color:#ffd76a">— 🎯 max pain</span> · <span style="color:#ff9a3c">— 🔥 clusters liq</span> · ⚡ barrido · verticales = sesiones</span>
         <span><span style="color:#2fe08a">— OB/FVG alcista</span> · <span style="color:#ff6666">— OB/FVG bajista</span> · <span style="color:#eef4ff;background:#0b0e14;padding:0 3px;border-radius:2px">texto BOS/CHoCH/OB</span> siempre en blanco: el borde del chip indica la dirección</span>
@@ -656,13 +791,15 @@ function renderBTC() {
         const e = BTC.ob.exch;
         cg.push(`🧱 muros: Bybit${e.bybit ? '✓' : '✗'} · Binance${e.binance ? '✓' : '✗'} · OKX${e.okx ? '✓' : '✗'}`);
       }
-      cg.push(BTC.cg?.top ? '🐋 top traders ✓' : `🐋 top traders ✗${BTC.cg?.err?.top ? ' (' + BTC.cg.err.top + ')' : ''}`);
-      cg.push(BTC.cg?.mp ? '🎯 max pain Deribit ✓' : `🎯 max pain Deribit ✗${BTC.cg?.err?.mp ? ' (' + BTC.cg.err.mp + ')' : ''}`);
-      cg.push(BTC.cg?.clusters ? '🔥 heatmap liq. ✓' : `🔥 heatmap liq. ✗${BTC.cg?.err?.hm ? ' (' + BTC.cg.err.hm + ')' : ''}`);
-      cg.push(BTC.cg?.cbp ? '🇺🇸 premium ✓' : '🇺🇸 premium ✗');
-      cg.push(BTC.cg?.etf ? '🏦 ETF ✓' : '🏦 ETF ✗');
-      cg.push(BTC.cg?.taker ? '🔀 spot/perp ✓' : '🔀 spot/perp ✗');
-      return `Pesos normalizados sobre los factores activos. Muros de compra/venta: profundidad combinada de Bybit+Binance+OKX. Datos Bybit (gratis) + CoinGlass: ${cg.join(' · ')}. El heatmap de liquidaciones (🔥) requiere plan Professional de CoinGlass — sin él se usa la inferencia estructural (equal highs/lows).`;
+      const st = (cgOk, freeOk, name) => cgOk ? `${name} CG✓` : freeOk ? `${name} gratis✓` : `${name} ✗`;
+      cg.push(st(BTC.cg?.top, BTC.free?.topLS, '🐋 top traders'));
+      cg.push(BTC.cg?.mp ? '🎯 max pain Deribit✓' : BTC.mp?.price ? '🎯 max pain Bybit✓' : '🎯 max pain ✗');
+      cg.push(BTC.cg?.clusters ? '🔥 heatmap CG✓' : '🔥 heatmap ✗ (Professional) → estructura propia');
+      cg.push(st(BTC.cg?.cbp, BTC.free?.prem, '🇺🇸 premium'));
+      cg.push(BTC.cg?.etf ? '🏦 ETF CG✓' : '🏦 ETF ✗ (solo CoinGlass)');
+      cg.push(st(BTC.cg?.taker, BTC.free?.taker, '🔀 spot/perp'));
+      cg.push(BTC.cg?.liqHist?.length ? '▮ liqs CG✓' : '▮ liqs Bybit en vivo✓');
+      return `Pesos normalizados sobre los factores activos — lo que no tiene datos NO aparece ni diluye el sesgo. Muros: profundidad combinada Bybit+Binance+OKX. Fuentes: ${cg.join(' · ')}. "gratis✓" = respaldo público (Binance/Coinbase/Bybit) cuando tu plan de CoinGlass no cubre el módulo.`;
     })()}</div>`;
 
   requestAnimationFrame(() => {
@@ -872,6 +1009,46 @@ function drawBTCChart(row) {
   // ── Smart Money Concepts: rupturas de estructura (BOS/CHoCH) sobre las velas ──
   if (typeof smcDrawStructure === 'function') smcDrawStructure(ctx, x, y, s0, s1);
 
+  // ── Banda de liquidaciones (parte baja del gráfico) ──────────────────────
+  // CoinGlass agregado multi-exchange (4h) si tu plan lo incluye; si no, las
+  // liquidaciones REALES capturadas en vivo del WS de Bybit (por vela de 15m,
+  // persistidas ~10 días). Rojo = largos liquidados · verde = cortos liquidados.
+  {
+    const liqBars = [];
+    if (BTC.cg?.liqHist?.length) {
+      for (const e of BTC.cg.liqHist) {
+        if (e.t < k.t[s0] || e.t > k.t[s1 - 1]) continue;
+        let idx = -1;
+        for (let i = s0; i < s1; i++) if (k.t[i] >= e.t) { idx = i; break; }
+        if (idx >= 0) liqBars.push({ i: idx, l: e.l, s: e.s });
+      }
+    } else {
+      for (let i = s0; i < s1; i++) {
+        const b = _btcLiqB[k.t[i]];
+        if (b && (b.l || b.s)) liqBars.push({ i, l: b.l, s: b.s });
+      }
+    }
+    const BAND = 26, base = H - PADB - 2;
+    if (liqBars.length) {
+      const maxV = Math.max(...liqBars.map(b => Math.max(b.l, b.s)), 1);
+      const colW = Math.max(1.2, bw * 0.45);
+      for (const b of liqBars) {
+        const hL = Math.max(b.l > 0 ? 2 : 0, Math.sqrt(b.l / maxV) * BAND);
+        const hS = Math.max(b.s > 0 ? 2 : 0, Math.sqrt(b.s / maxV) * BAND);
+        ctx.globalAlpha = 0.6;
+        if (hL > 0) { ctx.fillStyle = '#d24a4a'; ctx.fillRect(x(b.i) - colW, base - hL, colW, hL); }
+        if (hS > 0) { ctx.fillStyle = '#1fae74'; ctx.fillRect(x(b.i) + 0.5, base - hS, colW, hS); }
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = 'rgba(120,140,180,0.5)'; ctx.font = '8px Inter,system-ui'; ctx.textAlign = 'left';
+      ctx.fillText(`▮ liquidaciones ${BTC.cg?.liqHist?.length ? 'CoinGlass 4h' : 'Bybit en vivo 15m'} · rojo=largos · verde=cortos`, PADL + 4, base - BAND - 4);
+    } else {
+      // Sin datos aún: dejar constancia de que la banda existe y se está llenando
+      ctx.fillStyle = 'rgba(120,140,180,0.35)'; ctx.font = '8px Inter,system-ui'; ctx.textAlign = 'left';
+      ctx.fillText('▮ liquidaciones: acumulando en vivo del WS de Bybit… (CoinGlass no disponible en tu plan)', PADL + 4, base - 4);
+    }
+  }
+
   // ── Niveles analizados: línea + etiqueta con FONDO (chip) apilada sin taparse ──
   const sorted = [...nearby].sort((a, b) => b.v - a.v);
   let lastLy = PADT - 16;
@@ -976,14 +1153,23 @@ function drawBTCChart(row) {
 }
 
 // ── Hook por ciclo (lo llama load() en main.js) ─────────────────────────────
+// btcFetchOB/btcFetchCG proxean Binance+OKX+CoinGlass A TRAVÉS del server
+// (/api/exch/depth, /api/cg/*) — a diferencia del resto del screener, que va
+// directo navegador→Bybit, ESTO SÍ cuenta contra el ancho de banda de Render.
+// Con la pestaña en segundo plano no hay quien mire el sesgo de BTC: pausar
+// aquí evita re-descargar ~35-40KB de order book cada 30s sin motivo (era el
+// mismo problema que ya tuvimos con el bot viejo, ahora en esta función).
 function btcOnCycle() {
+  if (document.hidden) return;
   const now = Date.now();
-  if (now - (BTC.ob?.ts   || 0) > 30_000)      btcFetchOB();
+  if (now - (BTC.ob?.ts   || 0) > 45_000)      btcFetchOB(); // 45s: suficiente para muros, menos tráfico
   if (now - (BTC.ls?.ts   || 0) > 60_000)      btcFetchLS();
   if (now - (BTC.mp?.ts   || 0) > 15 * 60_000) btcFetchOptions();
   if (now - (BTC.spot?.ts || 0) > 30_000)      btcFetchSpot();
   if (now - (BTC.cg?.ts   || 0) > 5 * 60_000)  btcFetchCG(); // CoinGlass (caché 60s en el server)
+  if (now - (BTC.free?.ts || 0) > 60_000)      btcFetchFree(); // respaldo gratuito: top traders, premium, spot/perp
   if (now - (BTC.k15x?.ts || 0) > 5 * 60_000)  btcFetchK15x(); // velas extendidas (~10 días) para el zoom
+  btcAccumLiqs(); // acumula liquidaciones de BTC (WS Bybit) por vela 15m — banda del gráfico
   btcComputeFactors();
   btcSnapshotSessions();
   if (activeTab === 'btc') renderBTC();

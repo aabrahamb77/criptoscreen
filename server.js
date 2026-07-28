@@ -196,13 +196,69 @@ app.get('/api/exch/depth', rateLimit(60, 60_000), async (req, res) => {
   if (hit && Date.now() - hit.ts < 10_000) return res.json(hit.data);
   try {
     const r = await fetch(build(symbol, limit), { headers: { Accept: 'application/json' } });
-    const data = await r.json();
+    const raw = await r.json();
+    // Normalizar y RECORTAR a solo [precio, tamaño]: ~40-60% menos bytes de
+    // egress (importa en Render, que da 5GB/mes de ancho de banda)
+    let data = raw;
+    if (exchange === 'binance') {
+      data = { bids: (raw.bids || []).map(l => [l[0], l[1]]), asks: (raw.asks || []).map(l => [l[0], l[1]]) };
+    } else if (exchange === 'okx') {
+      const d0 = raw.data?.[0] || {};
+      data = { bids: (d0.bids || []).map(l => [l[0], l[1]]), asks: (d0.asks || []).map(l => [l[0], l[1]]) };
+    }
     _exchCache.set(cacheKey, { ts: Date.now(), data });
     if (_exchCache.size > 50) _exchCache.delete(_exchCache.keys().next().value);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: 'exch proxy: ' + err.message });
   }
+});
+
+// ── Proxy de respaldo a Bybit (solo lectura /v5/market/*) ───────────────────
+// El navegador llama a Bybit directo; si su red/extensión/WAF lo bloquea
+// ("Failed to fetch"), el frontend reintenta por aquí automáticamente.
+app.get('/api/exch/bybit', rateLimit(3000, 60_000), async (req, res) => {
+  const path = String(req.query.path || '');
+  if (!path.startsWith('/v5/market/')) return res.status(400).json({ error: 'solo se permite /v5/market/*' });
+  try {
+    const r = await fetch('https://api.bybit.com' + path, { headers: { Accept: 'application/json' } });
+    const data = await r.json();
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: 'bybit proxy: ' + err.message });
+  }
+});
+
+// ── Datos públicos GRATUITOS (sin API key) para el panel ₿ BTC ──────────────
+// Respaldo cuando el plan de CoinGlass no incluye esos módulos.
+
+// Top traders de Binance Futures: % de posiciones long de las cuentas top
+app.get('/api/exch/top-ls', rateLimit(30, 60_000), async (req, res) => {
+  const hit = _exchCache.get('top-ls');
+  if (hit && Date.now() - hit.ts < 5 * 60_000) return res.json(hit.data);
+  try {
+    const r = await fetch('https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=BTCUSDT&period=1h&limit=8', {
+      headers: { Accept: 'application/json' },
+    });
+    const data = await r.json();
+    _exchCache.set('top-ls', { ts: Date.now(), data });
+    res.json(data);
+  } catch (err) { res.status(502).json({ error: 'top-ls: ' + err.message }); }
+});
+
+// Premium Coinbase vs Binance: precios spot públicos de ambos
+app.get('/api/exch/premium', rateLimit(60, 60_000), async (req, res) => {
+  const hit = _exchCache.get('premium');
+  if (hit && Date.now() - hit.ts < 30_000) return res.json(hit.data);
+  try {
+    const [cb, bn] = await Promise.all([
+      fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot', { headers: { Accept: 'application/json' } }).then(r => r.json()),
+      fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT', { headers: { Accept: 'application/json' } }).then(r => r.json()),
+    ]);
+    const data = { coinbase: parseFloat(cb?.data?.amount), binance: parseFloat(bn?.price) };
+    _exchCache.set('premium', { ts: Date.now(), data });
+    res.json(data);
+  } catch (err) { res.status(502).json({ error: 'premium: ' + err.message }); }
 });
 
 // Respaldo en servidor de trackHistory + stratSignals (Turso). Si no está

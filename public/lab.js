@@ -258,13 +258,17 @@ function patternTrackClosed() { return patternTrack.filter(t => t.status !== 'op
 // hay una entrada abierta para ese símbolo+lado, no abre otra.
 function trackPatternSignal(row, p) {
   const side = p.type === 'W' ? 'L' : 'S';
-  if (patternTrack.some(t => t.status === 'open' && t.symbol === row.symbol && t.side === side)) return;
+  const tf = p.tf || '15m';
+  if (patternTrack.some(t => t.status === 'open' && t.symbol === row.symbol && t.side === side && (t.tf || '15m') === tf)) return;
   patternTrack.push({
     id: Date.now() + Math.random(),
-    symbol: row.symbol, side, type: p.type,
+    symbol: row.symbol, side, type: p.type, tf,
     entryPrice: row.price, entryTime: Date.now(),
-    target: p.target, stop: p.stop, quality: p.quality,
+    target: p.target, stop: p.stop, quality: p.quality, atr: p.atr,
     status: 'open',
+    // Variantes de salida medidas EN PARALELO sobre la misma señal:
+    v_be: { stop: p.stop, status: 'open' },                 // breakeven al 50% de progreso
+    v_tr: { stop: p.stop, active: false, status: 'open' },  // trailing 1.5×ATR desde el 60%
   });
   if (patternTrack.length > 500) patternTrack.splice(0, patternTrack.length - 500);
   savePatternTrack();
@@ -278,24 +282,74 @@ function closePatternTrack(t, reason, price) {
   t.pnlPct     = dir * (price - t.entryPrice) / t.entryPrice * 100;
   t.status     = 'closed';
   savePatternTrack();
-  showToast(
+  if (canAlert('patternDone')) showToast(
     `${t.symbol} patrón ${t.type} ${reason === 'TARGET' ? '🎯 objetivo alcanzado' : '🛑 stop alcanzado'} · ${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%`,
     t.pnlPct >= 0 ? 'long' : 'short'
   );
 }
 
 // Sin timeout a propósito — llamar en CADA ciclo de datos (no solo con el Lab
-// abierto) para que se resuelva aunque estés viendo otra pestaña.
+// abierto). Resuelve la variante BASE (objetivo fijo vs stop fijo) y, en
+// paralelo sobre la MISMA señal, dos variantes de salida alternativas:
+//   🅱 Breakeven 50%: al recorrer la mitad hacia el objetivo, el stop sube a
+//      la entrada (elimina los "casi-ganadores" que terminan en pérdida).
+//   🅲 Trailing: SIN take-profit — al 60% de progreso activa un trailing stop
+//      de 1.5×ATR de la temporalidad y deja correr el movimiento.
+// Así el panel compara con datos reales cuál estrategia de salida rinde más.
 function checkPatternTrackOutcomes() {
-  for (const t of patternTrackOpen()) {
+  let dirty = false;
+  for (const t of patternTrack) {
+    // migración perezosa de entradas antiguas (sin variantes)
+    if (!t.v_be) t.v_be = { stop: t.stop, status: t.status === 'open' ? 'open' : 'closed', pnlPct: t.pnlPct ?? null, exitReason: t.exitReason || null };
+    if (!t.v_tr) t.v_tr = { stop: t.stop, active: false, status: t.status === 'open' ? 'open' : 'closed', pnlPct: t.pnlPct ?? null, exitReason: t.exitReason || null };
+    if (t.atr == null) t.atr = Math.abs(t.target - t.entryPrice) / 1.8; // aprox. si la señal es previa a esta versión
+
+    const baseOpen = t.status === 'open';
+    const beOpen   = t.v_be.status === 'open';
+    const trOpen   = t.v_tr.status === 'open';
+    if (!baseOpen && !beOpen && !trOpen) continue;
+
     const row = allRows.find(r => r.symbol === t.symbol);
     if (!row?.price) continue;
+    const price = row.price;
     const isLong = t.side === 'L';
-    const hitTarget = isLong ? row.price >= t.target : row.price <= t.target;
-    const hitStop   = isLong ? row.price <= t.stop   : row.price >= t.stop;
-    if (hitTarget)      closePatternTrack(t, 'TARGET', row.price);
-    else if (hitStop)   closePatternTrack(t, 'STOP',   row.price);
+    const dir = isLong ? 1 : -1;
+    const dist = Math.abs(t.target - t.entryPrice) || 1e-9;
+    const progress = dir * (price - t.entryPrice) / dist; // 1 = tocó el objetivo
+    const pnlAt = px => dir * (px - t.entryPrice) / t.entryPrice * 100;
+
+    // 🅰 BASE: objetivo fijo vs stop fijo (la oficial del panel)
+    if (baseOpen) {
+      const hitTarget = isLong ? price >= t.target : price <= t.target;
+      const hitStop   = isLong ? price <= t.stop   : price >= t.stop;
+      if (hitTarget)      { closePatternTrack(t, 'TARGET', price); dirty = true; }
+      else if (hitStop)   { closePatternTrack(t, 'STOP',   price); dirty = true; }
+    }
+
+    // 🅱 BREAKEVEN 50%
+    if (beOpen) {
+      const v = t.v_be;
+      if (progress >= 0.5 && v.stop !== t.entryPrice) { v.stop = t.entryPrice; dirty = true; }
+      const hitT = isLong ? price >= t.target : price <= t.target;
+      const hitS = isLong ? price <= v.stop : price >= v.stop;
+      if (hitT)      { v.status = 'closed'; v.exitReason = 'TARGET'; v.pnlPct = pnlAt(t.target); v.exitTime = Date.now(); dirty = true; }
+      else if (hitS) { v.status = 'closed'; v.exitReason = v.stop === t.entryPrice ? 'BE' : 'STOP'; v.pnlPct = pnlAt(v.stop); v.exitTime = Date.now(); dirty = true; }
+    }
+
+    // 🅲 TRAILING 1.5×ATR desde el 60% de progreso (sin take-profit)
+    if (trOpen) {
+      const v = t.v_tr;
+      if (!v.active && progress >= 0.6) { v.active = true; dirty = true; }
+      if (v.active) {
+        const cand = isLong ? price - 1.5 * t.atr : price + 1.5 * t.atr;
+        const better = isLong ? Math.max(v.stop, cand) : Math.min(v.stop, cand);
+        if (better !== v.stop) { v.stop = better; dirty = true; }
+      }
+      const hitS = isLong ? price <= v.stop : price >= v.stop;
+      if (hitS) { v.status = 'closed'; v.exitReason = v.active ? 'TRAIL' : 'STOP'; v.pnlPct = pnlAt(v.stop); v.exitTime = Date.now(); dirty = true; }
+    }
   }
+  if (dirty) savePatternTrack();
 }
 
 function clearPatternTrack() {
@@ -326,6 +380,31 @@ function renderPatternTrack() {
   set('patt-stat-pnl',   avgPnl != null ? `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%` : '—', avgPnl != null ? (avgPnl >= 0 ? '#00c878' : '#ee5555') : '');
   set('patt-stat-time',  avgTimeMs != null ? fmtDur(avgTimeMs) : '—');
 
+  // ── Comparador de estrategias de salida (mismas señales, medidas en paralelo) ──
+  const vEl = document.getElementById('patt-variants');
+  if (vEl) {
+    const agg = arr => {
+      if (!arr.length) return null;
+      const w = arr.filter(p => p > 0).length;
+      return { n: arr.length, wr: Math.round(w / arr.length * 100), avg: arr.reduce((a, b) => a + b, 0) / arr.length };
+    };
+    const sBase = agg(closed.filter(t => t.pnlPct != null).map(t => t.pnlPct));
+    const sBe   = agg(patternTrack.filter(t => t.v_be?.status === 'closed' && t.v_be.pnlPct != null).map(t => t.v_be.pnlPct));
+    const sTr   = agg(patternTrack.filter(t => t.v_tr?.status === 'closed' && t.v_tr.pnlPct != null).map(t => t.v_tr.pnlPct));
+    const rows2 = [
+      { name: '🅰 Objetivo fijo (base)', s: sBase },
+      { name: '🅱 Breakeven al 50%', s: sBe },
+      { name: '🅲 Trailing 1.5×ATR (desde 60%)', s: sTr },
+    ];
+    const best = rows2.filter(r => r.s && r.s.n >= 10).sort((a, b) => b.s.avg - a.s.avg)[0] || null;
+    vEl.innerHTML = rows2.map(r => {
+      const isBest = best && r === best;
+      if (!r.s) return `<span class="patt-var">${r.name}: <b style="color:#3a5070">sin datos aún</b></span>`;
+      return `<span class="patt-var${isBest ? ' patt-var-best' : ''}">${isBest ? '👑 ' : ''}${r.name}:
+        <b>${wrChip(r.s.wr, r.s.n)}</b> · <b style="color:${r.s.avg >= 0 ? '#00c878' : '#ee5555'}">${r.s.avg >= 0 ? '+' : ''}${r.s.avg.toFixed(2)}% prom.</b> <span style="color:#3a5070">(n=${r.s.n})</span></span>`;
+    }).join('');
+  }
+
   const openBody = document.getElementById('patt-open-body');
   if (openBody) {
     if (!open.length) {
@@ -341,7 +420,7 @@ function renderPatternTrack() {
         const progC = progress >= 0 ? '#00c878' : '#ee5555';
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'}</td>
+          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span></td>
           <td style="color:#4a6080">$${fmtPrice(t.entryPrice)}</td>
           <td style="color:#8090b0">$${fmtPrice(curr)}</td>
           <td style="color:#00c878">$${fmtPrice(t.target)}</td>
@@ -363,7 +442,7 @@ function renderPatternTrack() {
         const pnlC = t.pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${t.side === 'L' ? 'long' : 'short'}">${t.type} ${t.side === 'L' ? '▲' : '▼'}</td>
+          <td class="pt-${t.side === 'L' ? 'long' : 'short'}">${t.type} ${t.side === 'L' ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span></td>
           <td class="${t.exitReason === 'TARGET' ? 'pt-reason-tp' : 'pt-reason-sl'}">${t.exitReason === 'TARGET' ? '🎯 Objetivo' : '🛑 Stop'}</td>
           <td class="${pnlC}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</td>
           <td style="color:#3a4a60">${fmtDur(t.exitTime - t.entryTime)}</td>

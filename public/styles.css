@@ -264,8 +264,72 @@ header h1 {
 .btc-sess-row .pos { color: #00c878; }
 .btc-sess-row .neg { color: #ee5555; }
 
+/* ── Radar: expectativa histórica + niveles en cada tarjeta ── */
+.cc-exp { font-size: 9.5px; font-weight: 700; margin: 4px 0 2px; }
+.cc-lvls { font-size: 9px; color: #5a6a85; margin-bottom: 3px; }
+.cc-lvls b { color: #c8d8ff; font-weight: 600; }
+.cc-lvls b.pos { color: #2fe08a; }
+.cc-lvls b.neg { color: #ff6666; }
+.conf-card.cc-dim { opacity: .5; }
+.conf-card.cc-dim:hover { opacity: .9; }
+
+/* ── 🧭 Confluencia de indicadores (RSI/MACD/ADX/TSI/Andean, 1h) ── */
+#indconf-section { flex-shrink: 0; padding: 10px 16px 12px; border-bottom: 1px solid #101418; background: #06080b; }
+#indconf-btc {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 8px; margin-bottom: 8px;
+  background: #0a0e15; border: 1px solid #1a2434; border-radius: 8px;
+}
+#indconf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.ind-chip {
+  display: inline-flex; align-items: center;
+  font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.ind-g { background: rgba(0, 200, 120, .1); color: #2fe08a; border-color: rgba(0, 200, 120, .25); }
+.ind-r { background: rgba(255, 80, 80, .1); color: #ff6666; border-color: rgba(255, 80, 80, .25); }
+.ind-n { background: rgba(120, 140, 170, .08); color: #5a6a85; border-color: rgba(120, 140, 170, .2); }
+.indc-sym { font-size: 11px; font-weight: 700; color: #e8f0ff; }
+.indc-verdict { font-size: 9.5px; margin-left: auto; }
+.indc-card {
+  background: #0a0e15; border: 1px solid #1a2434; border-radius: 8px;
+  padding: 7px 9px; cursor: pointer; transition: border-color .15s;
+}
+.indc-card:hover { border-color: #2a3a54; }
+.indc-card.indc-long  { border-left: 3px solid #00cc8855; }
+.indc-card.indc-short { border-left: 3px solid #ff555555; }
+.indc-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.indc-badge { font-size: 9px; font-weight: 700; color: #ffbe3c; margin-left: auto; }
+.indc-chips { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+
+/* ── Comparador de variantes de salida (patrones W/M) ── */
+.patt-var {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 9.5px; color: #8aa0c8; margin-right: 14px; padding: 2px 6px;
+  border-radius: 5px;
+}
+.patt-var-best { background: rgba(255, 190, 60, .08); border: 1px solid rgba(255, 190, 60, .3); }
+
+/* ── Panel de configuración de alertas ── */
+#alert-cfg-panel {
+  position: fixed; top: 44px; right: 12px; z-index: 120; width: 320px;
+  background: #080b11; border: 1px solid #1a2434; border-radius: 10px;
+  padding: 10px 12px; box-shadow: 0 10px 34px rgba(0, 0, 0, .7);
+}
+.acfg-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 800; color: #c8d8ff; margin-bottom: 8px;
+}
+.acfg-row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 2px;
+  font-size: 10.5px; color: #8aa0c8; cursor: pointer; border-radius: 5px;
+}
+.acfg-row:hover { background: #0c1119; }
+.acfg-row input { accent-color: #2fe08a; cursor: pointer; }
+.acfg-note { font-size: 8.5px; color: #3a4a60; margin-top: 8px; line-height: 1.5; }
+
 /* ── Patrones W/M (doble suelo / doble techo) ── */
-#pattern-strip {
+#pattern-strip, #pattern-strip-1h {
   flex-shrink: 0;
   display: flex; align-items: center; gap: 8px;
   padding: 3px 12px 4px;
@@ -273,8 +337,14 @@ header h1 {
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: thin; scrollbar-color: #1a2535 transparent;
 }
-#pattern-strip:empty { display: none; }
-#pattern-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+#pattern-strip:empty, #pattern-strip-1h:empty { display: none; }
+#pattern-strip .qal-head, #pattern-strip-1h .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+
+/* Etiqueta de temporalidad dentro del badge W/M (patrones de 1h) */
+.pat-tf {
+  font-size: 7px; font-weight: 800; letter-spacing: .3px;
+  margin-left: 2px; opacity: .8; vertical-align: super;
+}
 
 /* ── Outliers reales (sostenido vs. pico) ── */
 #outlier-strip {
@@ -299,6 +369,29 @@ header h1 {
 }
 #momentum-strip:empty { display: none; }
 #momentum-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+
+/* ── Tira "encendida": momentum con al menos una moneda / outlier extremo ≥6σ ── */
+.strip-hot {
+  background: linear-gradient(90deg, rgba(255, 190, 60, .10), rgba(255, 190, 60, .03) 55%, transparent) !important;
+  border-top: 1px solid rgba(255, 190, 60, .45) !important;
+  border-bottom: 1px solid rgba(255, 190, 60, .25);
+  animation: strip-glow 1.6s ease-in-out infinite;
+}
+.strip-hot .qal-head { color: #ffd76a; font-weight: 800; }
+@keyframes strip-glow {
+  0%, 100% { box-shadow: inset 0 0 0 rgba(255, 190, 60, 0); }
+  50%      { box-shadow: inset 0 0 22px rgba(255, 190, 60, .16); }
+}
+/* Chip de outlier EXTREMO (≥6σ): rojo intenso con pulso propio */
+.chip-extreme {
+  border: 1px solid #ff4444 !important;
+  background: rgba(255, 60, 60, .12) !important;
+  animation: chip-extreme-pulse .9s ease-in-out infinite;
+}
+@keyframes chip-extreme-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(255, 68, 68, 0); }
+  50%      { box-shadow: 0 0 12px rgba(255, 68, 68, .9); }
+}
 
 .pat-badge {
   font-size: 8.5px; font-weight: 800; padding: 1px 5px; border-radius: 4px;
@@ -337,7 +430,18 @@ header h1 {
   font-size: 12px; padding: 3px 9px; border-radius: 6px; cursor: pointer;
 }
 .dt-close:hover { color: #c8d0e0; border-color: #2a3a50; }
-#dt-chart { width: 100%; height: 235px; display: block; background: #05070a; border: 1px solid #10161f; border-radius: 8px; }
+#dt-chart { width: 100%; height: 235px; display: block; background: #05070a; border: 1px solid #10161f; border-radius: 8px; flex-shrink: 0; }
+
+/* Asa para redimensionar el panel de detalle arrastrando su borde izquierdo */
+#dt-resizer {
+  position: fixed; top: 0; bottom: 28px; width: 10px; z-index: 95;
+  cursor: ew-resize;
+}
+#dt-resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 3px;
+  background: #1a2434; transition: background .15s;
+}
+#dt-resizer:hover::after { background: #3a5080; }
 .dt-chart-hint { font-size: 8.5px; color: #2e3c50; }
 .dt-section { border: 1px solid #131a26; border-radius: 8px; padding: 8px 10px; background: #080b11; }
 .dt-sec-title { font-size: 9px; color: #4a5870; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; margin-bottom: 6px; }
@@ -349,7 +453,8 @@ header h1 {
 .dt-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 @media (max-width: 768px) {
-  #detail-panel { width: 100%; }
+  #detail-panel { width: 100% !important; } /* pisa el ancho inline del resizer */
+  #dt-resizer { display: none !important; } /* sin arrastre en pantallas chicas */
 }
 
 /* Barra para redimensionar el mapa arrastrando */
@@ -421,15 +526,17 @@ header h1 {
   /* Tabla: mostrar solo columnas esenciales */
   table { min-width: 360px; }
   th[data-col="oi15m"], th[data-col="oi4h"], th[data-col="oi24h"],
-  th[data-col="vol12hPct"], th[data-col="vol24hPct"],
+  th[data-col="vol15mPct"], th[data-col="vol12hPct"], th[data-col="vol24hPct"],
   th[data-col="price5mPct"], th[data-col="price4hPct"], th[data-col="price24hPct"],
   th[data-col="moveAtr1h"], th[data-col="liq5m"], th[data-col="btcCorr"], th[data-col="score"]
   { display: none; }
-  td:nth-child(18), td:nth-child(19), td:nth-child(20), td:nth-child(21) { display: none; }
   .quad-flt-btn, .preset-btn, .row-radar, #risk-light { display: none; }
-  /* ocultar por posicion (columnas sin data-col matching ocultas arriba) */
-  td:nth-child(6), td:nth-child(8), td:nth-child(9),
-  td:nth-child(11), td:nth-child(12), td:nth-child(14), td:nth-child(16), td:nth-child(17)
+  /* tds ocultos = EXACTAMENTE las columnas cuyo th se oculta arriba
+     (visibles: #, símbolo, precio, funding, CVD, OI 5m/1h, Vol 1h, Precio 15m/1h, RS BTC) */
+  td:nth-child(7), td:nth-child(9), td:nth-child(10),
+  td:nth-child(11), td:nth-child(13), td:nth-child(14),
+  td:nth-child(15), td:nth-child(18), td:nth-child(19),
+  td:nth-child(20), td:nth-child(21), td:nth-child(22), td:nth-child(24)
   { display: none; }
   th { font-size: 9px; padding: 0 5px; }
   td { height: 32px; }
@@ -544,12 +651,12 @@ th.left-align { text-align: left; }
 th .sort-arrow { font-size: 8px; margin-left: 3px; vertical-align: middle; color: #3a78cc; }
 
 /* Separadores visuales entre grupos */
-th[data-col="oi5m"],      td:nth-child(6)  { border-left: 1px solid rgba(0,190,110,0.12); }
-th[data-col="vol1hPct"],  td:nth-child(11) { border-left: 1px solid rgba(60,130,240,0.12); }
-th[data-col="price5mPct"],td:nth-child(14) { border-left: 1px solid rgba(210,170,40,0.10); }
-th[data-col="liq5m"],     td:nth-child(19) { border-left: 1px solid rgba(240,160,48,0.12); }
-th[data-col="btcCorr"],   td:nth-child(20) { border-left: 1px solid rgba(110,150,220,0.12); }
-th[data-col="score"],     td:nth-child(21) { border-left: 1px solid rgba(160,100,255,0.10); }
+th[data-col="oi5m"],       td:nth-child(6)  { border-left: 1px solid rgba(0,190,110,0.12); }
+th[data-col="vol15mPct"],  td:nth-child(11) { border-left: 1px solid rgba(60,130,240,0.12); }
+th[data-col="price5mPct"], td:nth-child(15) { border-left: 1px solid rgba(210,170,40,0.10); }
+th[data-col="liq5m"],      td:nth-child(21) { border-left: 1px solid rgba(240,160,48,0.12); }
+th[data-col="btcCorr"],    td:nth-child(22) { border-left: 1px solid rgba(110,150,220,0.12); }
+th[data-col="score"],      td:nth-child(24) { border-left: 1px solid rgba(160,100,255,0.10); }
 
 td {
   padding: 0;
