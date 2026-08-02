@@ -56,7 +56,13 @@ async function load() {
     renderDetail(); // refresca el panel lateral si está abierto
     if (activeTab === 'screener') renderMap();
     if (activeTab === 'strategy') renderStrategy();
-    if (activeTab === 'lab')      renderLab();
+    // renderLab() SIEMPRE corre (no solo con el Lab abierto): adentro registra
+    // señales nuevas del comparador (logStrategySignals) y evalúa las que ya
+    // cumplieron 30min/1h (evalStrategySignals) — si se quedaba atado a la
+    // pestaña activa, el comparador se congelaba sin evidencia real en cuanto
+    // salías del Lab. Escribir en divs con display:none es gratis (sin layout/
+    // repaint), así que no cuesta nada aunque no estés mirando esa pestaña.
+    renderLab();
   } catch (e) {
     document.getElementById('meta').textContent = 'Error: ' + e.message;
   } finally {

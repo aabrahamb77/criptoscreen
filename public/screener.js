@@ -727,18 +727,20 @@ function rsCell(row) {
   const v = row.rsBtc1h;
   if (v == null) return `<div class="pct-wrap"><span class="pct-val null-val">—</span></div>`;
   const a = Math.abs(v);
+  const extreme = a > 5; // fuerza/debilidad muy por encima de lo normal frente a BTC
   const bg = v >= 0
     ? (a >= 1.5 ? '#00684a' : a >= 0.5 ? '#004a30' : '#002a1c')
     : (a >= 1.5 ? '#7a1414' : a >= 0.5 ? '#581010' : '#330a0a');
   const tc = v >= 0 ? '#7ae0b8' : '#ff9a9a';
-  const fw = a >= 1.5 ? 800 : a >= 0.5 ? 700 : 500;
+  const fw = extreme ? 900 : a >= 1.5 ? 800 : a >= 0.5 ? 700 : 500;
   const w = row.rsWins, tot = row.rsValidTf || 4;
   const bc = w == null ? '#5a6072' : w >= 4 ? '#37d99a' : w >= 3 ? '#2ba573' : w >= 2 ? '#9a9a5a' : '#8a6a6a';
   const badge = w == null ? '' :
     ` <span title="Le gana a BTC en ${w} de ${tot} ventanas (5m·1h·4h·24h)" style="font-size:9px;font-weight:700;color:${bc}">${w}/${tot}</span>`;
   const warn = row.rsLowLiq
     ? ` <span title="Liquidez baja (turnover 24h < $10M): la RS de esta moneda es poco fiable" style="opacity:0.85">⚠</span>` : '';
-  return `<div class="pct-wrap"><span class="pct-val" style="background:${bg};color:${tc};font-weight:${fw}" title="RS vs BTC (1h): ${v > 0 ? '+' : ''}${v.toFixed(2)} puntos porcentuales por ${v >= 0 ? 'encima' : 'debajo'} de BTC">${v > 0 ? '+' : ''}${v.toFixed(2)}</span>${badge}${warn}</div>`;
+  const fire = extreme ? ' 🔥' : '';
+  return `<div class="pct-wrap"><span class="pct-val${extreme ? ' rs-extreme' : ''}" style="background:${bg};color:${tc};font-weight:${fw}" title="RS vs BTC (1h): ${v > 0 ? '+' : ''}${v.toFixed(2)} puntos porcentuales por ${v >= 0 ? 'encima' : 'debajo'} de BTC${extreme ? ' — EXTREMO (>5)' : ''}">${v > 0 ? '+' : ''}${v.toFixed(2)}${fire}</span>${badge}${warn}</div>`;
 }
 
 // CVD reciente (delta de volumen comprador-vendedor en USD): verde = presión

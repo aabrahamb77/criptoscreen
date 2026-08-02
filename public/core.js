@@ -350,6 +350,7 @@ const ALERT_DEFAULTS = {
   pattern1h:   true,   // ◭ ruptura de cuello W/M en 1h
   patternDone: true,   // 🎯 patrón completado (tocó objetivo o stop)
   btcBias:     true,   // ₿ el sesgo de BTC cambió de dirección
+  btcFib:      true,   // ₿ BTC entró en la zona dorada del Fibonacci (50%–61.8%)
   thesisInv:   true,   // ❌ tesis del seguimiento invalidada
   indConf:     true,   // 🧭 confluencia de indicadores 4/4 (RSI/MACD/ADX/TSI en 15m)
   confluence:  false,  // 🎯 confluencia alta en el radar (ruidosa)
@@ -361,6 +362,7 @@ const ALERT_LABELS = {
   pattern1h:   '◭ Ruptura de cuello W/M (1h)',
   patternDone: '🎯 Patrón completado (objetivo/stop)',
   btcBias:     '₿ Cambio de sesgo de BTC',
+  btcFib:      '🟡 BTC en zona dorada del Fibonacci (50%–61.8%)',
   thesisInv:   '❌ Tesis invalidada (seguimiento)',
   indConf:     '🧭 Indicadores 4/4 — RSI·MACD·ADX·TSI (15m)',
   confluence:  '🎯 Confluencia alta del radar — ruidosa',

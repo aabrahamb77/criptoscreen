@@ -911,6 +911,62 @@ function btcBindChart(canvas) {
   }
 }
 
+// ── Fibonacci automático: ancla al máximo y mínimo del rango VISIBLE (s0..s1,
+// igual que el "Auto Fib Retracement" de TradingView — al hacer zoom/pan
+// cambia qué tramo de tendencia se mide). 0% = el extremo más RECIENTE
+// (el máximo si la tendencia acaba de hacer techo, el mínimo si acaba de
+// hacer suelo) · 100% = el extremo más viejo, de donde arrancó el impulso.
+const FIB_RATIOS = [
+  { r: 0,     label: '0%',    key: false },
+  { r: 0.382, label: '38.2%', key: true  },
+  { r: 0.5,   label: '50%',   key: true  },
+  { r: 0.618, label: '61.8%', key: true  },
+  { r: 1,     label: '100%',  key: false },
+];
+function btcFibLevels(k, s0, s1) {
+  let hi = -Infinity, hiI = -1, lo = Infinity, loI = -1;
+  for (let i = s0; i < s1; i++) {
+    if (k.h[i] > hi) { hi = k.h[i]; hiI = i; }
+    if (k.l[i] < lo) { lo = k.l[i]; loI = i; }
+  }
+  if (hiI < 0 || loI < 0 || hi <= lo) return [];
+  const up = hiI > loI; // el máximo es más reciente que el mínimo → tendencia alcista hacia ese techo
+  const recent = up ? hi : lo, start = up ? lo : hi;
+  return FIB_RATIOS.map(f => ({
+    v: recent - (recent - start) * f.r,
+    col: f.key ? '#f0b90b' : 'rgba(240,185,11,0.55)',
+    dash: f.key ? [] : [3, 3],
+    label: `Fib ${f.label}${f.r === 0 ? (up ? ' (máx)' : ' (mín)') : f.r === 1 ? (up ? ' (mín)' : ' (máx)') : ''}`,
+  }));
+}
+
+// ── Alerta: BTC entra en la "zona dorada" del Fibonacci (50%–61.8%) ─────────
+// Usa el MISMO rango visible (_btcView) que el gráfico, aunque no esté en
+// pantalla — así la alerta siempre coincide con lo que se vería al abrir la
+// pestaña ₿. Solo dispara al ENTRAR a la zona (no en cada ciclo mientras sigue
+// dentro), igual que el patrón ya usado para el cambio de sesgo (btcBias).
+let _btcInGoldenZone = false;
+function btcCheckFibZone() {
+  const row = allRows.find(r => r.symbol === 'BTC');
+  const k = btcChartData();
+  if (!row || !k || k.c.length < 10) { _btcInGoldenZone = false; return; }
+  const n = k.c.length;
+  const s1 = Math.max(1, n - _btcView.offset), s0 = Math.max(0, s1 - _btcView.span);
+  const fib = btcFibLevels(k, s0, s1);
+  const f50 = fib.find(f => f.label === 'Fib 50%');
+  const f618 = fib.find(f => f.label === 'Fib 61.8%');
+  if (!f50 || !f618) { _btcInGoldenZone = false; return; }
+  const lo = Math.min(f50.v, f618.v), hi = Math.max(f50.v, f618.v);
+  const inside = row.price >= lo && row.price <= hi;
+  if (inside && !_btcInGoldenZone && canAlert('btcFib')) {
+    const dirTag = fib[0].label.includes('máx') ? 'long' : 'short'; // retroceso hacia abajo=vigilar rebote LONG · hacia arriba=vigilar rechazo SHORT
+    showToast(`🟡 BTC entró en la zona dorada del Fib (${fp(lo)}–${fp(hi)}) — vigila ${dirTag === 'long' ? 'rebote LONG' : 'rechazo SHORT'}`, dirTag);
+    if (soundEnabled) beep(880, 'sine', 300);
+    notifyDesktop('🟡 BTC en zona dorada del Fibonacci', `Precio ${fp(row.price)} entre 50%–61.8% (${fp(lo)}–${fp(hi)}) — abre la pestaña BTC`);
+  }
+  _btcInGoldenZone = inside;
+}
+
 function drawBTCChart(row) {
   const canvas = document.getElementById('btc-chart');
   const k = btcChartData();
@@ -933,6 +989,7 @@ function drawBTCChart(row) {
   // ── Recolectar niveles analizados ──
   const L = BTC.liq || {};
   const levels = [];
+  levels.push(...btcFibLevels(k, s0, s1)); // 🟡 Fibonacci automático (máximo↔mínimo del rango visible)
   for (const p of (L.poolsAbove || [])) levels.push({ v: p.level, col: '#4aa8d8', dash: [5, 4], label: '🧲 pool liquidez' });
   for (const p of (L.poolsBelow || [])) levels.push({ v: p.level, col: '#4aa8d8', dash: [5, 4], label: '🧲 pool liquidez' });
   for (const w of (BTC.ob?.askWalls || []).slice(0, 3)) levels.push({ v: w.price, col: '#ff8866', dash: [], label: `🧱 venta ${fmtUSD(w.usd)}` });
@@ -1171,6 +1228,7 @@ function btcOnCycle() {
   if (now - (BTC.k15x?.ts || 0) > 5 * 60_000)  btcFetchK15x(); // velas extendidas (~10 días) para el zoom
   btcAccumLiqs(); // acumula liquidaciones de BTC (WS Bybit) por vela 15m — banda del gráfico
   btcComputeFactors();
+  btcCheckFibZone(); // 🟡 alerta al entrar a la zona dorada del Fibonacci (50%–61.8%)
   btcSnapshotSessions();
   if (activeTab === 'btc') renderBTC();
 }

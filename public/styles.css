@@ -393,6 +393,17 @@ header h1 {
   50%      { box-shadow: 0 0 12px rgba(255, 68, 68, .9); }
 }
 
+/* RS BTC extremo (|valor| > 7 puntos): pulso del propio color (verde a favor,
+   rojo en contra) via currentColor, para no duplicar la clase por signo. */
+.rs-extreme {
+  border: 1px solid currentColor !important;
+  animation: rs-extreme-pulse .9s ease-in-out infinite;
+}
+@keyframes rs-extreme-pulse {
+  0%, 100% { box-shadow: 0 0 0 transparent; }
+  50%      { box-shadow: 0 0 10px currentColor; }
+}
+
 .pat-badge {
   font-size: 8.5px; font-weight: 800; padding: 1px 5px; border-radius: 4px;
   cursor: pointer; letter-spacing: .3px; flex-shrink: 0;

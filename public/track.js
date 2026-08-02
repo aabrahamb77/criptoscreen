@@ -790,9 +790,16 @@ async function fetchPriceAtTime(symbol, targetTs) {
 // Congela el resultado de cada señal la primera vez que cumple 30min / 1h de
 // antigüedad, comparando el precio de entrada vs. el precio real de ese momento.
 // Si la pestaña estuvo cerrada, busca retrospectivamente en trackHistory o consulta Bybit.
+//
+// Límite de peticiones por ciclo: como ahora corre siempre (no solo con el Lab
+// abierto), un backlog grande de señales viejas sin evaluar podría disparar
+// cientos de fetchPriceAtTime() de golpe en el primer ciclo. Se procesan de a
+// poco por llamada — el backlog se drena en varios ciclos de ~10s sin ráfagas.
+const EVAL_FETCH_CAP = 15;
 function evalStrategySignals() {
   const now = Date.now();
   let changed = false;
+  let fetchBudget = EVAL_FETCH_CAP;
 
   for (const sig of stratSignals) {
     const age = now - sig.ts;
@@ -815,7 +822,8 @@ function evalStrategySignals() {
           const movePct = (matched.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
           sig.eval30 = { price: matched.price, movePct, hit: movePct > 0 };
           changed = true;
-        } else {
+        } else if (fetchBudget > 0) {
+          fetchBudget--;
           fetchPriceAtTime(sig.symbol, targetTs).then(price => {
             if (price) {
               const movePct = (price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
@@ -847,7 +855,8 @@ function evalStrategySignals() {
           const movePct = (matched.price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
           sig.eval60 = { price: matched.price, movePct, hit: movePct > 0 };
           changed = true;
-        } else {
+        } else if (fetchBudget > 0) {
+          fetchBudget--;
           fetchPriceAtTime(sig.symbol, targetTs).then(price => {
             if (price) {
               const movePct = (price - sig.entryPrice) / sig.entryPrice * 100 * (sig.dir === 'l' ? 1 : -1);
