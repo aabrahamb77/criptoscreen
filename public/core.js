@@ -350,6 +350,7 @@ const ALERT_DEFAULTS = {
   pattern1h:   true,   // ◭ ruptura de cuello W/M en 1h
   patternDone: true,   // 🎯 patrón completado (tocó objetivo o stop)
   btcBias:     true,   // ₿ el sesgo de BTC cambió de dirección
+  marketBias:  true,   // ⚖️ el sesgo general del mercado cambió (ALCISTA/BAJISTA/NEUTRAL)
   btcFib:      true,   // ₿ BTC entró en la zona dorada del Fibonacci (50%–61.8%)
   thesisInv:   true,   // ❌ tesis del seguimiento invalidada
   indConf:     true,   // 🧭 confluencia de indicadores 4/4 (RSI/MACD/ADX/TSI en 15m)
@@ -362,6 +363,7 @@ const ALERT_LABELS = {
   pattern1h:   '◭ Ruptura de cuello W/M (1h)',
   patternDone: '🎯 Patrón completado (objetivo/stop)',
   btcBias:     '₿ Cambio de sesgo de BTC',
+  marketBias:  '⚖️ Cambio de sesgo general del mercado',
   btcFib:      '🟡 BTC en zona dorada del Fibonacci (50%–61.8%)',
   thesisInv:   '❌ Tesis invalidada (seguimiento)',
   indConf:     '🧭 Indicadores 4/4 — RSI·MACD·ADX·TSI (15m)',
@@ -434,7 +436,11 @@ function saveAutoTracked() {
 let stratSignals    = JSON.parse(localStorage.getItem('scalp_stratsig') || '[]');
 let activeStratPick = new Map(); // 'estrategia|símbolo|lado' → true mientras siga en el Top
 let activePanelPick = new Map(); // igual pero para detecciones de paneles (confluencia/salud/potencial)
-const STRAT_SIG_MAX = 3000;
+// 3000 alcanzaba de sobra cuando el registro solo corría con el Lab abierto;
+// ahora corre siempre (throttle de 1/min en logStrategySignals, ver track.js)
+// y con eso ya se necesita más margen para que las señales sobrevivan hasta
+// su evaluación de 1h antes de ser desalojadas del buffer FIFO.
+const STRAT_SIG_MAX = 8000;
 const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-Score',
   range: 'Ruptura rango', liq: 'Cascada liq.', sector: 'Rotación sectorial', whale: 'Ballenas',
   beta: 'Beta rezagada', alpha: 'Alpha propio',

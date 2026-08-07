@@ -646,13 +646,22 @@ function renderQuadAligned(rows) {
     const [bg, fg] = colors[it.quad];
     const pc = it.p1h >= 0 ? '#55bb88' : '#ee6666';
     const full = it.tfs === 4;
-    const title = full
+    // Movimiento fuerte (>5% en 1h, en cualquier dirección): resalta el chip
+    // completo con el brillo de su propio color — de un vistazo, cuáles de
+    // las alineadas ya se movieron de verdad vs. cuáles apenas empiezan.
+    const hot = Math.abs(it.p1h) > 5;
+    const title = (full
       ? `${it.symbol}: cuadrante ${it.quad} en 15m, 1h, 4h y 1d — tendencia consistente en todas las temporalidades`
-      : `${it.symbol}: cuadrante ${it.quad} en ${it.tfs} de 4 temporalidades (falta el dato de 1d, suele completarse en el siguiente ciclo)`;
-    return `<span class="qal-chip" onclick="selectConfSymbol('${it.symbol}');if(typeof highlightScreenerRow==='function')highlightScreenerRow('${it.symbol}')" title="${title}"${full ? '' : ' style="opacity:.55"'}>
+      : `${it.symbol}: cuadrante ${it.quad} en ${it.tfs} de 4 temporalidades (falta el dato de 1d, suele completarse en el siguiente ciclo)`)
+      + (hot ? ` — MOVIMIENTO FUERTE: ${fmtPct(it.p1h)} en 1h` : '');
+    const chipStyle = [
+      !full ? 'opacity:.55' : '',
+      hot ? `border-color:${pc};box-shadow:0 0 10px ${pc}` : '',
+    ].filter(Boolean).join(';');
+    return `<span class="qal-chip${hot ? ' qal-chip-hot' : ''}" onclick="selectConfSymbol('${it.symbol}');if(typeof highlightScreenerRow==='function')highlightScreenerRow('${it.symbol}')" title="${title}"${chipStyle ? ` style="${chipStyle}"` : ''}>
       ${it.symbol}
       <span class="qal-q" style="background:${bg};color:${fg}">${it.quad}</span>
-      <span class="qal-pct" style="color:${pc}">${fmtPct(it.p1h) ?? '—'}</span>
+      <span class="qal-pct" style="color:${pc};${hot ? 'font-weight:800' : ''}">${fmtPct(it.p1h) ?? '—'}${hot ? ' 🔥' : ''}</span>
       ${full ? '' : '<span class="qal-pct" style="color:#5a6a85">3/4</span>'}
     </span>`;
   }).join('');

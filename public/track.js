@@ -729,8 +729,18 @@ function logPanelDetections(strategy, entries) {
   if (added) { safeSetItem('scalp_stratsig', JSON.stringify(stratSignals)); syncToServer(); }
 }
 
+// Throttle: antes solo corría cuando el Lab estaba abierto (cada visita, con
+// minutos de por medio). Al quedar siempre activo en cada ciclo (~10s) sin
+// este freno, el Top-4 de 19 estrategias × 100 símbolos generaba ~73 señales
+// nuevas/min — el buffer de STRAT_SIG_MAX se reciclaba en ~41min, botando
+// señales ANTES de llegar a la marca de 1h (eval60 se quedaba en 0% para
+// siempre). 1 escaneo/min es de sobra para no perderse rotaciones reales.
+let _lastStratLogTs = 0;
+const STRAT_LOG_INTERVAL_MS = 60_000;
 function logStrategySignals(topFn) {
   const now = Date.now();
+  if (now - _lastStratLogTs < STRAT_LOG_INTERVAL_MS) return;
+  _lastStratLogTs = now;
   const regime = detectRegime(allRows).regime;
   const stillActive = new Set();
   for (const key of Object.keys(STRAT_NAMES)) {

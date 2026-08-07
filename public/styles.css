@@ -832,6 +832,7 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
   transition: border-color .15s, transform .15s;
 }
 .qal-chip:hover { border-color: #2a3850; transform: translateY(-1px); }
+.qal-chip-hot { font-weight: 800; color: #fff; border-width: 1.5px; }
 .qal-q { font-size: 8.5px; font-weight: 800; padding: 1px 5px; border-radius: 4px; letter-spacing: .3px; }
 .qal-pct { font-size: 9px; font-weight: 600; }
 .qa-row { font-size: 10px; color: #5a6a85; display: flex; gap: 8px; align-items: center; }
@@ -931,6 +932,16 @@ tr:hover td.left-align { background: rgba(80,120,255,0.065) !important; }
 .bias-tag {
   font-size: 10px; font-weight: 800; padding: 3px 9px;
   border-radius: 6px; letter-spacing: 0.6px; white-space: nowrap;
+}
+/* Resaltado del sesgo general del mercado: bastante más grande/marcado que el
+   resto de chips del header porque es el dato que más se quiere tener presente
+   de un vistazo — brillo del propio color (via currentColor), sin parpadeo
+   porque está siempre visible (un pulso constante cansaría la vista). */
+.bias-tag-highlight {
+  font-size: 15px; font-weight: 900; padding: 6px 16px;
+  border-radius: 8px; letter-spacing: 1px; border-width: 2px; border-style: solid;
+  box-shadow: 0 0 14px currentColor, inset 0 0 8px currentColor;
+  text-shadow: 0 0 8px currentColor;
 }
 .bias-bar-wrap { width: 120px; height: 4px; background: #0c111a; border-radius: 2px; overflow: hidden; flex-shrink: 0; }
 .bias-bar-fill { height: 100%; border-radius: 2px; transition: width .6s ease; }

@@ -61,6 +61,12 @@ function fmtOI(v) {
 }
 
 // ── Market sentiment ───────────────────────────────────────────────────────
+// Sesgo de TODO el mercado (breadth: cuántas monedas están LONG+SQUEEZE vs
+// SHORT+LIQ en 1h) — distinto del sesgo de BTC (btc.js). Tiene 3 estados
+// posibles: ALCISTA, BAJISTA, NEUTRAL. Alerta al cambiar entre cualquiera de
+// los tres (a diferencia de btcBias, aquí SÍ cuenta pasar a NEUTRAL — el
+// usuario quiere enterarse de cada transición, no solo Alcista↔Bajista).
+let _prevMarketBiasState = null; // null=sin dato aún · 'bull' | 'bear' | 'neutral'
 function updateMarketSentiment(rows) {
   const el = document.getElementById('market-bias');
   if (!el) return;
@@ -84,8 +90,17 @@ function updateMarketSentiment(rows) {
   const label = neutral ? '◆ NEUTRAL' : isBull ? '▲ ALCISTA' : '▼ BAJISTA';
   const pct   = isBull ? bullPct : 100 - bullPct;
 
+  const state = neutral ? 'neutral' : isBull ? 'bull' : 'bear';
+  if (_prevMarketBiasState && state !== _prevMarketBiasState && canAlert('marketBias')) {
+    const dirTag = isBull ? 'long' : isBear ? 'short' : '';
+    showToast(`⚖️ Sesgo de mercado → ${label} (${bull} vs ${bear} · ${pct}%)`, dirTag);
+    if (soundEnabled) beep(isBull ? 900 : isBear ? 400 : 650, 'triangle', 250);
+    notifyDesktop(`⚖️ Sesgo de mercado → ${label}`, `${bull} vs ${bear} · ${pct}% del mercado — LONG ${longQ} · SQUEEZE ${squeeze} · SHORT ${shortQ} · LIQ ${liq}`);
+  }
+  _prevMarketBiasState = state;
+
   el.innerHTML = `
-    <span class="bias-tag" style="background:${color}20;color:${color};border:1px solid ${color}50">${label}</span>
+    <span class="bias-tag bias-tag-highlight" style="background:${color}20;color:${color};border-color:${color}">${label}</span>
     <div class="bias-bar-wrap"><div class="bias-bar-fill" style="width:${isBull||neutral?bullPct:100-bullPct}%;background:${color}"></div></div>
     <span class="bias-counts">
       <span style="color:#55dd99">▲ ${bull}</span>
