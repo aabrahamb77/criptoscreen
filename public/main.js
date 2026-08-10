@@ -42,7 +42,6 @@ async function load() {
     renderOutlierStrip(allRows); // 🎯 outliers reales: dist real + liquidez + sostenido vs. pico
     renderMomentumStrip(allRows); // 🚀 momentum confirmado: umbrales absolutos precio 5% + OI 10%
     scanPatterns(allRows); // detector W/M + alertas de ruptura de cuello (antes de render: pinta badges)
-    scanIndicatorConfluence(allRows); // 🧭 RSI/MACD/ADX/TSI/Andean en 15m: alertas 4/4 + evidencia
     btcOnCycle(); // ₿ direccionalidad BTC: factores, sesiones y alertas de cambio de sesgo
     if (firstLoad && allRows.length) connectLiqWS(allRows.map(r => r.symbol));
     countdownVal = 10;
@@ -53,6 +52,12 @@ async function load() {
     document.getElementById('sym-count').textContent = allRows.length + ' pares';
 
     render();
+    // 🧠 El brief se calcula y avisa SIEMPRE, con la pestaña que sea (solo el
+    // pintado depende de la pestaña activa). No añade ni una petición de red:
+    // cruza allRows, que ya está en memoria. Va aquí y no arriba con el resto
+    // de hooks porque necesita dos cosas que produce render(): moveAtr1h/RS vs
+    // BTC, y los patrones que scanPatterns() ya dejó puestos en cada fila.
+    briefOnCycle();
     renderDetail(); // refresca el panel lateral si está abierto
     if (activeTab === 'screener') renderMap();
     if (activeTab === 'strategy') renderStrategy();

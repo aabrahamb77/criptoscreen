@@ -194,7 +194,7 @@ function _patAlerts(r, p, tf, breakingEntries) {
         _patAlertAt.set(key, Date.now());
         const tfTag = tf === '1h' ? ' (1h)' : ' (15m)';
         showToast(`${isW ? '🟢 DOBLE SUELO' : '🔴 DOBLE TECHO'}${tfTag} ${r.symbol} — ¡ruptura de cuello CONFIRMADA con cierre de vela!`, isW ? 'long' : 'short');
-        if (soundEnabled) { beep(isW ? 1150 : 360, 'square', 200); setTimeout(() => beep(isW ? 1350 : 300, 'square', 200), 240); }
+        playAlertSound(tf === '1h' ? 'pattern1h' : 'pattern15', isW ? 'long' : 'short');
         notifyDesktop(
           `${isW ? '🟢 W' : '🔴 M'}${tfTag} ${r.symbol} — ruptura de cuello confirmada`,
           `Vela ${tf} cerró ${isW ? 'sobre' : 'bajo'} el cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · stop ${fmtPrice(p.stop)} · calidad ${p.quality}/10`

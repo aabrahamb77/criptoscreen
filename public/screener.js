@@ -94,7 +94,7 @@ function updateMarketSentiment(rows) {
   if (_prevMarketBiasState && state !== _prevMarketBiasState && canAlert('marketBias')) {
     const dirTag = isBull ? 'long' : isBear ? 'short' : '';
     showToast(`⚖️ Sesgo de mercado → ${label} (${bull} vs ${bear} · ${pct}%)`, dirTag);
-    if (soundEnabled) beep(isBull ? 900 : isBear ? 400 : 650, 'triangle', 250);
+    playAlertSound('marketBias', isBull ? 'long' : isBear ? 'short' : 'neutral');
     notifyDesktop(`⚖️ Sesgo de mercado → ${label}`, `${bull} vs ${bear} · ${pct}% del mercado — LONG ${longQ} · SQUEEZE ${squeeze} · SHORT ${shortQ} · LIQ ${liq}`);
   }
   _prevMarketBiasState = state;
@@ -216,11 +216,11 @@ function showToast(msg, type = '') {
   el.className = 'toast' + (type === 'long' ? ' t-long' : type === 'short' ? ' t-short' : '');
   el.textContent = msg;
   wrap.appendChild(el);
-  // 10s en pantalla (antes 3.5s: sonaba y desaparecía sin tiempo de leerlo).
-  // Clic en el toast lo cierra al instante.
+  // 15s en pantalla (antes 10s, y 3.5s originalmente: sonaba y desaparecía
+  // sin tiempo de leerlo). Clic en el toast lo cierra al instante.
   el.style.cursor = 'pointer';
   el.onclick = () => { el.style.opacity = '0'; setTimeout(() => el.remove(), 320); };
-  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 10_000);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 15_000);
 }
 
 // ── Filtro cuadrante ───────────────────────────────────────────────────────
@@ -307,8 +307,8 @@ function checkQuadrantChanges(rows) {
       && nv(r.oi5m) > 0 && nv(r.oi1h) > 0.2 && nv(r.oi4h) > 0
       && nv(r.price5mPct) < 0 && nv(r.price4hPct) < 0 && nv(r.vol1hPct) > 5;
     const isAl = longAl || shortAl;
-    if (canAlert('align') && isAl && !prevAligned.has(r.symbol) && soundEnabled && prev) {
-      beep(longAl ? 880 : 440, 'sine', 130);
+    if (canAlert('align') && isAl && !prevAligned.has(r.symbol) && prev) {
+      playAlertSound('align', longAl ? 'long' : 'short');
     }
     if (isAl) prevAligned.add(r.symbol); else prevAligned.delete(r.symbol);
   }
@@ -859,7 +859,7 @@ function render() {
     // Alerta cuando el score salta de < 8 a ≥ 8 (categoría 'score' — OFF por defecto)
     if (canAlert('score') && prev !== undefined && prev.score < 8 && score >= 8) {
       if (soundEnabled) {
-        beep(660, 'square', 110);
+        playAlertSound('score', isLong ? 'long' : 'short');
         showToast(`${row.symbol} ${isLong ? 'L' : 'S'}${score} — score subió`, isLong ? 'long' : 'short');
       }
       notifyDesktop(`${row.symbol} ${isLong ? 'LONG' : 'SHORT'} ${score}/10`, 'El score saltó a ≥8');

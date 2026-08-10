@@ -282,10 +282,13 @@ function closePatternTrack(t, reason, price) {
   t.pnlPct     = dir * (price - t.entryPrice) / t.entryPrice * 100;
   t.status     = 'closed';
   savePatternTrack();
-  if (canAlert('patternDone')) showToast(
-    `${t.symbol} patrón ${t.type} ${reason === 'TARGET' ? '🎯 objetivo alcanzado' : '🛑 stop alcanzado'} · ${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%`,
-    t.pnlPct >= 0 ? 'long' : 'short'
-  );
+  if (canAlert('patternDone')) {
+    showToast(
+      `${t.symbol} patrón ${t.type} ${reason === 'TARGET' ? '🎯 objetivo alcanzado' : '🛑 stop alcanzado'} · ${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%`,
+      t.pnlPct >= 0 ? 'long' : 'short'
+    );
+    playAlertSound('patternDone', reason === 'TARGET' ? 'long' : 'short');
+  }
 }
 
 // Sin timeout a propósito — llamar en CADA ciclo de datos (no solo con el Lab

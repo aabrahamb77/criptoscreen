@@ -435,8 +435,8 @@ function renderStrategy() {
   // Los Top-5 de momentum se retiraron: duplicaban la tabla del screener
   // ordenada por score y las "Señales accionables" del Lab (que además llevan
   // evidencia histórica y niveles). Estrategia queda enfocada: radar + potencial.
+  renderBrief();   // 🧠 brief del analista: veredicto de mercado + ranking por fiabilidad
   renderConfluence(scored);
-  renderIndConf(); // 🧭 confluencia de indicadores (RSI/MACD/ADX/TSI/Andean, 15m)
 }
 
 // El mapa vive ahora en la página del screener — se dibuja con cada refresh

@@ -6,7 +6,7 @@
 <title>Scalp Screener</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css?v=24">
+<link rel="stylesheet" href="/styles.css?v=26">
 
 </head>
 <body>
@@ -160,6 +160,14 @@
 
 <!-- ── Strategy tab ── -->
 <div id="strategy-tab">
+  <div id="brief-section">
+    <div class="conf-head">
+      <span class="conf-title">🧠 Brief del analista</span>
+      <span class="conf-sub">síntesis de todo lo que ya mide el screener: veredicto de mercado y tamaño · ranking por FIABILIDAD (no por fuerza) · el porqué punto por punto</span>
+      <span id="brief-head-extra" class="bf-head-extra"></span>
+    </div>
+    <div id="brief-body"><div class="cc-note">Esperando datos…</div></div>
+  </div>
   <div id="conf-section">
     <div class="conf-head">
       <span class="conf-title">🎯 Radar de confluencia</span>
@@ -171,15 +179,6 @@
     <div id="conf-grid"><div class="cc-note">Esperando datos…</div></div>
     <div id="conf-calib" style="display:none"></div>
     <div id="conf-detail" style="display:none"></div>
-  </div>
-  <div id="indconf-section">
-    <div class="conf-head">
-      <span class="conf-title">🧭 Confluencia de indicadores</span>
-      <span class="conf-sub">tu sistema de TradingView en velas 15m · RSI&gt;50 · MACD&gt;0 · ADX&gt;25 con +DI/−DI · TSI a favor · Andean como confirmación extra (lenta) · los 4 core alineados = señal</span>
-      <span id="indconf-count" style="font-size:9px;color:#3a5070;margin-left:auto"></span>
-    </div>
-    <div id="indconf-btc"><span class="lr-empty">Calculando indicadores de BTC…</span></div>
-    <div id="indconf-grid"><div class="cc-note">Esperando datos…</div></div>
   </div>
   <div id="potential-section">
     <div class="conf-head">
@@ -363,18 +362,18 @@
 
 <!-- ── Módulos JS (el orden importa: main.js arranca la app y va al final) ── -->
 <script src="/lxr.js?v=8"></script>
-<script src="/radar.js?v=20"></script>
-<script src="/core.js?v=23"></script>
-<script src="/screener.js?v=17"></script>
-<script src="/map.js?v=12"></script>
-<script src="/indicators.js?v=2"></script>
-<script src="/patterns.js?v=13"></script>
+<script src="/radar.js?v=21"></script>
+<script src="/core.js?v=26"></script>
+<script src="/screener.js?v=18"></script>
+<script src="/map.js?v=14"></script>
+<script src="/patterns.js?v=14"></script>
 <script src="/detail.js?v=17"></script>
 <script src="/smc.js?v=6"></script>
-<script src="/btc.js?v=26"></script>
-<script src="/lab.js?v=17"></script>
-<script src="/track.js?v=15"></script>
+<script src="/btc.js?v=27"></script>
+<script src="/lab.js?v=18"></script>
+<script src="/track.js?v=16"></script>
 <script src="/backtest.js?v=8"></script>
-<script src="/main.js?v=13"></script>
+<script src="/brief.js?v=2"></script>
+<script src="/main.js?v=15"></script>
 </body>
 </html>

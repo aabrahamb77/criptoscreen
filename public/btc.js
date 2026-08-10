@@ -649,7 +649,7 @@ function btcComputeFactors() {
   // Alerta al cambiar la dirección del sesgo
   if (BTC.lastDir && BTC.dir !== 'NEUTRAL' && BTC.dir !== BTC.lastDir && canAlert('btcBias')) {
     showToast(`₿ Sesgo BTC → ${BTC.dir} (${BTC.prob}%)`, BTC.dir === 'ALCISTA' ? 'long' : 'short');
-    if (soundEnabled) beep(BTC.dir === 'ALCISTA' ? 1000 : 420, 'triangle', 250);
+    playAlertSound('btcBias', BTC.dir === 'ALCISTA' ? 'long' : 'short');
     notifyDesktop(`₿ BTC cambió a ${BTC.dir}`, `Probabilidad ${BTC.prob}% — abre la pestaña BTC para ver los factores`);
   }
   if (BTC.dir !== 'NEUTRAL') BTC.lastDir = BTC.dir;
@@ -961,7 +961,7 @@ function btcCheckFibZone() {
   if (inside && !_btcInGoldenZone && canAlert('btcFib')) {
     const dirTag = fib[0].label.includes('máx') ? 'long' : 'short'; // retroceso hacia abajo=vigilar rebote LONG · hacia arriba=vigilar rechazo SHORT
     showToast(`🟡 BTC entró en la zona dorada del Fib (${fp(lo)}–${fp(hi)}) — vigila ${dirTag === 'long' ? 'rebote LONG' : 'rechazo SHORT'}`, dirTag);
-    if (soundEnabled) beep(880, 'sine', 300);
+    playAlertSound('btcFib', dirTag);
     notifyDesktop('🟡 BTC en zona dorada del Fibonacci', `Precio ${fp(row.price)} entre 50%–61.8% (${fp(lo)}–${fp(hi)}) — abre la pestaña BTC`);
   }
   _btcInGoldenZone = inside;

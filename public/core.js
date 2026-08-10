@@ -353,7 +353,9 @@ const ALERT_DEFAULTS = {
   marketBias:  true,   // ⚖️ el sesgo general del mercado cambió (ALCISTA/BAJISTA/NEUTRAL)
   btcFib:      true,   // ₿ BTC entró en la zona dorada del Fibonacci (50%–61.8%)
   thesisInv:   true,   // ❌ tesis del seguimiento invalidada
-  indConf:     true,   // 🧭 confluencia de indicadores 4/4 (RSI/MACD/ADX/TSI en 15m)
+  qalHot:      true,   // 🔥 moneda entra resaltada al cuadrante alineado (>5% en 1h)
+  briefTop:    true,   // 🧠 el brief promueve una moneda a tier A (fiable)
+  briefMkt:    true,   // 🧠 cambia el veredicto de mercado del brief
   confluence:  false,  // 🎯 confluencia alta en el radar (ruidosa)
   score:       false,  // 📈 score salta a ≥8 (ruidosa)
   align:       false,  // 🔊 beep de alineación total (ruidosa)
@@ -366,7 +368,9 @@ const ALERT_LABELS = {
   marketBias:  '⚖️ Cambio de sesgo general del mercado',
   btcFib:      '🟡 BTC en zona dorada del Fibonacci (50%–61.8%)',
   thesisInv:   '❌ Tesis invalidada (seguimiento)',
-  indConf:     '🧭 Indicadores 4/4 — RSI·MACD·ADX·TSI (15m)',
+  qalHot:      '🔥 Moneda resaltada en cuadrante alineado (>5% en 1h)',
+  briefTop:    '🧠 Brief: moneda promovida a tier A (fiable)',
+  briefMkt:    '🧠 Brief: cambia el veredicto de mercado',
   confluence:  '🎯 Confluencia alta del radar — ruidosa',
   score:       '📈 Score salta a ≥8 — ruidosa',
   align:       '🔊 Beep de alineación total — ruidosa',
@@ -376,6 +380,40 @@ function canAlert(cat) { return alertCfg[cat] !== false; }
 function setAlertCfg(cat, on) {
   alertCfg[cat] = !!on;
   safeSetItem('scalp_alert_cfg', JSON.stringify(alertCfg));
+}
+
+// ── Personalidad sonora por categoría ───────────────────────────────────────
+// Cada categoría de alerta suena distinto (timbre + ritmo, no solo tono) para
+// poder identificarla de oído sin mirar la pantalla. dir: 'long'|'short'|
+// 'neutral'|null — el signo del movimiento sube o baja el tono cuando aplica.
+// beep() vive en screener.js pero se referencia en runtime, no en carga —
+// el orden de los <script> no importa para esto.
+const ALERT_SOUNDS = {
+  pattern15:   dir => dir === 'short' ? [[720,'square',150],[300,'square',190]]   : [[720,'square',150],[1150,'square',190]],
+  pattern1h:   dir => dir === 'short' ? [[720,'square',150],[300,'square',190]]   : [[720,'square',150],[1150,'square',190]],
+  patternDone: dir => dir === 'short' ? [[520,'sine',150],[340,'sine',260]]       : [[860,'sine',110],[1160,'sine',110],[1460,'sine',170]],
+  btcBias:     dir => dir === 'short' ? [[620,'sawtooth',150],[340,'sawtooth',230]] : [[620,'sawtooth',150],[1000,'sawtooth',230]],
+  btcFib:      ()  => [[740,'sine',150],[980,'sine',280]],
+  marketBias:  dir => dir === 'short' ? [[700,'triangle',130],[400,'triangle',180]] : dir === 'long' ? [[700,'triangle',130],[900,'triangle',180]] : [[650,'triangle',280]],
+  thesisInv:   ()  => [[520,'sawtooth',160],[330,'sawtooth',280]],
+  qalHot:      dir => dir === 'short' ? [[520,'sawtooth',90],[520,'sawtooth',90]] : [[1020,'sawtooth',90],[1020,'sawtooth',90]],
+  // Brief: acorde ascendente de 3 notas (el aviso más "importante" del sistema,
+  // por eso suena a fanfarria corta y no se parece a ninguna otra categoría).
+  briefTop:    dir => { const b = dir === 'short' ? 400 : 620; return [[b,'sine',120],[b*1.26,'sine',120],[b*1.5,'sine',220]]; },
+  briefMkt:    ()  => [[540,'triangle',170],[540,'triangle',170],[760,'triangle',260]],
+  confluence:  dir => [[dir === 'long' ? 1040 : 460,'triangle',180]],
+  score:       ()  => [[660,'square',110]],
+  align:       dir => [[dir === 'long' ? 880 : 440,'sine',130]],
+};
+function playAlertSound(cat, dir) {
+  if (!soundEnabled) return;
+  const build = ALERT_SOUNDS[cat];
+  const seq = build ? build(dir) : [[700, 'sine', 150]];
+  let t = 0;
+  for (const [freq, type, dur] of seq) {
+    setTimeout(() => { if (typeof beep === 'function') beep(freq, type, dur); }, t);
+    t += dur + 50;
+  }
 }
 
 // ── Safe Storage Helper ───────────────────────────────────────────────────
@@ -433,7 +471,12 @@ function saveAutoTracked() {
 // Cada vez que un símbolo entra al Top-4 de una estrategia se registra como
 // "señal" con su precio de entrada; 30min/1h después se evalúa si el precio
 // se movió a favor, y así se mide qué estrategia acierta más en la práctica.
-let stratSignals    = JSON.parse(localStorage.getItem('scalp_stratsig') || '[]');
+let stratSignals    = JSON.parse(localStorage.getItem('scalp_stratsig') || '[]')
+  // 'indConf' (Confluencia de indicadores RSI/MACD/ADX/TSI) se retiró: no dio
+  // resultados. Sus señales viejas se purgan para no gastar slots del buffer
+  // FIFO — cada slot ocupado por una estrategia muerta es una señal viva que
+  // se desaloja antes de poder evaluarse a 1h.
+  .filter(s => s.strategy !== 'indConf');
 let activeStratPick = new Map(); // 'estrategia|símbolo|lado' → true mientras siga en el Top
 let activePanelPick = new Map(); // igual pero para detecciones de paneles (confluencia/salud/potencial)
 // 3000 alcanzaba de sobra cuando el registro solo corría con el Lab abierto;
@@ -447,8 +490,7 @@ const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-
   confluence: 'Confluencia', health: 'Saludable', promising: 'Prometedoras (heat)',
   patternWM: 'Patrón W/M 15m', patternWM1h: 'Patrón W/M 1h',
   squeeze: 'Squeeze/Acum. (potencial)', outlier: 'Outlier real',
-  momentum: 'Momentum confirmado (5%/10%)',
-  indConf: 'Indicadores 4/4 (15m)' };
+  momentum: 'Momentum confirmado (5%/10%)' };
 let stratRegimeFilter = 'ALL'; // 'ALL' | 'ALCISTA' | 'BAJISTA' | 'VOLÁTIL' | 'LATERAL'
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas
 let filterFavOnly    = false;

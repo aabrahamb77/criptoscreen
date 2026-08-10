@@ -550,7 +550,7 @@ function renderSeguimiento() {
     if (prev && prev !== 'inv' && th.estado === 'inv') {
       if (canAlert('thesisInv')) {
         showToast(`❌ ${sym}: tesis ${th.dirUp ? 'LONG' : 'SHORT'} invalidada (${th.movePct.toFixed(1)}%)`, th.dirUp ? 'short' : 'long');
-        if (soundEnabled) beep(330, 'sine', 200);
+        playAlertSound('thesisInv');
         notifyDesktop(`❌ ${sym} — tesis invalidada`, `Movió ${th.movePct.toFixed(1)}% en contra desde la detección`);
       }
     }

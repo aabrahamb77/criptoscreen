@@ -24,6 +24,7 @@ let confCache     = new Map();  // symbol → resultado de confluencia del últi
 let prevConfCount = new Map();  // symbol → count anterior (para alertar al llegar a ≥6)
 let _oiSigCache   = new Map();  // symbol|tf → σ de cambios de OI (se limpia en cada load)
 let _qwrCache     = { ts: 0, html: '' };
+let prevQalHot    = new Set();  // símbolos ya resaltados (>5% 1h) en el cuadrante alineado — evita re-alertar cada ciclo
 
 // ── Calibración del radar: señales registradas y su resultado ──────────────
 const CONF_CHECK_NAMES   = ['Multi-TF', 'CVD+funding', 'Régimen', 'Liquidez', 'Riesgo'];
@@ -484,7 +485,7 @@ function renderConfluence(scored) {
     const prev = prevConfCount.get(c.symbol) ?? 0;
     if (canAlert('confluence') && c.count >= 5 && prev < 5) {
       showToast(`🎯 ${c.symbol} ${c.count}/5 confluencia ${c.side.toUpperCase()}`, c.side);
-      if (soundEnabled) beep(c.side === 'long' ? 1040 : 460, 'triangle', 180);
+      playAlertSound('confluence', c.side);
       notifyDesktop(`🎯 ${c.symbol} ${c.count}/5 ${c.side.toUpperCase()}`, c.checks.filter(ch => !ch.ok).map(ch => `✗ ${ch.k}`).join(' · ') || 'Todas las señales en verde');
     }
     prevConfCount.set(c.symbol, c.count);
@@ -642,7 +643,23 @@ function renderQuadAligned(rows) {
   };
   // las 4/4 primero, luego por cuadrante y magnitud del movimiento 1h
   items.sort((a, b) => b.tfs - a.tfs || order[a.quad] - order[b.quad] || Math.abs(b.p1h) - Math.abs(a.p1h));
-  const chips = items.slice(0, 18).map(it => {
+  const visible = items.slice(0, 18);
+
+  // Alerta: moneda que ENTRA resaltada (>5% en 1h) al cuadrante alineado —
+  // solo al aparecer, no en cada ciclo mientras se mantiene caliente.
+  const nowHot = new Set();
+  for (const it of visible) {
+    if (Math.abs(it.p1h) <= 5) continue;
+    nowHot.add(it.symbol);
+    if (prevQalHot.has(it.symbol) || !canAlert('qalHot')) continue;
+    const dir = it.p1h >= 0 ? 'long' : 'short';
+    showToast(`🔥 ${it.symbol} resaltada en cuadrante alineado (${it.quad}) — ${fmtPct(it.p1h)} en 1h`, dir);
+    playAlertSound('qalHot', dir);
+    notifyDesktop(`🔥 ${it.symbol} — cuadrante alineado ${it.quad}`, `${fmtPct(it.p1h)} en 1h — movimiento fuerte`);
+  }
+  prevQalHot = nowHot;
+
+  const chips = visible.map(it => {
     const [bg, fg] = colors[it.quad];
     const pc = it.p1h >= 0 ? '#55bb88' : '#ee6666';
     const full = it.tfs === 4;
