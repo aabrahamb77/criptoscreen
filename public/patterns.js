@@ -1,8 +1,12 @@
 /* public/patterns.js
  * Detector de DOBLE SUELO (W) y DOBLE TECHO (M) con ruptura de línea de cuello,
- * en DOS temporalidades: velas 15m (~24h) y velas 1h (~50h).
+ * en TRES temporalidades: velas 15m (~24h), 1h (~8 días) y 4h (~8 días).
  *
- * Método (idéntico en ambas TF, con parámetros propios):
+ * Las velas de 4h no vienen del servidor: se agregan aquí a partir de las 200
+ * velas de 1h que ya trae cada fila (row.k60), igual que core.js agrega las de
+ * 15m desde las de 5m. Sin coste de red: 200 velas de 1h → 50 velas de 4h.
+ *
+ * Método (idéntico en las tres TF, con parámetros propios):
  *  1. Pivotes: mínimo/máximo local = extremo de una ventana de ±N velas.
  *  2. Doble suelo: dos pivotes-mínimo casi al mismo precio (tolerancia en ATR,
  *     no en % fijo — comparable entre monedas), con un rebote intermedio de
@@ -19,6 +23,7 @@
 
 const PATTERN_CFG = {          // ── velas 15m ──
   tf:           '15m',
+  minBars:      30,    // mínimo de velas para intentar la detección
   pivotWin:     2,     // pivote = extremo de ±2 velas (30 min a cada lado)
   tolExtremes:  0.35,  // |suelo1 − suelo2| ≤ 0.35 × ATR(15m)
   minDepth:     1.0,   // profundidad valle→cuello ≥ 1 × ATR
@@ -30,6 +35,7 @@ const PATTERN_CFG = {          // ── velas 15m ──
 
 const PATTERN_CFG_1H = {       // ── velas 1h (estructura de swing más grande) ──
   tf:           '1h',
+  minBars:      20,
   pivotWin:     2,     // pivote = extremo de ±2 velas (2h a cada lado)
   tolExtremes:  0.4,   // algo más tolerante: los extremos de 1h son más rugosos
   minDepth:     1.0,
@@ -37,6 +43,18 @@ const PATTERN_CFG_1H = {       // ── velas 1h (estructura de swing más gran
   maxSep:       30,    // hasta 30h (limitado por las ~50 velas disponibles)
   maxAge2nd:    10,    // el 2º extremo en las últimas 10 velas (10h)
   breakWindow:  2,     // cruce del cuello en las últimas 2 velas (2h)
+};
+
+const PATTERN_CFG_4H = {       // ── velas 4h (swing de varios días) ──
+  tf:           '4h',
+  minBars:      24,    // de las ~50 velas de 4h que salen de las 200 de 1h
+  pivotWin:     2,     // pivote = extremo de ±2 velas (8h a cada lado)
+  tolExtremes:  0.45,  // los extremos de 4h son los más rugosos de las tres TF
+  minDepth:     1.0,
+  minSep:       3,     // 12h mínimo entre suelos
+  maxSep:       20,    // hasta 80h (~3,3 días), dentro de las 50 velas disponibles
+  maxAge2nd:    8,     // el 2º extremo en las últimas 8 velas (32h)
+  breakWindow:  2,     // cruce del cuello en las últimas 2 velas (8h)
 };
 
 // ── Pivotes (fractales) ──────────────────────────────────────────────────────
@@ -69,7 +87,7 @@ function _patAtr(k) {
 
 // ── Detección genérica sobre una serie de velas con una config de TF ─────────
 function _detectDouble(k, C) {
-  if (!k || k.c.length < (C.tf === '1h' ? 20 : 30)) return null;
+  if (!k || k.c.length < C.minBars) return null;
   const n = k.c.length;
   const atr = _patAtr(k);
   if (!atr) return null;
@@ -165,13 +183,50 @@ function _detectDouble(k, C) {
   return W || M;
 }
 
+// ── Velas de 4h agregadas desde las de 1h ───────────────────────────────────
+// row.k60 trae 200 velas de 1h (~8 días) → 50 velas de 4h. Buckets alineados al
+// reloj UTC (00/04/08/12/16/20), que es como los reparte cualquier exchange, así
+// que el cuello coincide con el que se ve en un gráfico de 4h normal.
+// El resultado se cachea en la propia fila: allRows se reconstruye entera en
+// cada ciclo (main.js L34), así que la caché se invalida sola.
+function _patAgg4h(row) {
+  if (row._k240) return row._k240;
+  const k = row.k60;
+  if (!k || !k.t || k.c.length < 8) return null;
+  const a = { t: [], o: [], h: [], l: [], c: [], v: [] };
+  let bucket = -1;
+  for (let i = 0; i < k.c.length; i++) {
+    const b = Math.floor(k.t[i] / 14_400_000); // bucket de 4h
+    if (b !== bucket) {
+      bucket = b;
+      a.t.push(b * 14_400_000); a.o.push(k.o[i]); a.h.push(k.h[i]);
+      a.l.push(k.l[i]); a.c.push(k.c[i]); a.v.push(k.v[i]);
+    } else {
+      const j = a.c.length - 1;
+      a.h[j] = Math.max(a.h[j], k.h[i]);
+      a.l[j] = Math.min(a.l[j], k.l[i]);
+      a.c[j] = k.c[i];
+      a.v[j] += k.v[i];
+    }
+  }
+  row._k240 = a;
+  return a;
+}
+
 // Mejor patrón vigente por fila del screener, en cada temporalidad
 function detectDoublePattern(row)   { return _detectDouble(row.k15, PATTERN_CFG); }
 function detectDoublePattern1h(row) { return _detectDouble(row.k60, PATTERN_CFG_1H); }
+function detectDoublePattern4h(row) { return _detectDouble(_patAgg4h(row), PATTERN_CFG_4H); }
 
 // ── Escaneo por ciclo + alertas de ruptura de cuello ────────────────────────
 const _patPrevState = new Map(); // sym|tf → 'W:breaking' etc. (transiciones)
 const _patAlertAt   = new Map(); // sym|type|tf → ts de la última alerta (cooldown)
+
+// Categoría de alerta y cooldown por temporalidad. El cooldown crece con la
+// vela: la misma ruptura sigue "viva" mientras la vela no cierre, así que en 4h
+// avisar cada 30 min sería el mismo aviso repetido ocho veces.
+const _PAT_ALERT_CAT = { '15m': 'pattern15', '1h': 'pattern1h', '4h': 'pattern4h' };
+const _PAT_COOLDOWN  = { '15m': 30 * 60_000, '1h': 2 * 3600_000, '4h': 8 * 3600_000 };
 
 function _patAlerts(r, p, tf, breakingEntries) {
   if (!p) { _patPrevState.set(r.symbol + '|' + tf, null); return; }
@@ -188,13 +243,13 @@ function _patAlerts(r, p, tf, breakingEntries) {
 
       const key = r.symbol + '|' + p.type + '|' + tf;
       const lastAlert = _patAlertAt.get(key) || 0;
-      // cooldown mayor en 1h (las velas duran más, la misma ruptura persiste)
-      const cooldown = tf === '1h' ? 2 * 3600_000 : 30 * 60_000;
-      if (canAlert(tf === '1h' ? 'pattern1h' : 'pattern15') && Date.now() - lastAlert > cooldown) {
+      const cat = _PAT_ALERT_CAT[tf] || 'pattern15';
+      const cooldown = _PAT_COOLDOWN[tf] ?? 30 * 60_000;
+      if (canAlert(cat) && Date.now() - lastAlert > cooldown) {
         _patAlertAt.set(key, Date.now());
-        const tfTag = tf === '1h' ? ' (1h)' : ' (15m)';
+        const tfTag = ' (' + tf + ')';
         showToast(`${isW ? '🟢 DOBLE SUELO' : '🔴 DOBLE TECHO'}${tfTag} ${r.symbol} — ¡ruptura de cuello CONFIRMADA con cierre de vela!`, isW ? 'long' : 'short');
-        playAlertSound(tf === '1h' ? 'pattern1h' : 'pattern15', isW ? 'long' : 'short');
+        playAlertSound(cat, isW ? 'long' : 'short');
         notifyDesktop(
           `${isW ? '🟢 W' : '🔴 M'}${tfTag} ${r.symbol} — ruptura de cuello confirmada`,
           `Vela ${tf} cerró ${isW ? 'sobre' : 'bajo'} el cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · stop ${fmtPrice(p.stop)} · calidad ${p.quality}/10`
@@ -208,11 +263,14 @@ function _patAlerts(r, p, tf, breakingEntries) {
 function scanPatterns(rows) {
   const breaking15 = []; // rompiendo cuello AHORA en 15m (→ Comparador 'patternWM')
   const breaking1h = []; // ídem en 1h (→ 'patternWM1h', evidencia separada)
+  const breaking4h = []; // ídem en 4h (→ 'patternWM4h', evidencia separada)
   for (const r of rows) {
     r.pattern   = detectDoublePattern(r);
     r.pattern1h = detectDoublePattern1h(r);
+    r.pattern4h = detectDoublePattern4h(r);
     _patAlerts(r, r.pattern,   '15m', breaking15);
     _patAlerts(r, r.pattern1h, '1h',  breaking1h);
+    _patAlerts(r, r.pattern4h, '4h',  breaking4h);
   }
 
   // Comparador: cada TF acumula su PROPIA evidencia (misma vara que las demás
@@ -220,6 +278,7 @@ function scanPatterns(rows) {
   if (typeof logPanelDetections === 'function') {
     logPanelDetections('patternWM', breaking15);
     logPanelDetections('patternWM1h', breaking1h);
+    logPanelDetections('patternWM4h', breaking4h);
   }
 
   // Resuelve objetivo/stop de los patrones en seguimiento — SIEMPRE, tenga o
@@ -238,16 +297,18 @@ function _patBadgeOne(row, p, tf) {
                  : p.state === 'forming' ? 'formándose' : 'cuello roto';
   const title = `${isW ? 'Doble suelo (W)' : 'Doble techo (M)'} en ${tf} — ${stateTxt} · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · stop ${fmtPrice(p.stop)} · calidad ${p.quality}/10 — clic para ver el gráfico`;
   const cls = `pat-badge ${isW ? 'pat-w' : 'pat-m'}${p.state === 'breaking' ? ' pat-breaking' : ''}${p.state === 'forming' || p.state === 'confirming' ? ' pat-dim' : ''}`;
-  const tfTag = tf === '1h' ? '<span class="pat-tf">1h</span>' : '';
+  const tfTag = tf === '15m' ? '' : `<span class="pat-tf">${tf}</span>`; // 15m es el implícito
   const suffix = p.state === 'breaking' ? '⚡' : p.state === 'confirming' ? '⏳' : p.state === 'broken' ? '✓' : '';
   return `<span class="${cls}" title="${title}" onclick="event.stopPropagation();openDetail('${row.symbol}')">${isW ? 'W' : 'M'}${tfTag}${suffix}</span>`;
 }
 
 function patternBadge(row) {
-  return _patBadgeOne(row, row.pattern, '15m') + _patBadgeOne(row, row.pattern1h, '1h');
+  return _patBadgeOne(row, row.pattern, '15m')
+       + _patBadgeOne(row, row.pattern1h, '1h')
+       + _patBadgeOne(row, row.pattern4h, '4h');
 }
 
-// ── Strips bajo el mapa: 15m arriba, 1h justo debajo ────────────────────────
+// ── Strips bajo el mapa: 15m arriba, luego 1h y 4h ──────────────────────────
 function _patStripInto(elId, rows, field, label) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -268,7 +329,7 @@ function _patStripInto(elId, rows, field, label) {
       : p.state === 'confirming'
         ? `<b style="color:#e0a830">⏳ esperando cierre</b>`
         : p.state === 'forming'
-          ? `<span style="color:#5a6a85">cuello a ${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%</span>`
+          ? `<span style="color:#bbc2cd">cuello a ${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%</span>`
           : `<span style="color:${isW ? '#2fe08a' : '#ff6666'}">roto ${(-distPct).toFixed(2)}%</span>`;
     return `<span class="pat-chip${p.state === 'breaking' ? ' pat-breaking' : ''}" onclick="openDetail('${r.symbol}')"
       title="${isW ? 'Doble suelo' : 'Doble techo'} (${p.tf}) · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · calidad ${p.quality}/10">
@@ -282,4 +343,5 @@ function _patStripInto(elId, rows, field, label) {
 function renderPatternStrip(rows) {
   _patStripInto('pattern-strip',    rows, 'pattern',   '◭ Patrones W/M 15m');
   _patStripInto('pattern-strip-1h', rows, 'pattern1h', '◭ Patrones W/M 1h');
+  _patStripInto('pattern-strip-4h', rows, 'pattern4h', '◭ Patrones W/M 4h');
 }

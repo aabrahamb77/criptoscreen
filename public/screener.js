@@ -143,7 +143,7 @@ function buildTooltip(r) {
   const lqTot = lq ? lq.l + lq.s : 0;
   const lqStr = lqTot > 0 ? `${lq.s >= lq.l ? '↑S' : '↓L'} ${fmtUSD(lqTot)}` : '—';
   const lqC   = lqTot > 0 ? (lq.s >= lq.l ? '#55bb88' : '#ee6666') : '#3a4a60';
-  return `<div class="btip-sym">${r.symbol} <span style="color:#3a4a60;font-weight:400;font-size:10px">${fmtPrice(r.price)}</span></div>
+  return `<div class="btip-sym">${r.symbol} <span style="color:#a5adb7;font-weight:400;font-size:10px">${fmtPrice(r.price)}</span></div>
     <div class="btip-row"><span class="btip-lbl">OI total</span><span class="btip-val" style="color:#6080a0">${fmtOI(r.oiUSD)}</span></div>
     <div class="btip-row"><span class="btip-lbl">OI  1h</span><span class="btip-val" style="color:${fc(r.oi1h)}">${f(r.oi1h)}</span></div>
     <div class="btip-row"><span class="btip-lbl">OI  4h</span><span class="btip-val" style="color:${fc(r.oi4h)}">${f(r.oi4h)}</span></div>
@@ -157,30 +157,99 @@ function buildTooltip(r) {
     <div class="btip-row"><span class="btip-lbl">ρ BTC</span><span class="btip-val" style="color:${r.btcCorr == null ? '#3a4a60' : r.btcCorr >= 0.6 ? '#7a9ad0' : r.btcCorr > -0.3 ? '#55bb88' : '#bb96ee'}">${r.btcCorr == null ? '—' : r.btcCorr.toFixed(2)}</span></div>
     <div class="btip-row"><span class="btip-lbl">Liquidez</span><span class="btip-val" style="color:#6080a0">${fmtOI(r.turnover24h)}/24h</span></div>
     <div class="btip-row"><span class="btip-lbl">Funding</span><span class="btip-val" style="color:${frC}">${frStr}</span></div>
-    ${getQuadrantHistory(r.symbol) ? `<div style="margin-top:6px;border-top:1px solid #141c28;padding-top:5px"><span style="color:#2a3848;font-size:9px;margin-right:4px">Historial:</span>${getQuadrantHistory(r.symbol)}</div>` : ''}`;
+    ${getQuadrantHistory(r.symbol) ? `<div style="margin-top:6px;border-top:1px solid #141c28;padding-top:5px"><span style="color:#9098a0;font-size:9px;margin-right:4px">Historial:</span>${getQuadrantHistory(r.symbol)}</div>` : ''}`;
 }
 
 // ── Quadrant change detection ──────────────────────────────────────────────
 // ── Alertas sonoras ────────────────────────────────────────────────────────
-function beep(freq = 880, type = 'sine', dur = 130) {
+// UN solo AudioContext para toda la sesión. Antes se creaba uno por nota y no
+// se cerraba nunca: Chrome corta alrededor del sexto AudioContext por pestaña,
+// así que en cuanto las alarmas pasaron a durar segundos (decenas de notas) el
+// sonido se quedaba mudo a los pocos segundos. Con uno compartido no hay tope.
+let _audioCtx = null;
+let _master = null;          // volumen general, ajustable desde ⚙️
+const _liveOsc = new Set();  // osciladores sonando ahora (para poder cortarlos)
+
+// Volumen 0–1, persistido. Antes cada nota salía a 0.10 fijo (10% de amplitud):
+// audible en una habitación en silencio y poco más. El tope ahora es ~8x eso.
+let alertVolume = Math.min(1, Math.max(0, parseFloat(localStorage.getItem('scalp_volume')) || 0.85));
+
+function _audio() {
+  if (!_audioCtx) {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (_) { return null; }
+    // Cadena: nota → master → limitador → altavoces.
+    // El limitador (compresor con ratio alto y umbral cerca de 0 dB) permite
+    // subir el volumen sin que las ondas square/sawtooth —que tienen mucha
+    // energía en armónicos— saturen y suenen a chicharra rota cuando dos notas
+    // se solapan.
+    const comp = _audioCtx.createDynamicsCompressor();
+    comp.threshold.value = -3;
+    comp.knee.value = 0;
+    comp.ratio.value = 20;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.1;
+    comp.connect(_audioCtx.destination);
+    _master = _audioCtx.createGain();
+    _master.gain.value = alertVolume;
+    _master.connect(comp);
+  }
+  // El navegador arranca el contexto suspendido hasta que hay un gesto del
+  // usuario; reanudarlo aquí hace que la primera alarma tras un clic ya suene.
+  if (_audioCtx.state === 'suspended') _audioCtx.resume().catch(() => {});
+  return _audioCtx;
+}
+
+function setAlertVolume(v) {
+  alertVolume = Math.min(1, Math.max(0, Number(v) || 0));
+  safeSetItem('scalp_volume', String(alertVolume));
+  if (_master) _master.gain.value = alertVolume;
+  const lbl = document.getElementById('acfg-vol-val');
+  if (lbl) lbl.textContent = Math.round(alertVolume * 100) + '%';
+}
+
+// vol: multiplicador 0–1 sobre el volumen general (lo usa la prioridad para que
+// las rupturas W/M suenen por encima del resto).
+function beep(freq = 880, type = 'sine', dur = 130, vol = 1) {
+  const ctx = _audio();
+  if (!ctx || !_master) return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
+    osc.connect(gain); gain.connect(_master);
     osc.type = type; osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.10, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur/1000);
-    osc.start(); osc.stop(ctx.currentTime + dur/1000);
+    const t0 = ctx.currentTime;
+    const peak = Math.max(0.001, 0.9 * Math.min(1, Math.max(0, vol)));
+    gain.gain.setValueAtTime(peak, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur / 1000);
+    osc.start(t0); osc.stop(t0 + dur / 1000);
+    _liveOsc.add(osc);
+    osc.onended = () => _liveOsc.delete(osc);
   } catch(_) {}
+}
+
+// Prueba corta del volumen actual (NO es una alarma: no dura 10s ni tiene prioridad)
+function testAlertVolume() {
+  beep(880, 'square', 140, 1);
+  setTimeout(() => beep(1180, 'square', 200, 1), 190);
+}
+
+// Corta en seco lo que esté sonando (lo usa stopAlertSound al silenciar o al
+// interrumpir una alarma con otra de más prioridad).
+function stopAllBeeps() {
+  for (const osc of [..._liveOsc]) {
+    try { osc.stop(); } catch (_) {}
+    _liveOsc.delete(osc);
+  }
 }
 function toggleSound() {
   soundEnabled = !soundEnabled;
+  if (typeof stopAlertSound === 'function') stopAlertSound(); // corta la alarma en curso
   const btn = document.getElementById('sound-btn');
   btn.textContent = soundEnabled ? '🔔' : '🔕';
-  btn.title = soundEnabled ? 'Alertas sonoras ON' : 'Alertas sonoras OFF';
+  btn.title = soundEnabled ? 'Alertas sonoras ON (10s por alarma · clic o tecla para callarla)' : 'Alertas sonoras OFF';
   btn.classList.toggle('snd-on', soundEnabled);
-  if (soundEnabled) beep(880, 'sine', 80);
+  if (soundEnabled) beep(880, 'sine', 80); // confirmación corta, no es una alarma
 }
 
 // ── Panel de configuración de alertas (botón ⚙️ del header) ─────────────────
@@ -205,8 +274,16 @@ function renderAlertCfg() {
     <div class="acfg-head">⚙️ Alertas — qué puede avisarte
       <button class="dt-close" onclick="toggleAlertCfg()" style="margin-left:auto">✕</button>
     </div>
+    <div class="acfg-vol">
+      <span>🔊 Volumen</span>
+      <input type="range" min="0" max="1" step="0.05" value="${alertVolume}"
+        oninput="setAlertVolume(this.value)" title="Volumen de las alarmas">
+      <b id="acfg-vol-val">${Math.round(alertVolume * 100)}%</b>
+      <button class="pt-btn" onclick="testAlertVolume()">Probar</button>
+    </div>
     ${rows}
-    <div class="acfg-note">El toast, el sonido (🔔) y la notificación de escritorio (🖥) de cada categoría se activan o silencian juntos. Los cambios se guardan solos.</div>`;
+    <div class="acfg-note">El toast, el sonido (🔔) y la notificación de escritorio (🖥) de cada categoría se activan o silencian juntos. Los cambios se guardan solos.<br>
+    Cada alarma suena <b>10 segundos</b>; cualquier clic o tecla la calla. Las rupturas de cuello <b>W/M (15m · 1h · 4h)</b> tienen prioridad: si están sonando, ninguna otra alerta las interrumpe, si entra una W/M mientras suena otra cosa la pisa, y además suenan al volumen máximo mientras el resto va un 30% por debajo.</div>`;
 }
 
 function showToast(msg, type = '') {
@@ -238,7 +315,7 @@ function scoreCell(row) {
   const sc = scoreSymbol(row);
   const isLong = sc.longScore >= sc.shortScore;
   const score  = Math.max(sc.longScore, sc.shortScore);
-  if (score < 2) return `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span style="color:#283040;font-size:10px">—</span></div>`;
+  if (score < 2) return `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span style="color:#8b9098;font-size:10px">—</span></div>`;
 
   // Momentum arrow — lee del snapshot del ciclo anterior
   const prev = scoreSnap.get(row.symbol);

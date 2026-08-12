@@ -6,7 +6,7 @@
 <title>Scalp Screener</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css?v=26">
+<link rel="stylesheet" href="/styles.css?v=30">
 
 </head>
 <body>
@@ -77,14 +77,15 @@
   </div>
   <div id="aligned-strip" title="Monedas con el MISMO cuadrante en 15m·1h·4h·1d — tendencia consistente de punta a punta. Clic: localizar en la tabla."></div>
   <div id="pattern-strip" title="Dobles suelos (W) y dobles techos (M) detectados en velas 15m (~24h). ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico con el patrón dibujado."></div>
-  <div id="pattern-strip-1h" title="Dobles suelos (W) y dobles techos (M) detectados en velas 1h (~50h) — estructura de swing más grande, rupturas más lentas pero de mayor recorrido. ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico."></div>
+  <div id="pattern-strip-1h" title="Dobles suelos (W) y dobles techos (M) detectados en velas 1h (~8 días) — estructura de swing más grande, rupturas más lentas pero de mayor recorrido. ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico."></div>
+  <div id="pattern-strip-4h" title="Dobles suelos (W) y dobles techos (M) detectados en velas 4h (~50 velas, ~8 días) — la estructura más grande de las tres: las más raras, las más lentas en confirmar y las de mayor recorrido. La ruptura solo cuenta cuando CIERRA una vela de 4h, así que puede tardar horas en confirmarse. ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico."></div>
   <div id="outlier-strip" title="Monedas que se separan del resto del mercado (OI+precio 1h) con liquidez real detrás. 🔥 sostenido = ≥15min seguidas fuera de rango · ⚡ pico puntual = acaba de saltar fuerte. Clic: abrir en el radar."></div>
   <div id="momentum-strip" title="Momentum confirmado por umbrales absolutos: precio 1h ≥5% Y OI 1h ≥10% expandiéndose (dinero nuevo, no cierre de posiciones), con liquidez real. Clic: abrir en el radar."></div>
   <div id="map-resizer" title="Arrastra para ajustar la altura del mapa"></div>
 <div id="filter-bar">
   <input id="filter-search" placeholder="🔍 Buscar..." oninput="render()">
   <button class="flt-btn" id="btn-favs" onclick="toggleFavFilter()">★ Favoritos</button>
-  <span style="font-size:10px;color:#283040">OI 5m mín:</span>
+  <span style="font-size:10px;color:#8b9098">OI 5m mín:</span>
   <select class="flt-sel" id="filter-oi" onchange="render()">
     <option value="0">Todos</option>
     <option value="0.3">+0.3%</option>
@@ -93,17 +94,17 @@
     <option value="2">+2%</option>
   </select>
   <span id="filter-count"></span>
-  <span style="font-size:10px;color:#283040;margin-left:4px">Cuadrante:</span>
+  <span style="font-size:10px;color:#8b9098;margin-left:4px">Cuadrante:</span>
   <button class="quad-flt-btn" data-quad="LONG"   onclick="toggleQuadFilter('LONG')">▲L</button>
   <button class="quad-flt-btn" data-quad="SHORT"  onclick="toggleQuadFilter('SHORT')">▼S</button>
   <button class="quad-flt-btn" data-quad="SQUEEZE" onclick="toggleQuadFilter('SQUEEZE')">↖Sq</button>
   <button class="quad-flt-btn" data-quad="LIQ"    onclick="toggleQuadFilter('LIQ')">↙Liq</button>
-  <span style="font-size:10px;color:#283040;margin-left:4px">Score:</span>
+  <span style="font-size:10px;color:#8b9098;margin-left:4px">Score:</span>
   <button class="score-flt-btn active" id="sf-0"  onclick="setScoreFilter(0)">Todos</button>
   <button class="score-flt-btn"        id="sf-4"  onclick="setScoreFilter(4)">≥4</button>
   <button class="score-flt-btn"        id="sf-6"  onclick="setScoreFilter(6)">≥6</button>
   <button class="score-flt-btn"        id="sf-8"  onclick="setScoreFilter(8)">≥8</button>
-  <span style="font-size:10px;color:#283040;margin-left:4px">Setup:</span>
+  <span style="font-size:10px;color:#8b9098;margin-left:4px">Setup:</span>
   <button class="flt-btn preset-btn" id="preset-squeeze" onclick="setPreset('squeeze')" title="OI bajando + precio subiendo + volumen alto: rally por cierre de cortos — frágil, candidato a fade cuando se agote">⚡ Squeeze</button>
   <button class="flt-btn preset-btn" id="preset-cont"    onclick="setPreset('cont')"    title="OI subiendo en 5m/1h/4h con precio acompañando: dinero nuevo entrando — continuación de tendencia">🚀 Continuación</button>
   <button class="flt-btn preset-btn" id="preset-capit"   onclick="setPreset('capit')"   title="OI y precio cayendo fuerte: desapalancamiento/cascada — candidata a reversión LXR">💥 Capitulación</button>
@@ -184,7 +185,7 @@
     <div class="conf-head">
       <span class="conf-title">🚀 Monedas con potencial</span>
       <span class="conf-sub">mismo método que detectó STG: funding extremo · OI acumulando multi-ventana · giro de precio · independiente de BTC · flujo. Ordenadas por potencial — clic para el radar.</span>
-      <span id="potential-count" style="font-size:9px;color:#3a5070;margin-left:auto"></span>
+      <span id="potential-count" style="font-size:9px;color:#aab3c1;margin-left:auto"></span>
     </div>
     <div id="potential-grid"><div class="cc-note">Esperando datos…</div></div>
   </div>
@@ -193,7 +194,7 @@
 <!-- ── Laboratorio de estrategias ── -->
 <div id="lab-tab">
   <div id="lab-regime">
-    <div id="lab-regime-badge" style="color:#4a6080;border-color:#1a2535">CALCULANDO</div>
+    <div id="lab-regime-badge" style="color:#b3bcc9;border-color:#1a2535">CALCULANDO</div>
     <div id="lab-regime-stats">Esperando datos...</div>
     <div id="lab-regime-dist"></div>
   </div>
@@ -201,44 +202,16 @@
   <div id="lab-signals">
     <div class="lab-conf-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span>🎯 Señales accionables AHORA — confluencia + evidencia histórica + niveles</span>
-      <span style="font-size:9px;color:#2e4060;margin-left:auto">solo se muestran señales con ≥2 estrategias de acuerdo · la evidencia sale del Comparador (WR real a 1h con IC de Wilson) · clic = gráfico</span>
+      <span style="font-size:9px;color:#9da6b5;margin-left:auto">solo se muestran señales con ≥2 estrategias de acuerdo · la evidencia sale del Comparador (WR real a 1h con IC de Wilson) · clic = gráfico</span>
     </div>
     <div id="lab-signals-grid"><span class="lr-empty">Calculando…</span></div>
-  </div>
-
-  <div id="lab-track">
-    <div class="track-summary" id="track-summary" onclick="toggleTrackPanel()">
-      <div class="track-summary-head">
-        <span class="track-summary-title">📈 Seguimiento de monedas</span>
-        <span class="track-summary-count" id="track-summary-count"></span>
-        <span class="track-summary-toggle" id="track-summary-toggle">▾ Ver todas</span>
-      </div>
-      <div class="track-summary-sub">🔥 Más prometedoras para comprar o seguir ahora mismo</div>
-      <div class="track-summary-picks" id="track-summary-picks"><span class="lr-empty">Calculando...</span></div>
-    </div>
-    <div id="lab-track-body" class="lab-track-body-collapsed">
-      <div class="sc-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span>Historial detallado — tasa de acierto real (score ≥ 6) a 30min y 1h</span>
-        <select id="track-regime-filter" class="lab-filter-sel" onchange="trackRegimeFilter = this.value; renderSeguimiento()">
-          <option value="ALL">Todos los regímenes</option>
-          <option value="ALCISTA">Solo ALCISTA</option>
-          <option value="BAJISTA">Solo BAJISTA</option>
-          <option value="VOLÁTIL">Solo VOLÁTIL</option>
-          <option value="LATERAL">Solo LATERAL</option>
-        </select>
-        <button class="pt-btn" style="margin-left:auto" onclick="exportHistory()">Exportar JSON</button>
-        <button class="pt-btn pt-btn-danger" onclick="clearTrackHistory()">Limpiar</button>
-      </div>
-      <div id="track-ledger"></div>
-      <div id="lab-track-cards"></div>
-    </div>
   </div>
 
   <div id="lab-health">
     <div class="lab-conf-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span>💎 Salud — monedas en buen momento y seguras de operar</span>
-      <span id="lab-health-count" style="font-size:9px;color:#3a5070"></span>
-      <span style="font-size:9px;color:#2e4060;margin-left:auto">liquidez · tendencia · flujo · OI · funding · liqs · extensión · rango — nota A/B = saludable</span>
+      <span id="lab-health-count" style="font-size:9px;color:#aab3c1"></span>
+      <span style="font-size:9px;color:#9da6b5;margin-left:auto">liquidez · tendencia · flujo · OI · funding · liqs · extensión · rango — nota A/B = saludable</span>
     </div>
     <div id="lab-health-cards"><span class="lr-empty">Calculando...</span></div>
   </div>
@@ -286,7 +259,7 @@
         </div>
         <button class="pt-btn pt-btn-danger" onclick="clearPaperTrades()">Limpiar</button>
       </div>
-      <div id="pt-validated-strats" style="padding:6px 10px;font-size:9px;color:#3a5070;border-bottom:1px solid #141e2e">Calculando...</div>
+      <div id="pt-validated-strats" style="padding:6px 10px;font-size:9px;color:#aab3c1;border-bottom:1px solid #141e2e">Calculando...</div>
       <div class="pt-section">Posiciones abiertas</div>
       <table class="pt-table">
         <thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Actual</th><th>PnL%</th><th>PnL$</th><th>Score</th><th>Estrategia</th><th>Tiempo</th></tr></thead>
@@ -311,7 +284,7 @@
         </div>
         <button class="pt-btn pt-btn-danger" onclick="clearPatternTrack()">Limpiar</button>
       </div>
-      <div style="padding:6px 10px;font-size:9px;color:#3a5070;border-bottom:1px solid #141e2e">Sin límite de tiempo — se cierra solo al tocar el objetivo o el stop del patrón. Cada señal se mide EN PARALELO con 3 estrategias de salida para saber cuál rinde más:</div>
+      <div style="padding:6px 10px;font-size:9px;color:#aab3c1;border-bottom:1px solid #141e2e">Sin límite de tiempo — se cierra solo al tocar el objetivo o el stop del patrón. Cada señal se mide EN PARALELO con 3 estrategias de salida para saber cuál rinde más:</div>
       <div id="patt-variants" style="padding:6px 10px;border-bottom:1px solid #141e2e"><span class="lr-empty">Acumulando señales completadas…</span></div>
       <div class="pt-section">En seguimiento</div>
       <table class="pt-table">
@@ -340,7 +313,7 @@
         <option value="favs">Favoritos + seguimiento</option>
       </select>
       <button class="pt-btn" onclick="runBacktest()">▶ Ejecutar replay</button>
-      <span id="bt-status" style="font-size:9px;color:#3a5070"></span>
+      <span id="bt-status" style="font-size:9px;color:#aab3c1"></span>
     </div>
     <div id="bt-results"><span class="lr-empty">Evalúa el patrón W/M (ruptura de cuello) contra una línea base Donchian sobre el histórico que guarda el servidor — elige ventana y ejecuta.</span></div>
   </div>
@@ -362,18 +335,18 @@
 
 <!-- ── Módulos JS (el orden importa: main.js arranca la app y va al final) ── -->
 <script src="/lxr.js?v=8"></script>
-<script src="/radar.js?v=21"></script>
-<script src="/core.js?v=26"></script>
-<script src="/screener.js?v=18"></script>
+<script src="/radar.js?v=22"></script>
+<script src="/core.js?v=31"></script>
+<script src="/screener.js?v=22"></script>
 <script src="/map.js?v=14"></script>
-<script src="/patterns.js?v=14"></script>
-<script src="/detail.js?v=17"></script>
+<script src="/patterns.js?v=16"></script>
+<script src="/detail.js?v=20"></script>
 <script src="/smc.js?v=6"></script>
-<script src="/btc.js?v=27"></script>
-<script src="/lab.js?v=18"></script>
-<script src="/track.js?v=16"></script>
-<script src="/backtest.js?v=8"></script>
-<script src="/brief.js?v=2"></script>
-<script src="/main.js?v=15"></script>
+<script src="/btc.js?v=28"></script>
+<script src="/lab.js?v=20"></script>
+<script src="/track.js?v=18"></script>
+<script src="/backtest.js?v=9"></script>
+<script src="/brief.js?v=4"></script>
+<script src="/main.js?v=16"></script>
 </body>
 </html>

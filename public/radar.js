@@ -502,14 +502,14 @@ function renderConfluence(scored) {
       : exp.hi < 50 ? '#ee6666' : '#8aa0c8';
     const expHtml = exp
       ? `<div class="cc-exp" style="color:${expCol}" title="WR real a +1h de señales pasadas con esta configuración (${exp.grp}) — IC 95%: ${exp.lo.toFixed(0)}–${exp.hi.toFixed(0)}%">📐 histórico ${exp.wr}%±${exp.pm} a +1h <span style="opacity:.6">(n=${exp.n})</span></div>`
-      : `<div class="cc-exp" style="color:#3a5070">📐 sin histórico suficiente para esta configuración</div>`;
+      : `<div class="cc-exp" style="color:#aab3c1">📐 sin histórico suficiente para esta configuración</div>`;
 
     // Niveles por ATR: de la señal a la orden sin salir de la tarjeta
     const rw = allRows.find(r2 => r2.symbol === c.symbol);
     const atrP = rw?.atr1h && rw.price ? rw.atr1h / rw.price : null;
     const dirn = c.side === 'long' ? 1 : -1;
     const lvlHtml = atrP
-      ? `<div class="cc-lvls">entra <b>${fmtPrice(rw.price)}</b> · stop <b class="neg">${fmtPrice(rw.price * (1 - dirn * atrP * 1.2))}</b> · TP <b class="pos">${fmtPrice(rw.price * (1 + dirn * atrP * 1.8))}</b> <span style="color:#2e4060">(ATR 1.2×/1.8×)</span></div>`
+      ? `<div class="cc-lvls">entra <b>${fmtPrice(rw.price)}</b> · stop <b class="neg">${fmtPrice(rw.price * (1 - dirn * atrP * 1.2))}</b> · TP <b class="pos">${fmtPrice(rw.price * (1 + dirn * atrP * 1.8))}</b> <span style="color:#9da6b5">(ATR 1.2×/1.8×)</span></div>`
       : '';
 
     // Filtro de régimen ACTIVO: si el cuadrante de la señal está rindiendo mal
@@ -525,7 +525,7 @@ function renderConfluence(scored) {
       <div class="cc-top">
         <span class="cc-sym">${c.symbol}</span>
         <span class="cc-side ${c.side}">${c.side.toUpperCase()}</span>
-        <span style="font-size:9px;color:#3a4558">${c.quad}</span>
+        <span style="font-size:9px;color:#a4a9b2">${c.quad}</span>
         <span class="cc-count" style="color:${color}">${c.count}/5${c.count === 5 ? ' 🔥' : ''}</span>
       </div>
       <div class="cc-dots">${c.checks.map(ch => `<div class="cc-dot${ch.ok ? ' ok' : ''}" title="${ch.k}: ${ch.d}">${ch.ok ? '✓' : '·'}</div>`).join('')}</div>
@@ -567,11 +567,11 @@ async function renderConfDetail(sym) {
   const rowsHtml = c.checks.map(ch => `<div style="display:flex;gap:8px;padding:2px 0">
       <span style="color:${ch.ok ? '#2fe08a' : '#aa4444'};width:14px;flex-shrink:0">${ch.ok ? '✓' : '✗'}</span>
       <span style="color:#7888aa;min-width:150px;flex-shrink:0">${ch.k}</span>
-      <span style="color:#4a5870">${ch.d}</span></div>`).join('');
+      <span style="color:#afb6c0">${ch.d}</span></div>`).join('');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#e8edf8">${sym}</b>
       <span class="cc-side ${c.side}">${c.side.toUpperCase()}</span>
-      <span style="color:#3a4558;font-size:10px">cuadrante ${c.quad} · ${c.count}/5</span>
+      <span style="color:#a4a9b2;font-size:10px">cuadrante ${c.quad} · ${c.count}/5</span>
       <a href="https://www.tradingview.com/chart/?symbol=BYBIT:${sym}USDT.P" target="_blank" style="margin-left:auto;font-size:10px;color:#4a90d0;text-decoration:none">TradingView ↗</a>
     </div>${rowsHtml}`;
 }
@@ -613,7 +613,7 @@ function renderQuadWinrates() {
         const col = !sig ? '#5a6a85' : wr >= 50 ? '#2fe08a' : '#ee6666';
         return `<span class="qwr-chip" title="aciertos a +1h estando en ${q} — n=${a.n}, IC 95%: ${ci.lo.toFixed(0)}–${ci.hi.toFixed(0)}%${sig ? '' : ' (no significativo aún)'}">${q} <b style="color:${col}">${wr.toFixed(0)}%<span style="font-weight:400;opacity:.55">±${Math.round(ci.pm)}</span></b></span>`;
       }).join('');
-  _qwrCache = { ts: Date.now(), html: `<span style="font-size:9px;color:#283040">WR +1h por cuadrante:</span>` + chips };
+  _qwrCache = { ts: Date.now(), html: `<span style="font-size:9px;color:#8b9098">WR +1h por cuadrante:</span>` + chips };
   el.innerHTML = _qwrCache.html;
 }
 
@@ -679,7 +679,7 @@ function renderQuadAligned(rows) {
       ${it.symbol}
       <span class="qal-q" style="background:${bg};color:${fg}">${it.quad}</span>
       <span class="qal-pct" style="color:${pc};${hot ? 'font-weight:800' : ''}">${fmtPct(it.p1h) ?? '—'}${hot ? ' 🔥' : ''}</span>
-      ${full ? '' : '<span class="qal-pct" style="color:#5a6a85">3/4</span>'}
+      ${full ? '' : '<span class="qal-pct" style="color:#bbc2cd">3/4</span>'}
     </span>`;
   }).join('');
   const fullCount = items.filter(i => i.tfs === 4).length;

@@ -348,11 +348,11 @@ function wrChip(winRate, n) {
 const ALERT_DEFAULTS = {
   pattern15:   true,   // ◭ ruptura de cuello W/M en 15m
   pattern1h:   true,   // ◭ ruptura de cuello W/M en 1h
+  pattern4h:   true,   // ◭ ruptura de cuello W/M en 4h
   patternDone: true,   // 🎯 patrón completado (tocó objetivo o stop)
   btcBias:     true,   // ₿ el sesgo de BTC cambió de dirección
   marketBias:  true,   // ⚖️ el sesgo general del mercado cambió (ALCISTA/BAJISTA/NEUTRAL)
   btcFib:      true,   // ₿ BTC entró en la zona dorada del Fibonacci (50%–61.8%)
-  thesisInv:   true,   // ❌ tesis del seguimiento invalidada
   qalHot:      true,   // 🔥 moneda entra resaltada al cuadrante alineado (>5% en 1h)
   briefTop:    true,   // 🧠 el brief promueve una moneda a tier A (fiable)
   briefMkt:    true,   // 🧠 cambia el veredicto de mercado del brief
@@ -363,11 +363,11 @@ const ALERT_DEFAULTS = {
 const ALERT_LABELS = {
   pattern15:   '◭ Ruptura de cuello W/M (15m)',
   pattern1h:   '◭ Ruptura de cuello W/M (1h)',
+  pattern4h:   '◭ Ruptura de cuello W/M (4h)',
   patternDone: '🎯 Patrón completado (objetivo/stop)',
   btcBias:     '₿ Cambio de sesgo de BTC',
   marketBias:  '⚖️ Cambio de sesgo general del mercado',
   btcFib:      '🟡 BTC en zona dorada del Fibonacci (50%–61.8%)',
-  thesisInv:   '❌ Tesis invalidada (seguimiento)',
   qalHot:      '🔥 Moneda resaltada en cuadrante alineado (>5% en 1h)',
   briefTop:    '🧠 Brief: moneda promovida a tier A (fiable)',
   briefMkt:    '🧠 Brief: cambia el veredicto de mercado',
@@ -391,11 +391,13 @@ function setAlertCfg(cat, on) {
 const ALERT_SOUNDS = {
   pattern15:   dir => dir === 'short' ? [[720,'square',150],[300,'square',190]]   : [[720,'square',150],[1150,'square',190]],
   pattern1h:   dir => dir === 'short' ? [[720,'square',150],[300,'square',190]]   : [[720,'square',150],[1150,'square',190]],
+  // 4h: mismo timbre que sus hermanas (se reconoce la familia) pero con una nota
+  // más — es la ruptura más rara y de mayor recorrido, conviene distinguirla.
+  pattern4h:   dir => dir === 'short' ? [[720,'square',150],[520,'square',150],[300,'square',230]] : [[720,'square',150],[950,'square',150],[1150,'square',230]],
   patternDone: dir => dir === 'short' ? [[520,'sine',150],[340,'sine',260]]       : [[860,'sine',110],[1160,'sine',110],[1460,'sine',170]],
   btcBias:     dir => dir === 'short' ? [[620,'sawtooth',150],[340,'sawtooth',230]] : [[620,'sawtooth',150],[1000,'sawtooth',230]],
   btcFib:      ()  => [[740,'sine',150],[980,'sine',280]],
   marketBias:  dir => dir === 'short' ? [[700,'triangle',130],[400,'triangle',180]] : dir === 'long' ? [[700,'triangle',130],[900,'triangle',180]] : [[650,'triangle',280]],
-  thesisInv:   ()  => [[520,'sawtooth',160],[330,'sawtooth',280]],
   qalHot:      dir => dir === 'short' ? [[520,'sawtooth',90],[520,'sawtooth',90]] : [[1020,'sawtooth',90],[1020,'sawtooth',90]],
   // Brief: acorde ascendente de 3 notas (el aviso más "importante" del sistema,
   // por eso suena a fanfarria corta y no se parece a ninguna otra categoría).
@@ -405,16 +407,69 @@ const ALERT_SOUNDS = {
   score:       ()  => [[660,'square',110]],
   align:       dir => [[dir === 'long' ? 880 : 440,'sine',130]],
 };
+// ── Motor de alarmas: 10 segundos, con prioridad ────────────────────────────
+// Antes cada alerta sonaba una vez (~300 ms) y era fácil no enterarse. Ahora el
+// motivo de la categoría se repite hasta completar ALERT_ALARM_MS.
+const ALERT_ALARM_MS = 10_000;
+
+// Prioridad: si entra una alarma MÁS o IGUAL de importante que la que suena, la
+// interrumpe; si es menos importante, se descarta (no se encola: 10s después el
+// dato ya no sirve). Las rupturas de cuello W/M mandan sobre todo lo demás —
+// son la única alerta con entrada, objetivo y stop definidos en el momento.
+const ALERT_PRIORITY = {
+  pattern4h:   3,  // ◭ ruptura de cuello W/M confirmada — lo más accionable
+  pattern1h:   3,
+  pattern15:   3,
+  patternDone: 2,  // 🎯 el patrón ya tocó objetivo o stop
+};                 // el resto: 1 (por defecto)
+
+// Hueco entre repeticiones: las W/M repiten más seguido (cadencia insistente),
+// el resto más espaciado para no agobiar durante los 10 s.
+const _alarmGap = prio => (prio >= 3 ? 450 : prio === 2 ? 700 : 1100);
+
+// La prioridad también se oye: las W/M suenan a todo el volumen configurado y
+// el resto por debajo, así se distinguen sin mirar la pantalla.
+const _alarmVol = prio => (prio >= 3 ? 1 : prio === 2 ? 0.85 : 0.7);
+
+let _alarm = null; // { cat, prio, timers: [] }
+
+function stopAlertSound() {
+  if (!_alarm) return;
+  for (const t of _alarm.timers) clearTimeout(t);
+  _alarm = null;
+  if (typeof stopAllBeeps === 'function') stopAllBeeps();
+}
+
 function playAlertSound(cat, dir) {
   if (!soundEnabled) return;
+  const prio = ALERT_PRIORITY[cat] || 1;
+  if (_alarm && prio < _alarm.prio) return; // suena algo más importante: no la pisamos
+  stopAlertSound();
+
   const build = ALERT_SOUNDS[cat];
   const seq = build ? build(dir) : [[700, 'sine', 150]];
+  const gap = _alarmGap(prio);
+  const vol = _alarmVol(prio);
+  const timers = [];
   let t = 0;
-  for (const [freq, type, dur] of seq) {
-    setTimeout(() => { if (typeof beep === 'function') beep(freq, type, dur); }, t);
-    t += dur + 50;
+  while (t < ALERT_ALARM_MS) {
+    for (const [freq, type, dur] of seq) {
+      const at = t;
+      timers.push(setTimeout(() => { if (typeof beep === 'function') beep(freq, type, dur, vol); }, at));
+      t += dur + 50;
+      if (t >= ALERT_ALARM_MS) break;
+    }
+    t += gap;
   }
+  _alarm = { cat, prio, timers };
+  timers.push(setTimeout(() => { _alarm = null; }, ALERT_ALARM_MS));
 }
+
+// Una alarma de 10 s necesita interruptor: el primer clic o tecla después de
+// que empiece la corta (es el gesto natural de "ya la he oído"). El botón 🔕
+// del header y la config de alertas siguen valiendo para apagarlas del todo.
+document.addEventListener('click', () => stopAlertSound(), true);
+document.addEventListener('keydown', () => stopAlertSound(), true);
 
 // ── Safe Storage Helper ───────────────────────────────────────────────────
 function safeSetItem(key, val) {
@@ -454,8 +509,6 @@ let trackHistory   = JSON.parse(localStorage.getItem('scalp_track') || '{}'); //
 let lastTrackLog   = new Map(); // symbol → ts del último snapshot guardado (throttle ~1/min)
 const TRACK_MAX    = 1500;      // ~25h de historial a 1 snapshot/min
 const TRACK_SCORE_MIN = 6;      // umbral de score para considerar "señal"
-let trackRegimeFilter = 'ALL';  // 'ALL' | 'ALCISTA' | 'BAJISTA' | 'VOLÁTIL' | 'LATERAL'
-let trackPanelExpanded = false; // tarjeta de seguimiento colapsada por defecto (lista puede ser larga)
 
 // ── Radar automático "on fire" ─────────────────────────────────────────────
 // symbol → { addedAt, expiresAt, side, heat }. Se auto-puebla con las monedas
@@ -488,7 +541,7 @@ const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-
   range: 'Ruptura rango', liq: 'Cascada liq.', sector: 'Rotación sectorial', whale: 'Ballenas',
   beta: 'Beta rezagada', alpha: 'Alpha propio',
   confluence: 'Confluencia', health: 'Saludable', promising: 'Prometedoras (heat)',
-  patternWM: 'Patrón W/M 15m', patternWM1h: 'Patrón W/M 1h',
+  patternWM: 'Patrón W/M 15m', patternWM1h: 'Patrón W/M 1h', patternWM4h: 'Patrón W/M 4h',
   squeeze: 'Squeeze/Acum. (potencial)', outlier: 'Outlier real',
   momentum: 'Momentum confirmado (5%/10%)' };
 let stratRegimeFilter = 'ALL'; // 'ALL' | 'ALCISTA' | 'BAJISTA' | 'VOLÁTIL' | 'LATERAL'

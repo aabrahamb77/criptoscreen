@@ -174,7 +174,7 @@ async function runBacktest() {
   const dc1h = _btAgg(dcEvents, 'm1h'), dc2h = _btAgg(dcEvents, 'm2h');
 
   const card = (title, n, a1, a2, extra = '') => `<div class="sc-card">
-    <div class="sc-name">${title}<span style="margin-left:auto;font-size:9px;color:#2e4060;font-weight:400">${n} señales</span></div>
+    <div class="sc-name">${title}<span style="margin-left:auto;font-size:9px;color:#9da6b5;font-weight:400">${n} señales</span></div>
     <div class="sc-row"><span>+1h (n=${a1?.n ?? 0})</span><span>${a1 ? `<b>${wrChip(a1.winRate, a1.n)}</b> · <span class="${a1.avg >= 0 ? 'pos' : 'neg'}">${a1.avg >= 0 ? '+' : ''}${a1.avg.toFixed(2)}%</span>` : '<b>—</b>'}</span></div>
     <div class="sc-row"><span>+2h (n=${a2?.n ?? 0})</span><span>${a2 ? `<b>${wrChip(a2.winRate, a2.n)}</b> · <span class="${a2.avg >= 0 ? 'pos' : 'neg'}">${a2.avg >= 0 ? '+' : ''}${a2.avg.toFixed(2)}%</span>` : '<b>—</b>'}</span></div>
     ${extra}
@@ -187,7 +187,7 @@ async function runBacktest() {
   const top = perSym.filter(s => s.n >= 3).sort((a, b) => b.wr - a.wr).slice(0, 6);
   const topHtml = top.length
     ? `<div style="margin-top:8px"><div class="qal-head">Mejores símbolos para W/M en esta ventana (n≥3)</div>
-       <div class="qal-grid">${top.map(s => `<span class="qal-chip" onclick="openDetail('${s.sym}')">${s.sym} <b style="color:${s.wr >= 50 ? '#2fe08a' : '#ee6666'}">${s.wr}%</b> <span class="qal-pct" style="color:#5a6a85">n=${s.n}</span></span>`).join('')}</div></div>`
+       <div class="qal-grid">${top.map(s => `<span class="qal-chip" onclick="openDetail('${s.sym}')">${s.sym} <b style="color:${s.wr >= 50 ? '#2fe08a' : '#ee6666'}">${s.wr}%</b> <span class="qal-pct" style="color:#bbc2cd">n=${s.n}</span></span>`).join('')}</div></div>`
     : '';
 
   if (status) status.textContent = `ventana: ${days}d · ${bySym.size} símbolos con datos`;

@@ -50,36 +50,37 @@ function init() {
   return ready;
 }
 
+// El respaldo sincroniza SOLO los favoritos. Antes viajaban también
+// track_history, strat_signals, track_ledger y conf_signals: la respuesta
+// pesaba 962 KB comprimidos y se pedía en cada carga de página, así que abrir
+// el screener costaba ~1,1 MB de egress y los 5 GB del plan gratuito de Render
+// se agotaban en ~4.600 visitas. Con solo los favoritos, <1 KB.
+//
+// Las columnas viejas NO se leen ni se sobrescriben: se quedan intactas en
+// Turso por si algún día quieres recuperar ese histórico. Ocupan espacio en la
+// base, no en tu ancho de banda.
 async function loadSync() {
   if (!await init()) return null;
-  const res = await client.execute('SELECT track_history, strat_signals, track_ledger, favorites, conf_signals, updated_at FROM sync_data WHERE id = 1');
+  const res = await client.execute('SELECT favorites, updated_at FROM sync_data WHERE id = 1');
   if (!res.rows.length) return null;
   const row = res.rows[0];
   return {
-    trackHistory: JSON.parse(row.track_history),
-    stratSignals: JSON.parse(row.strat_signals),
-    trackLedger: JSON.parse(row.track_ledger || '[]'),
     favorites: JSON.parse(row.favorites || '[]'),
-    confSignals: JSON.parse(row.conf_signals || '[]'),
     updatedAt: row.updated_at,
   };
 }
 
-async function saveSync(trackHistory, stratSignals, trackLedger, favorites, confSignals) {
+async function saveSync(favorites) {
   if (!await init()) return false;
   await client.execute({
     sql: `
-      INSERT INTO sync_data (id, track_history, strat_signals, track_ledger, favorites, conf_signals, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sync_data (id, favorites, updated_at)
+      VALUES (1, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
-        track_history = excluded.track_history,
-        strat_signals = excluded.strat_signals,
-        track_ledger  = excluded.track_ledger,
-        favorites     = excluded.favorites,
-        conf_signals  = excluded.conf_signals,
-        updated_at    = excluded.updated_at
+        favorites  = excluded.favorites,
+        updated_at = excluded.updated_at
     `,
-    args: [JSON.stringify(trackHistory), JSON.stringify(stratSignals), JSON.stringify(trackLedger || []), JSON.stringify(favorites || []), JSON.stringify(confSignals || []), Date.now()],
+    args: [JSON.stringify(favorites || []), Date.now()],
   });
   return true;
 }

@@ -100,7 +100,6 @@ function tick() {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 syncFromServer().then(() => {
-  renderSeguimiento();
   backfillTrackHistory(); // rellena huecos de precio desde el servidor de snapshots
 });
 load();

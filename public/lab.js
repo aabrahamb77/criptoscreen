@@ -203,13 +203,13 @@ function renderPaperTrading(validatedKeys) {
         return `<tr>
           <td class="pt-sym">${pos.symbol}</td>
           <td class="pt-${pos.direction === 'L' ? 'long' : 'short'}">${pos.direction}</td>
-          <td style="color:#4a6080">$${fmtPrice(pos.entryPrice)}</td>
+          <td style="color:#b3bcc9">$${fmtPrice(pos.entryPrice)}</td>
           <td style="color:#8090b0">$${fmtPrice(curr)}</td>
           <td class="${pnlC}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</td>
           <td class="${pnlC}">${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(2)}</td>
           <td style="color:${csC};font-weight:700">${cs}</td>
-          <td style="color:#4a6080">${STRAT_NAMES[pos.entryScore?.strategy] || '—'}</td>
-          <td style="color:#3a4a60">${fmtDur(now - pos.entryTime)}</td>
+          <td style="color:#b3bcc9">${STRAT_NAMES[pos.entryScore?.strategy] || '—'}</td>
+          <td style="color:#a5adb7">${fmtDur(now - pos.entryTime)}</td>
         </tr>`;
       }).join('');
     }
@@ -229,12 +229,12 @@ function renderPaperTrading(validatedKeys) {
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
           <td class="pt-${t.direction === 'L' ? 'long' : 'short'}">${t.direction}</td>
-          <td style="color:#4a6080">$${fmtPrice(t.entryPrice)}</td>
-          <td style="color:#4a6080">$${fmtPrice(t.exitPrice)}</td>
+          <td style="color:#b3bcc9">$${fmtPrice(t.entryPrice)}</td>
+          <td style="color:#b3bcc9">$${fmtPrice(t.exitPrice)}</td>
           <td class="${pnlC}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct?.toFixed(2)}%</td>
           <td class="${pnlC}">${t.pnlUSD >= 0 ? '+' : ''}$${t.pnlUSD?.toFixed(2)}</td>
           <td class="${reasonClass[t.exitReason] ?? ''}">${reasonMap[t.exitReason] ?? t.exitReason}</td>
-          <td style="color:#3a4a60">${fmtDur(t.exitTime - t.entryTime)}</td>
+          <td style="color:#a5adb7">${fmtDur(t.exitTime - t.entryTime)}</td>
         </tr>`;
       }).join('');
     }
@@ -402,9 +402,9 @@ function renderPatternTrack() {
     const best = rows2.filter(r => r.s && r.s.n >= 10).sort((a, b) => b.s.avg - a.s.avg)[0] || null;
     vEl.innerHTML = rows2.map(r => {
       const isBest = best && r === best;
-      if (!r.s) return `<span class="patt-var">${r.name}: <b style="color:#3a5070">sin datos aún</b></span>`;
+      if (!r.s) return `<span class="patt-var">${r.name}: <b style="color:#aab3c1">sin datos aún</b></span>`;
       return `<span class="patt-var${isBest ? ' patt-var-best' : ''}">${isBest ? '👑 ' : ''}${r.name}:
-        <b>${wrChip(r.s.wr, r.s.n)}</b> · <b style="color:${r.s.avg >= 0 ? '#00c878' : '#ee5555'}">${r.s.avg >= 0 ? '+' : ''}${r.s.avg.toFixed(2)}% prom.</b> <span style="color:#3a5070">(n=${r.s.n})</span></span>`;
+        <b>${wrChip(r.s.wr, r.s.n)}</b> · <b style="color:${r.s.avg >= 0 ? '#00c878' : '#ee5555'}">${r.s.avg >= 0 ? '+' : ''}${r.s.avg.toFixed(2)}% prom.</b> <span style="color:#aab3c1">(n=${r.s.n})</span></span>`;
     }).join('');
   }
 
@@ -424,12 +424,12 @@ function renderPatternTrack() {
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
           <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span></td>
-          <td style="color:#4a6080">$${fmtPrice(t.entryPrice)}</td>
+          <td style="color:#b3bcc9">$${fmtPrice(t.entryPrice)}</td>
           <td style="color:#8090b0">$${fmtPrice(curr)}</td>
           <td style="color:#00c878">$${fmtPrice(t.target)}</td>
           <td style="color:#ee5555">$${fmtPrice(t.stop)}</td>
           <td style="color:${progC}">${progress.toFixed(0)}%</td>
-          <td style="color:#3a4a60">${fmtDur(Date.now() - t.entryTime)}</td>
+          <td style="color:#a5adb7">${fmtDur(Date.now() - t.entryTime)}</td>
         </tr>`;
       }).join('');
     }
@@ -448,7 +448,7 @@ function renderPatternTrack() {
           <td class="pt-${t.side === 'L' ? 'long' : 'short'}">${t.type} ${t.side === 'L' ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span></td>
           <td class="${t.exitReason === 'TARGET' ? 'pt-reason-tp' : 'pt-reason-sl'}">${t.exitReason === 'TARGET' ? '🎯 Objetivo' : '🛑 Stop'}</td>
           <td class="${pnlC}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</td>
-          <td style="color:#3a4a60">${fmtDur(t.exitTime - t.entryTime)}</td>
+          <td style="color:#a5adb7">${fmtDur(t.exitTime - t.entryTime)}</td>
         </tr>`;
       }).join('');
     }
@@ -1100,7 +1100,7 @@ function renderLab() {
     <div class="regime-bar-labels">
       <span style="color:#00c878">▲${b}%</span>
       <span style="color:#ee4444">▼${r}%</span>
-      <span style="color:#4a5a70">→${m}%</span>
+      <span style="color:#b2b9c2">→${m}%</span>
     </div>`;
   }
 
@@ -1197,7 +1197,6 @@ function renderLab() {
   evalStrategySignals();
   renderStrategyCompare();
   renderHourAnalysis();
-  renderSeguimiento();
 
   // 🤖 Paper trading — solo opera estrategias que el Comparador YA validó
   // (WR≥55%, n≥30 a 1h). Los bots anteriores (confluencia genérica / alineado

@@ -776,7 +776,7 @@ function renderBTC() {
         <button class="chart-tf-btn" id="btc-expand-btn" onclick="btcToggleExpand()">${localStorage.getItem('scalp_btc_big') === '1' ? '⛶ Compactar' : '⛶ Expandir'}</button>
         <button class="chart-tf-btn${typeof _btcSmcOn !== 'undefined' && _btcSmcOn ? ' active' : ''}" id="btc-smc-btn" onclick="btcToggleSMC()" title="Smart Money Concepts: estructura mayor (chips BOS/CHoCH) e interna (triángulos), order blocks vigentes, FVG operables y equilibrium 50% con zonas premium/discount">🧠 SMC</button>
         <button class="chart-tf-btn${typeof _btcSmcTf !== 'undefined' && _btcSmcTf === '1h' ? ' active' : ''}" id="btc-smc-tf-btn" onclick="btcToggleSMCTf()" title="Temporalidad del análisis SMC: 15m (rápida) o 1h (estructura más fiable, proyectada sobre las velas 15m)">⏱ ${typeof _btcSmcTf !== 'undefined' ? _btcSmcTf : '15m'}</button>
-        <span><b style="color:#4a5870">rueda: zoom · arrastrar: mover · doble clic: hoy</b> · velas 15m (hasta ~10 días)</span>
+        <span><b style="color:#afb6c0">rueda: zoom · arrastrar: mover · doble clic: hoy</b> · velas 15m (hasta ~10 días)</span>
         <span><span style="color:#4aa8d8">— 🧲 pools</span> · <span style="color:#55dd99">— 🧱 compra</span> · <span style="color:#ff8866">— 🧱 venta</span> · <span style="color:#ffd76a">— 🎯 max pain</span> · <span style="color:#ff9a3c">— 🔥 clusters liq</span> · ⚡ barrido · verticales = sesiones</span>
         <span><span style="color:#2fe08a">— OB/FVG alcista</span> · <span style="color:#ff6666">— OB/FVG bajista</span> · <span style="color:#eef4ff;background:#0b0e14;padding:0 3px;border-radius:2px">texto BOS/CHoCH/OB</span> siempre en blanco: el borde del chip indica la dirección</span>
       </div>

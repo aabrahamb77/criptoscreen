@@ -261,7 +261,7 @@ function briefReliability(row, conf) {
 
   // 8) Confirmación técnica (0-16): patrón W/M ya detectado en la fila, y si no
   //    lo hay, el régimen propio de la moneda.
-  const pat = [row.pattern1h, row.pattern].find(p => p && ((p.type === 'W') === (side === 'long')));
+  const pat = [row.pattern4h, row.pattern1h, row.pattern].find(p => p && ((p.type === 'W') === (side === 'long')));
   const sr = typeof detectSymbolRegime === 'function' ? (detectSymbolRegime(row.symbol) || (typeof fallbackSymbolRegime === 'function' ? fallbackSymbolRegime(row) : null)) : null;
   if (pat && pat.state === 'breaking')        add('Técnico', 16, 16, `doble ${pat.type === 'W' ? 'suelo' : 'techo'} en ${pat.tf} con ruptura CONFIRMADA al cierre (calidad ${pat.quality}/10)`, true);
   else if (pat && pat.state === 'confirming') add('Técnico', 9, 16, `doble ${pat.type === 'W' ? 'suelo' : 'techo'} en ${pat.tf} cruzando el cuello — esperando cierre de vela`, true);
@@ -431,7 +431,7 @@ function buildBrief(rows) {
   // objetivo y el stop está definido antes de entrar.
   const watch = [];
   for (const r of rows) {
-    for (const p of [r.pattern1h, r.pattern]) {
+    for (const p of [r.pattern4h, r.pattern1h, r.pattern]) {
       if (!p || (p.state !== 'forming' && p.state !== 'confirming')) continue;
       if ((r.vol1hUSD ?? 0) < BRIEF_MIN_VOL1H) continue;
       const dist = (p.neckline - r.price) / r.price * 100 * (p.type === 'W' ? 1 : -1);
@@ -680,7 +680,7 @@ function renderBrief() {
     <div class="bf-chips">${b.watch.map(w => `<span class="pat-chip" onclick="openInRadar('${w.symbol}')"
       title="Doble ${w.type === 'W' ? 'suelo' : 'techo'} en ${w.tf} · cuello ${fmtPrice(w.neckline)} · objetivo ${fmtPrice(w.target)} · stop ${fmtPrice(w.stop)} · calidad ${w.quality}/10">
       <b style="color:${w.type === 'W' ? '#2fe08a' : '#ff5555'}">${w.symbol}</b>
-      <span style="color:#5a6a85">${w.type}${w.tf}</span>
+      <span style="color:#bbc2cd">${w.type}${w.tf}</span>
       <b style="color:#e0a830">+${w.dist.toFixed(2)}%</b>
       ${w.state === 'confirming' ? '<span style="color:#e0a830">⏳</span>' : ''}
     </span>`).join('')}</div>` : '';
