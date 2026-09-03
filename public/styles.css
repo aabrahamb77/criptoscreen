@@ -431,6 +431,26 @@ header h1 {
 }
 #dt-resizer:hover::after { background: #3a5080; }
 .dt-chart-hint { font-size: 8.5px; color: #999fa9; }
+/* Selector de temporalidad del gráfico del panel de detalle. El botón activo
+   se tiñe del color del cuello de ESA temporalidad (ámbar 15m · violeta 1h ·
+   cian 4h), los mismos del gráfico, para que el enlace sea inmediato. */
+.dt-tf-nav { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.dt-tf-btn {
+  background: transparent; border: 1px solid #131a26; color: #a4a9b2;
+  font-family: inherit; font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 5px; cursor: pointer;
+  transition: all .15s; letter-spacing: .3px; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.dt-tf-btn:hover { color: #c8d8ff; background: #141c28; }
+.dt-tf-btn.active { background: #101722; border-color: #2a3850; color: #eef2fa; }
+.dt-tf-btn:nth-child(1).active { border-color: #ffd76a; color: #ffd76a; }
+.dt-tf-btn:nth-child(2).active { border-color: #c9a2ff; color: #c9a2ff; }
+.dt-tf-btn:nth-child(3).active { border-color: #7fd4ff; color: #7fd4ff; }
+.dt-tf-pat { font-style: normal; font-size: 8.5px; font-weight: 800; opacity: .95; }
+.dt-tf-pat.pat-w { color: #2fe08a; }
+.dt-tf-pat.pat-m { color: #ff6666; }
+
 .dt-section { border: 1px solid #131a26; border-radius: 8px; padding: 8px 10px; background: #080b11; }
 .dt-sec-title { font-size: 9px; color: #afb6c0; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; margin-bottom: 6px; }
 .dt-row { display: flex; justify-content: space-between; gap: 10px; font-size: 10.5px; color: #bbc2cd; padding: 2px 0; }

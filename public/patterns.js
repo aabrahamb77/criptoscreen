@@ -23,6 +23,7 @@
 
 const PATTERN_CFG = {          // ── velas 15m ──
   tf:           '15m',
+  ms:           900_000,   // duración de una vela, para fechar la ruptura
   minBars:      30,    // mínimo de velas para intentar la detección
   pivotWin:     2,     // pivote = extremo de ±2 velas (30 min a cada lado)
   tolExtremes:  0.35,  // |suelo1 − suelo2| ≤ 0.35 × ATR(15m)
@@ -35,6 +36,7 @@ const PATTERN_CFG = {          // ── velas 15m ──
 
 const PATTERN_CFG_1H = {       // ── velas 1h (estructura de swing más grande) ──
   tf:           '1h',
+  ms:           3_600_000,
   minBars:      20,
   pivotWin:     2,     // pivote = extremo de ±2 velas (2h a cada lado)
   tolExtremes:  0.4,   // algo más tolerante: los extremos de 1h son más rugosos
@@ -47,6 +49,7 @@ const PATTERN_CFG_1H = {       // ── velas 1h (estructura de swing más gran
 
 const PATTERN_CFG_4H = {       // ── velas 4h (swing de varios días) ──
   tf:           '4h',
+  ms:           14_400_000,
   minBars:      24,    // de las ~50 velas de 4h que salen de las 200 de 1h
   pivotWin:     2,     // pivote = extremo de ±2 velas (8h a cada lado)
   tolExtremes:  0.45,  // los extremos de 4h son los más rugosos de las tres TF
@@ -56,6 +59,44 @@ const PATTERN_CFG_4H = {       // ── velas 4h (swing de varios días) ──
   maxAge2nd:    8,     // el 2º extremo en las últimas 8 velas (32h)
   breakWindow:  2,     // cruce del cuello en las últimas 2 velas (8h)
 };
+
+
+// ── ¿Llego tarde? ───────────────────────────────────────────────────────────
+// Un patrón se ve en pantalla mucho después de romper el cuello, y nada decía
+// CUÁNDO ocurrió: una W confirmada hace 1 hora y otra confirmada hace 9 se
+// mostraban igual. Estas tres funciones responden a eso.
+
+// "hace 25m" · "hace 1.5h" · "hace 2.1 días"
+function patAgo(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) return '—';
+  const m = ms / 60_000;
+  if (m < 60) return 'hace ' + Math.round(m) + 'm';
+  const h = ms / 3_600_000;
+  if (h < 48) return 'hace ' + (h < 10 ? h.toFixed(1) : Math.round(h)) + 'h';
+  return 'hace ' + (h / 24).toFixed(1) + ' días';
+}
+
+// La antigüedad se mide en VELAS DE SU PROPIA TEMPORALIDAD, no en tiempo
+// absoluto: una vela tras la ruptura son 15 min en 15m pero 4 horas en 4h, así
+// que "hace 4h" es tardísimo en 15m y es acabar de romper en 4h.
+function patLateness(p) {
+  if (!p || p.barsSinceBreak == null) return null;
+  const b = p.barsSinceBreak;
+  const u = 'vela' + (b === 1 ? '' : 's') + ' de ' + p.tf;
+  return b <= 0 ? { bars: b, txt: 'recién rota (misma vela)', color: '#2fe08a' }
+       : b === 1 ? { bars: b, txt: '1 ' + u + ' desde la ruptura', color: '#ffbe3c' }
+       : { bars: b, txt: b + ' ' + u + ' desde la ruptura', color: '#ff9a9a' };
+}
+
+// La otra mitad de "¿entro tarde?": el precio puede haber roto hace nada y
+// haberse comido ya medio recorrido hasta el objetivo. 0% = justo en el cuello,
+// 100% = objetivo alcanzado. Negativo = ha vuelto por detrás del cuello.
+function patProgress(p, price) {
+  if (!p || p.target == null || price == null) return null;
+  const total = p.target - p.neckline;
+  if (!total) return null;
+  return (price - p.neckline) / total * 100;
+}
 
 // ── Pivotes (fractales) ──────────────────────────────────────────────────────
 function _patPivots(k, win) {
@@ -167,6 +208,13 @@ function _detectDouble(k, C) {
           target: isBottom ? neckP + depth : neckP - depth,
           stop:   isBottom ? extLevel - 0.3 * atr : extLevel + 0.3 * atr,
           breakIdx: lastCross,
+          // ── Antigüedad, para saber si se llega tarde ──
+          // breakAt = instante en que CERRÓ la vela que rompió el cuello
+          // (k.t es la apertura, así que se le suma la duración de la vela).
+          breakAt: (lastCross != null && k.t) ? k.t[lastCross] + C.ms : null,
+          barsSinceBreak: lastCross != null ? lastClosed - lastCross : null,
+          startAt: k.t ? k.t[P1.i] : null,   // apertura del 1er extremo
+          spanBars: P2.i - P1.i,             // velas entre los dos extremos
         };
         if (!best || rank(cand) > rank(best)) best = cand;
       }
@@ -295,11 +343,12 @@ function _patBadgeOne(row, p, tf) {
   const stateTxt = p.state === 'breaking' ? 'RUPTURA CONFIRMADA (cierre de vela ' + tf + ')'
                  : p.state === 'confirming' ? 'cruzando el cuello — ESPERANDO CIERRE de vela ' + tf
                  : p.state === 'forming' ? 'formándose' : 'cuello roto';
-  const title = `${isW ? 'Doble suelo (W)' : 'Doble techo (M)'} en ${tf} — ${stateTxt} · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · stop ${fmtPrice(p.stop)} · calidad ${p.quality}/10 — clic para ver el gráfico`;
+  const ageTxt = p.breakAt ? ` · rompió ${patAgo(Date.now() - p.breakAt)}` : '';
+  const title = `${isW ? 'Doble suelo (W)' : 'Doble techo (M)'} en ${tf} — ${stateTxt}${ageTxt} · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · stop ${fmtPrice(p.stop)} · calidad ${p.quality}/10 — clic para ver el gráfico`;
   const cls = `pat-badge ${isW ? 'pat-w' : 'pat-m'}${p.state === 'breaking' ? ' pat-breaking' : ''}${p.state === 'forming' || p.state === 'confirming' ? ' pat-dim' : ''}`;
   const tfTag = tf === '15m' ? '' : `<span class="pat-tf">${tf}</span>`; // 15m es el implícito
   const suffix = p.state === 'breaking' ? '⚡' : p.state === 'confirming' ? '⏳' : p.state === 'broken' ? '✓' : '';
-  return `<span class="${cls}" title="${title}" onclick="event.stopPropagation();openDetail('${row.symbol}')">${isW ? 'W' : 'M'}${tfTag}${suffix}</span>`;
+  return `<span class="${cls}" title="${title}" onclick="event.stopPropagation();openDetail('${row.symbol}','${tf}')">${isW ? 'W' : 'M'}${tfTag}${suffix}</span>`;
 }
 
 function patternBadge(row) {
@@ -325,14 +374,14 @@ function _patStripInto(elId, rows, field, label) {
     const isW = p.type === 'W';
     const distPct = (p.neckline - r.price) / r.price * 100 * (isW ? 1 : -1); // >0 = aún no llega al cuello
     const stateHtml = p.state === 'breaking'
-      ? `<b style="color:#ffbe3c">⚡ CONFIRMADA</b>`
+      ? `<b style="color:#ffbe3c">⚡ CONFIRMADA</b>${p.breakAt ? ` <span style="color:${(patLateness(p) || {}).color || '#8b9098'}">${patAgo(Date.now() - p.breakAt)}</span>` : ''}`
       : p.state === 'confirming'
         ? `<b style="color:#e0a830">⏳ esperando cierre</b>`
         : p.state === 'forming'
           ? `<span style="color:#bbc2cd">cuello a ${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%</span>`
-          : `<span style="color:${isW ? '#2fe08a' : '#ff6666'}">roto ${(-distPct).toFixed(2)}%</span>`;
-    return `<span class="pat-chip${p.state === 'breaking' ? ' pat-breaking' : ''}" onclick="openDetail('${r.symbol}')"
-      title="${isW ? 'Doble suelo' : 'Doble techo'} (${p.tf}) · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · calidad ${p.quality}/10">
+          : `<span style="color:${isW ? '#2fe08a' : '#ff6666'}">roto ${(-distPct).toFixed(2)}%</span>${p.breakAt ? ` <span style="color:#ff9a9a">${patAgo(Date.now() - p.breakAt)}</span>` : ''}`;
+    return `<span class="pat-chip${p.state === 'breaking' ? ' pat-breaking' : ''}" onclick="openDetail('${r.symbol}','${p.tf}')"
+      title="${isW ? 'Doble suelo' : 'Doble techo'} (${p.tf}) · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · calidad ${p.quality}/10${p.breakAt ? ' · rompió ' + patAgo(Date.now() - p.breakAt) + ((patLateness(p) || {}).txt ? ' (' + patLateness(p).txt + ')' : '') : ''}">
       ${r.symbol} <span class="pat-badge ${isW ? 'pat-w' : 'pat-m'}">${isW ? 'W' : 'M'}</span> ${stateHtml}
     </span>`;
   }).join('');

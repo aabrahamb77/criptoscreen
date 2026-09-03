@@ -6,6 +6,67 @@
 
 let detailSym = null;
 
+// ── Temporalidad del gráfico del panel ──────────────────────────────────────
+// El gráfico pintaba SIEMPRE velas de 15m, aunque el patrón vivo fuera de 1h o
+// 4h: se veía la línea del cuello proyectada pero no la estructura (los dos
+// suelos/techos y el rebote intermedio), que es justo lo que hay que mirar.
+// Ahora el gráfico se dibuja en la temporalidad del patrón.
+//
+// Clave para que esto sea simple: los índices del patrón (p1.i, p2.i, neckIdx,
+// breakIdx) YA están calculados contra la serie de su propia temporalidad, así
+// que basta con darle al dibujado la serie que le corresponde. Y las tres
+// series ya están en memoria — cero peticiones nuevas.
+let dtTf = '15m';
+
+const DT_TF_STYLE = {
+  '15m': { color: '#ffd76a', glow: 'rgba(255,215,106,.5)', dash: [4, 3],  mins: 15 },
+  '1h':  { color: '#c9a2ff', glow: 'rgba(201,162,255,.5)', dash: [6, 3],  mins: 60 },
+  '4h':  { color: '#7fd4ff', glow: 'rgba(127,212,255,.5)', dash: [12, 4], mins: 240 },
+};
+const DT_TFS = ['15m', '1h', '4h'];
+
+function dtPattern(row, tf) {
+  return tf === '4h' ? row.pattern4h : tf === '1h' ? row.pattern1h : row.pattern;
+}
+
+// Serie de velas de cada temporalidad. offset = cuántas velas más antiguas se
+// han antepuesto (solo pasa en 15m, con el historial extendido); en 1h y 4h se
+// usa TAL CUAL la serie contra la que se detectó el patrón, así que es 0 y los
+// índices encajan exactos sin corrección.
+function dtSeries(row, tf) {
+  if (tf === '1h') return { k: row.k60 || null, offset: 0 };
+  if (tf === '4h') return { k: (typeof _patAgg4h === 'function' ? _patAgg4h(row) : null), offset: 0 };
+  return dtBuildChartData(row);
+}
+
+// Velas visibles: en 1h caben 200 (~8 días) pero con ~140 ya hay contexto de
+// sobra sin que las velas queden como pelos; en 4h se enseñan todas las que hay.
+function dtVisibleN(k, tf, offset) {
+  if (!k || !k.c) return 0;
+  return Math.min(k.c.length, tf === '15m' ? (offset > 0 ? 200 : 110) : tf === '1h' ? 140 : 60);
+}
+
+// Al abrir, ir a la temporalidad del patrón más accionable. A igualdad de
+// estado gana la temporalidad MAYOR (se recorre de 4h a 15m con > estricto):
+// una ruptura en 4h pesa más que la misma ruptura en 15m.
+function dtPickTf(row) {
+  const rank = { breaking: 4, confirming: 3, forming: 2, broken: 1 };
+  let best = null, bestScore = 0;
+  for (const tf of ['4h', '1h', '15m']) {
+    const pp = dtPattern(row, tf);
+    if (!pp) continue;
+    const sc = rank[pp.state] || 0;
+    if (sc > bestScore) { bestScore = sc; best = tf; }
+  }
+  return best || '15m';
+}
+
+function setDetailTf(tf) {
+  if (!DT_TF_STYLE[tf]) return;
+  dtTf = tf;
+  renderDetail(); // repinta botones, leyenda y canvas
+}
+
 // ── Historial extendido de velas 15m por símbolo (~3 días) ──────────────────
 // row.k15 solo trae ~24h (agregado de 288 velas de 5m). Al abrir el panel se
 // pide un tramo más largo directo a Bybit (igual que hace btc.js con k15x)
@@ -113,10 +174,14 @@ function _dtInitResizer() {
   });
 }
 
-function openDetail(sym) {
+// tf opcional: al clicar el badge o el chip de una temporalidad concreta se
+// abre directamente en ella. Sin tf, se elige la del patrón más accionable.
+function openDetail(sym, tf) {
   detailSym = sym;
   const panel = document.getElementById('detail-panel');
   if (!panel) return;
+  const row0 = typeof allRows !== 'undefined' ? allRows.find(r => r.symbol === sym) : null;
+  dtTf = DT_TF_STYLE[tf] ? tf : (row0 ? dtPickTf(row0) : '15m');
   panel.style.display = 'flex';
   const rz = document.getElementById('dt-resizer');
   if (rz) rz.style.display = 'block';
@@ -161,15 +226,53 @@ function renderDetail() {
                 : pp.state === 'forming'    ? 'Formándose — aún sin romper el cuello'
                 : '✓ Cuello roto — patrón confirmado';
     const stCol = pp.state === 'breaking' ? '#ffbe3c' : pp.state === 'confirming' ? '#e0a830' : isW ? '#2fe08a' : '#ff6666';
+
+    // ¿Llego tarde? Dos filas: cuándo rompió (en velas de SU temporalidad) y
+    // cuánto del recorrido cuello→objetivo se ha comido ya el precio.
+    const late = typeof patLateness === 'function' ? patLateness(pp) : null;
+    const prog = typeof patProgress === 'function' ? patProgress(pp, row.price) : null;
+    const progCol = prog == null ? '#bbc2cd' : prog >= 70 ? '#ff9a9a' : prog >= 35 ? '#ffbe3c' : '#2fe08a';
+    const ageHtml = (pp.breakAt && late)
+      ? `<div class="dt-row"><span>Rompió el cuello</span><b style="color:${late.color}">${patAgo(Date.now() - pp.breakAt)} · ${late.txt}</b></div>`
+        + (prog == null ? '' : `<div class="dt-row"><span>Recorrido al objetivo</span><b style="color:${progCol}">${prog.toFixed(0)}%</b></div>`)
+      : `<div class="dt-row"><span>Antigüedad</span><b>${pp.startAt ? patAgo(Date.now() - pp.startAt) : '—'} desde el 1er ${isW ? 'suelo' : 'techo'} · ${pp.spanBars} velas entre extremos</b></div>`;
     return `<div class="dt-section" style="border-color:${stCol}40">
       <div class="dt-sec-title" style="color:${stCol}">${isW ? '🟢 DOBLE SUELO (W)' : '🔴 DOBLE TECHO (M)'} · ${tfLabel} · calidad ${pp.quality}/10</div>
       <div class="dt-row"><span>Estado</span><b style="color:${stCol}">${stTxt}</b></div>
+      ${ageHtml}
       <div class="dt-row"><span>Línea de cuello</span><b style="color:${tfLabel === '4h' ? '#7fd4ff' : tfLabel === '1h' ? '#c9a2ff' : '#ffd76a'}">${fmtPrice(pp.neckline)}</b></div>
       <div class="dt-row"><span>Objetivo (mov. medido)</span><b class="pos">${fmtPrice(pp.target)} (${f((pp.target - row.price) / row.price * 100)})</b></div>
       <div class="dt-row"><span>Stop sugerido</span><b class="neg">${fmtPrice(pp.stop)} (${f((pp.stop - row.price) / row.price * 100)})</b></div>
     </div>`;
   };
   const patternHtml = patternSection(p, '15m') + patternSection(row.pattern1h, '1h') + patternSection(row.pattern4h, '4h');
+
+  // Salvaguarda: si la TF elegida no tiene serie (p. ej. aún no llegaron las
+  // velas de 1h, de las que sale también la de 4h), caer a 15m en vez de
+  // dejar el canvas en blanco.
+  if (!dtSeries(row, dtTf).k) dtTf = '15m';
+
+  // ── Barra de temporalidades del gráfico ──
+  // Cada botón dice si esa TF tiene patrón y en qué estado, así se ve de un
+  // vistazo a cuál merece saltar sin ir probando una por una.
+  const { k: dtK, offset: dtOff } = dtSeries(row, dtTf);
+  const dtN = dtVisibleN(dtK, dtTf, dtOff);
+  const dtSpanH = dtN * DT_TF_STYLE[dtTf].mins / 60;
+  const dtSpan = dtSpanH >= 48 ? '~' + Math.round(dtSpanH / 24) + ' días' : '~' + Math.round(dtSpanH) + 'h';
+  const tfBtns = DT_TFS.map(tf => {
+    const pp = dtPattern(row, tf);
+    const sfx = pp ? (pp.state === 'breaking' ? '⚡' : pp.state === 'confirming' ? '⏳' : pp.state === 'broken' ? '✓' : '') : '';
+    const mark = pp ? `<i class="dt-tf-pat ${pp.type === 'W' ? 'pat-w' : 'pat-m'}">${pp.type}${sfx}</i>` : '';
+    const tip = pp
+      ? `${pp.type === 'W' ? 'Doble suelo (W)' : 'Doble techo (M)'} en ${tf} · ${pp.state === 'breaking' ? 'ruptura confirmada' : pp.state === 'confirming' ? 'cruzando el cuello' : pp.state === 'forming' ? 'formándose' : 'cuello ya roto'} · calidad ${pp.quality}/10`
+      : `Sin patrón W/M en ${tf}`;
+    return `<button class="dt-tf-btn${tf === dtTf ? ' active' : ''}" title="${tip}" onclick="setDetailTf('${tf}')">${tf}${mark}</button>`;
+  }).join('');
+  const dtActive = dtPattern(row, dtTf);
+  const dtHint = `velas ${dtTf} · ${dtSpan}` + (dtActive
+    ? ` · <span style="color:${DT_TF_STYLE[dtTf].color}">— cuello</span> · <span style="color:#2fe08a">···objetivo</span> · <span style="color:#ff6666">···stop</span>`
+    : ' · sin patrón W/M en esta temporalidad');
+
 
   // ── Checklist del radar de confluencia ──
   let checksHtml = '';
@@ -207,8 +310,9 @@ function renderDetail() {
       <span class="star${favorites.has(row.symbol) ? ' on' : ''}" onclick="toggleFav('${row.symbol}')" style="cursor:pointer">★</span>
       <button class="dt-close" onclick="closeDetail()" title="Cerrar (Esc)">✕</button>
     </div>
+    <div class="dt-tf-nav">${tfBtns}</div>
     <canvas id="dt-chart"></canvas>
-    <div class="dt-chart-hint">velas 15m · ~24h ${p ? '· <span style="color:#ffd76a">— cuello</span> · <span style="color:#2fe08a">···objetivo</span> · <span style="color:#ff6666">···stop</span>' : ''}</div>
+    <div class="dt-chart-hint">${dtHint}</div>
     ${patternHtml}
     <div class="dt-section">
       <div class="dt-sec-title">Métricas</div>
@@ -238,9 +342,14 @@ function renderDetail() {
 // ── Gráfico de velas 5m con el patrón dibujado ──────────────────────────────
 function drawDetailChart(row) {
   const canvas = document.getElementById('dt-chart');
-  if (!canvas || !row.k15 || row.k15.c.length < 10) return;
+  if (!canvas) return;
 
-  const { k, offset } = dtBuildChartData(row);
+  // Serie y patrón de la temporalidad activa. La estructura completa (los dos
+  // extremos, el cuello desde su origen, la vela de ruptura) se dibuja SOLO
+  // para esta TF; las otras dos se proyectan como líneas de precio.
+  const tf = dtTf;
+  const { k, offset } = dtSeries(row, tf);
+  if (!k || !k.c || k.c.length < 10) return;
 
   const W = canvas.width = canvas.clientWidth || 380;
   // La altura escala con el ancho del panel (redimensionable): más panel = más gráfico
@@ -251,12 +360,11 @@ function drawDetailChart(row) {
 
   // Con historial extendido cargado se muestran más barras de contexto
   // (hasta ~200, ~50h); si aún no llegó el fetch, se ve el tramo de siempre (24h).
-  const N = Math.min(k.c.length, offset > 0 ? 200 : 110);
+  const N = dtVisibleN(k, tf, offset);
   const start = k.c.length - N;
   const PADL = 4, PADR = 50, PADT = 10, PADB = 6;
-  const p = row.pattern;
-  const p1h = row.pattern1h;
-  const p4h = row.pattern4h;
+  const p = dtPattern(row, tf);                  // el de esta TF: estructura completa
+  const others = DT_TFS.filter(t => t !== tf);   // las otras dos: solo niveles
 
   let min = Infinity, max = -Infinity;
   for (let i = start; i < k.c.length; i++) { min = Math.min(min, k.l[i]); max = Math.max(max, k.h[i]); }
@@ -265,7 +373,8 @@ function drawDetailChart(row) {
   // Medido sobre los 40 pares de más turnover: los 22 con patrón de 4h tenían
   // el cuello dentro del rango que ya abarcan las velas de 15m, así que este
   // guard casi nunca recorta nada en 4h — es la red por si acaso.
-  for (const pp of [p1h, p4h]) {
+  for (const t of others) {
+    const pp = dtPattern(row, t);
     if (!pp) continue;
     for (const v of [pp.neckline, pp.target, pp.stop]) {
       if (v > row.price * 0.94 && v < row.price * 1.06) { min = Math.min(min, v); max = Math.max(max, v); }
@@ -319,12 +428,28 @@ function drawDetailChart(row) {
   if (p) {
     const isW = p.type === 'W';
     // Línea de cuello (desde el 1er extremo hasta el borde)
+    const st = DT_TF_STYLE[tf];
     ctx.save();
-    ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 1.6; ctx.setLineDash([6, 3]);
-    ctx.shadowColor = 'rgba(255,215,106,.5)'; ctx.shadowBlur = 5;
+    ctx.strokeStyle = st.color; ctx.lineWidth = 1.6; ctx.setLineDash([6, 3]);
+    ctx.shadowColor = st.glow; ctx.shadowBlur = 5;
     ctx.beginPath(); ctx.moveTo(x(Math.max(start, p.p1.i + offset)), y(p.neckline)); ctx.lineTo(W - PADR, y(p.neckline)); ctx.stroke();
     ctx.restore();
-    _labels.push({ v: p.neckline, color: '#ffd76a', label: 'cuello ' + fmtPrice(p.neckline).replace('$', '') });
+    _labels.push({ v: p.neckline, color: st.color, label: `cuello ${tf} ` + fmtPrice(p.neckline).replace('$', '') });
+
+    // Vela que FIJA el cuello (el extremo del rebote intermedio). Es el tercer
+    // punto que define el patrón junto a los dos suelos/techos, y sin marcarlo
+    // no se ve de dónde sale la línea.
+    if (p.neckIdx != null && p.neckIdx + offset >= start) {
+      const ni = p.neckIdx + offset;
+      ctx.save();
+      ctx.fillStyle = st.color;
+      ctx.beginPath();
+      ctx.moveTo(x(ni), y(p.neckline) + (isW ? -7 : 7));
+      ctx.lineTo(x(ni) - 4, y(p.neckline) + (isW ? -13 : 13));
+      ctx.lineTo(x(ni) + 4, y(p.neckline) + (isW ? -13 : 13));
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
 
     // Marcar los dos extremos (suelos o techos)
     for (const pt of [p.p1, p.p2]) {
@@ -384,8 +509,7 @@ function drawDetailChart(row) {
       if (inR(pp.target))   hline(pp.target,   '#7fe0b0', [2, 4], `obj ${tag} `  + fmtPrice(pp.target).replace('$', ''));
       if (inR(pp.stop))     hline(pp.stop,     '#ff9a9a', [2, 4], `stop ${tag} ` + fmtPrice(pp.stop).replace('$', ''));
     };
-    project(p1h, '1h', '#c9a2ff', [6, 3]);
-    project(p4h, '4h', '#7fd4ff', [12, 4]);
+    for (const t of others) project(dtPattern(row, t), t, DT_TF_STYLE[t].color, DT_TF_STYLE[t].dash);
   }
 
   // Último precio
