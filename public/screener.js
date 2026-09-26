@@ -270,6 +270,17 @@ function renderAlertCfg() {
         onchange="setAlertCfg('${cat}', this.checked)">
       <span>${ALERT_LABELS[cat] || cat}</span>
     </label>`).join('');
+  // Espacio usado en el navegador. Desde que el respaldo del servidor solo
+  // guarda favoritos, esto es lo unico que separa tu evidencia de perderse.
+  const _sb = typeof storageBytes === 'function' ? storageBytes() : null;
+  const _sPct = _sb == null ? null : Math.min(100, _sb / STORAGE_LIMIT * 100);
+  const _sCol = _sPct == null ? '#8b9098' : _sPct >= 85 ? '#ff6666' : _sPct >= 60 ? '#ffbe3c' : '#2fe08a';
+  const storageRow = _sb == null ? '' : `
+    <div class="acfg-vol" title="Cuando se llena, se recorta automaticamente el historial mas antiguo del Comparador y del seguimiento para poder seguir guardando">
+      <span>&#128190; Espacio</span>
+      <div class="acfg-bar"><i style="width:${_sPct.toFixed(0)}%;background:${_sCol}"></i></div>
+      <b style="color:${_sCol}">${(_sb / 1048576).toFixed(1)} MB</b>
+    </div>`;
   panel.innerHTML = `
     <div class="acfg-head">⚙️ Alertas — qué puede avisarte
       <button class="dt-close" onclick="toggleAlertCfg()" style="margin-left:auto">✕</button>
@@ -281,6 +292,7 @@ function renderAlertCfg() {
       <b id="acfg-vol-val">${Math.round(alertVolume * 100)}%</b>
       <button class="pt-btn" onclick="testAlertVolume()">Probar</button>
     </div>
+    ${storageRow}
     ${rows}
     <div class="acfg-note">El toast, el sonido (🔔) y la notificación de escritorio (🖥) de cada categoría se activan o silencian juntos. Los cambios se guardan solos.<br>
     Cada alarma suena <b>10 segundos</b>; cualquier clic o tecla la calla. Las rupturas de cuello <b>W/M (15m · 1h · 4h)</b> tienen prioridad: si están sonando, ninguna otra alerta las interrumpe, si entra una W/M mientras suena otra cosa la pisa, y además suenan al volumen máximo mientras el resto va un 30% por debajo.</div>`;
@@ -527,13 +539,54 @@ function applyLiveTickers() {
   }
 }
 
+// Símbolos con suscripción viva. Vive FUERA de connectLiqWS porque el universo
+// cambia solo: antes la lista de topics se congelaba en la primera carga (main.js
+// solo llamaba a connectLiqWS con firstLoad) y las monedas que entraban después
+// se quedaban sin `tickers.*` ni `publicTrade.*` — o sea con precio en vivo muerto
+// y CVD a $0 para siempre. Con las 10 plazas de movimiento eso afecta cada día a
+// las monedas más volátiles del screener, que son justo las que hay que vigilar.
+let _wsSubscribed = new Set();
+let _liqWS = null;
+
+function _wsTopicsFor(sym) {
+  return [`allLiquidation.${sym}USDT`, `publicTrade.${sym}USDT`, `tickers.${sym}USDT`];
+}
+
+function _wsSend(op, symbols) {
+  if (!_liqWS || _liqWS.readyState !== WebSocket.OPEN || !symbols.length) return false;
+  const topics = symbols.flatMap(_wsTopicsFor);
+  // Bybit acepta como mucho 10 topics por mensaje.
+  for (let i = 0; i < topics.length; i += 10) {
+    _liqWS.send(JSON.stringify({ op, args: topics.slice(i, i + 10) }));
+  }
+  return true;
+}
+
+// Llamada en CADA ciclo desde main.js: suscribe lo que ha entrado al universo y
+// da de baja lo que ha salido (no dejar de darse de baja llenaría la conexión de
+// topics muertos hasta que Bybit la corte).
+function syncLiqWSUniverse(symbols) {
+  const deseados = new Set(symbols);
+  const nuevos = symbols.filter(s => !_wsSubscribed.has(s));
+  const idos   = [..._wsSubscribed].filter(s => !deseados.has(s));
+  if (!nuevos.length && !idos.length) return;
+
+  if (!_liqWS) { connectLiqWS(symbols); return; }
+  if (_liqWS.readyState !== WebSocket.OPEN) {
+    // Aún conectando o reconectando: onopen se suscribe a _wsSubscribed, así que
+    // basta con dejar el conjunto correcto y esperar.
+    _wsSubscribed = deseados;
+    return;
+  }
+  if (nuevos.length && _wsSend('subscribe', nuevos))   nuevos.forEach(s => _wsSubscribed.add(s));
+  if (idos.length   && _wsSend('unsubscribe', idos))   idos.forEach(s => _wsSubscribed.delete(s));
+}
+
 function connectLiqWS(symbols) {
   // Suscribirse a TODOS los pares del screener (antes solo top-50 por turnover:
   // la tabla ordenada por OI mostraba pares sin suscripción → CVD siempre $0).
   // tickers.* añade precio/funding/OI en tiempo real sobre la misma conexión.
-  const allTopics = symbols.flatMap(s => [`allLiquidation.${s}USDT`, `publicTrade.${s}USDT`, `tickers.${s}USDT`]);
-  const chunks = [];
-  for (let i = 0; i < allTopics.length; i += 10) chunks.push(allTopics.slice(i, i + 10));
+  _wsSubscribed = new Set(symbols);
 
   let ws, pingTimer;
   let wsMsgCount = 0;
@@ -545,12 +598,13 @@ function connectLiqWS(symbols) {
     try { ws && ws.close(); } catch(_) {}
 
     ws = new WebSocket('wss://stream.bybit.com/v5/public/linear');
+    _liqWS = ws;
 
     ws.onopen = () => {
       setLiqDot('ok');
-      for (const chunk of chunks) {
-        ws.send(JSON.stringify({ op: 'subscribe', args: chunk }));
-      }
+      // Se resuscribe al universo VIGENTE, no al que había al arrancar: tras una
+      // reconexión el conjunto puede haber cambiado varias veces.
+      _wsSend('subscribe', [..._wsSubscribed]);
       pingTimer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ op: 'ping' }));
       }, 20_000);
@@ -963,12 +1017,12 @@ function render() {
       : h.grade === 'B'
         ? `<span class="health-gem health-gem-b" title="Salud ${h.score}/100 (nota B, ${h.side.toUpperCase()}) — ${h.ok.slice(0, 2).join(' · ')}${h.bad.length ? ' · ✗ ' + h.bad[0] : ''}">💎</span>`
         : '';
-    return `<tr data-sym="${row.symbol}">
+    return `<tr data-sym="${row.symbol}"${row.byMove ? ' class="mv-row"' : ''}>
       <td class="left-align"><div class="rank-cell">
         <span class="rank-num">${i+1}</span>
         <span class="star${isFav?' on':''}" onclick="toggleFav('${row.symbol}')">★</span>
       </div></td>
-      <td class="left-align"><div class="sym-cell">${icon}<span class="sym-name">${row.symbol}</span>${gem}${quadBadge(row)}${patternBadge(row)}${streakBadge(row)}<span class="row-radar" title="Abrir en el radar de confluencia (checklist de 7 señales)" onclick="event.stopPropagation();openInRadar('${row.symbol}')">🎯</span></div></td>
+      <td class="left-align"><div class="sym-cell">${icon}<span class="sym-name">${row.symbol}</span>${row.byMove ? `<span class="mv-badge" title="Entro al universo por PLAZA DE MOVIMIENTO, no por liquidez: esta fuera del top 90 por turnover pero es de las 10 que mas se mueven en 24h. Ojo, es mas fina de lo habitual.">↕</span>` : ''}${gem}${quadBadge(row)}${patternBadge(row)}${streakBadge(row)}<span class="row-radar" title="Abrir en el radar de confluencia (checklist de 7 señales)" onclick="event.stopPropagation();openInRadar('${row.symbol}')">🎯</span></div></td>
       <td><div class="price-cell"><span title="Mini-gráfico: ${sparkTitle()} — cambia con la temporalidad seleccionada en el mapa">${sparkSVG(sparkSeries(row))}</span><span style="margin-left:6px">${fmtPrice(row.price)}</span></div></td>
       <td>${fundingCell(row.fundingRate)}</td>
       <td>${cvdCell(row.cvd1m)}</td>

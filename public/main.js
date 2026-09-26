@@ -30,7 +30,6 @@ async function load() {
   try {
     const json = await loadData();
 
-    const firstLoad = allRows.length === 0;
     allRows = json.symbols || [];
     checkQuadrantChanges(allRows);
     recordTrails(allRows);
@@ -43,7 +42,10 @@ async function load() {
     renderMomentumStrip(allRows); // 🚀 momentum confirmado: umbrales absolutos precio 5% + OI 10%
     scanPatterns(allRows); // detector W/M + alertas de ruptura de cuello (antes de render: pinta badges)
     btcOnCycle(); // ₿ direccionalidad BTC: factores, sesiones y alertas de cambio de sesgo
-    if (firstLoad && allRows.length) connectLiqWS(allRows.map(r => r.symbol));
+    // El universo rota (10 plazas se dan por movimiento), así que la suscripción
+    // se sincroniza en CADA ciclo. Antes solo se hacía en la primera carga y las
+    // monedas que entraban después nunca recibían precio en vivo ni order flow.
+    if (allRows.length) syncLiqWSUniverse(allRows.map(r => r.symbol));
     countdownVal = 10;
 
     const ts = new Date(json.ts);

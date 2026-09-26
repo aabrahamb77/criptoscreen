@@ -241,6 +241,11 @@ function drawBubbleChart(scored) {
     } else if (pricePos){ fillC='rgba(20,100,140,0.28)'; strokeC='rgba(40,160,200,0.40)'; glowC='rgba(30,150,200,0.12)'; labelC='#5090aa'; }
     else               { fillC='rgba(100,20,20,0.28)';  strokeC='rgba(170,45,45,0.40)'; glowC='rgba(160,40,40,0.10)'; labelC='#886060'; }
 
+    // Plaza de movimiento: la etiqueta va en ambar. NO se toca el relleno (que
+    // codifica el cuadrante) ni se anade otro anillo, porque el de funding
+    // extremo ya es naranja y se confundirian.
+    if (d.byMove) labelC = '#ffbe3c';
+
     // Outer glow
     ctx.save();
     ctx.shadowColor = glowC;

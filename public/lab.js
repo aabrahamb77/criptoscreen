@@ -224,7 +224,22 @@ function renderPaperTrading(validatedKeys) {
     } else {
       const reasonMap = { TP:'🎯 TP', SL:'🛑 SL', SCORE:'📉 Score', TIME:'⏱ Tiempo' };
       const reasonClass = { TP:'pt-reason-tp', SL:'pt-reason-sl', SCORE:'pt-reason-score', TIME:'pt-reason-time' };
-      closedBody.innerHTML = recent.map(t => {
+      // Mismo criterio que la tabla de abiertas: separadas por temporalidad,
+      // porque el acierto de una no dice nada del de las otras.
+      const ordTf = { '15m': 0, '1h': 1, '4h': 2 };
+      const ordRec = [...recent].sort((x, y) =>
+        (ordTf[x.tf || '15m'] - ordTf[y.tf || '15m']) || (y.exitTime - x.exitTime));
+      let tfPrev = null;
+      closedBody.innerHTML = ordRec.map(t => {
+        const tfC = t.tf || '15m';
+        let cabC = '';
+        if (tfC !== tfPrev) {
+          tfPrev = tfC;
+          const grupo = ordRec.filter(x => (x.tf || '15m') === tfC);
+          const aciertos = grupo.filter(x => x.exitReason === 'TARGET').length;
+          cabC = `<tr class="patt-tf-row"><td colspan="5">◭ ${tfC} — ${aciertos}/${grupo.length} en objetivo</td></tr>`;
+        }
+        return cabC + (() => {
         const pnlC = t.pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
@@ -235,7 +250,7 @@ function renderPaperTrading(validatedKeys) {
           <td class="${pnlC}">${t.pnlUSD >= 0 ? '+' : ''}$${t.pnlUSD?.toFixed(2)}</td>
           <td class="${reasonClass[t.exitReason] ?? ''}">${reasonMap[t.exitReason] ?? t.exitReason}</td>
           <td style="color:#a5adb7">${fmtDur(t.exitTime - t.entryTime)}</td>
-        </tr>`;
+        </tr>`; })();
       }).join('');
     }
   }
@@ -248,29 +263,188 @@ function renderPaperTrading(validatedKeys) {
 // sugerido? No se cierra por tiempo — se queda abierto indefinidamente hasta
 // tocar uno de los dos niveles. patterns.js abre cada entrada al romper el
 // cuello (trackPatternSignal) y esto se resuelve cada ciclo, tenga la pestaña
-// Lab abierta o no. Trailing stop: pendiente de evaluar más adelante.
+// Lab abierta o no. Solo se admiten rupturas con R:R >= 1:1 al precio real.
 let patternTrack = JSON.parse(localStorage.getItem('scalp_pattern_track') || '[]');
 function savePatternTrack() { safeSetItem('scalp_pattern_track', JSON.stringify(patternTrack)); }
-function patternTrackOpen()   { return patternTrack.filter(t => t.status === 'open'); }
-function patternTrackClosed() { return patternTrack.filter(t => t.status !== 'open'); }
+function patternTrackOpen()    { return patternTrack.filter(t => t.status === 'open'); }
+// 'pending' = orden limite del retroceso puesta y sin llenar todavia.
+function patternTrackPending() { return patternTrack.filter(t => t.status === 'pending'); }
+// OJO: antes era `!== 'open'`, que metia las pendientes y las canceladas en el
+// saco de "cerradas" y les inventaba un resultado. Solo cuenta lo que cerro.
+function patternTrackClosed()  { return patternTrack.filter(t => t.status === 'closed'); }
+function patternTrackCancelled() { return patternTrack.filter(t => t.status === 'cancelled'); }
 
-// Llamada por patterns.js cuando un patrón entra en 'breaking'. Dedup: si ya
-// hay una entrada abierta para ese símbolo+lado, no abre otra.
+// Ratio beneficio/riesgo mínimo para dar la entrada por buena. Se mide AL PRECIO
+// REAL DE ENTRADA, no sobre el papel del patrón: cuando el cuello se rompe el
+// precio ya se ha movido, así que lo que queda hasta el objetivo se encoge y la
+// distancia al stop crece. Una ruptura detectada tarde puede tener un 1:1 sobre
+// el papel y un 0,4:1 de verdad — y esas son justo las que hay que descartar.
+const PATTERN_MIN_RR = 1;
+
+// ── Costes de ejecucion ─────────────────────────────────────────────────────
+// Hasta ahora el seguimiento media el PnL en BRUTO, y ese numero no sirve para
+// decidir nada. El barrido de backtest/RESULTADOS-SCALP.md dio 0 de 1.728
+// configuraciones rentables a comision taker y 44 de 1.728 a comision maker: en
+// scalping la comision no es un ajuste fino, es la variable que decide si hay
+// estrategia o no. Sobre este mismo patron W/M se midio +0,229 R en bruto y
+// -0,664 R despues de comisiones, porque con el stop en el cuello el viaje de
+// ida y vuelta se come el 23% del riesgo.
+//
+// Bybit perpetuos lineales:
+const FEE_TAKER_PCT = 0.055;  // orden a mercado
+const FEE_MAKER_PCT = 0.020;  // orden limite (lado pasivo)
+const SLIP_PCT      = 0.010;  // deslizamiento estimado, solo al ejecutar a mercado
+
+// Coste de ENTRAR, segun como se entra.
+const _feeIn = kind => (kind === 'retest' ? FEE_MAKER_PCT : FEE_TAKER_PCT + SLIP_PCT);
+// Coste de SALIR, segun por que se sale: un take-profit es una orden limite ya
+// puesta en el nivel (maker); un stop, un trailing o un breakeven se disparan a
+// mercado (taker + deslizamiento).
+const _feeOut = reason => (reason === 'TARGET' ? FEE_MAKER_PCT : FEE_TAKER_PCT + SLIP_PCT);
+
+// ── Stop de tiempo ──────────────────────────────────────────────────────────
+// Sin esto, una entrada que no toca objetivo ni stop se queda 'open' para
+// siempre y no cuenta en ninguna estadistica: sesgo de supervivencia puro. Al
+// agotarse el plazo se cierra al precio que haya, con motivo TIME, y cuenta
+// como resultado real igual que cualquier otro.
+const PATTERN_MAX_HOLD_BARS = { '15m': 96, '1h': 72, '4h': 42 }; // 24h · 3 dias · 7 dias
+
+// ── Entrada MAKER en el retroceso al cuello ─────────────────────────────────
+// La entrada en la ruptura solo se puede ejecutar a mercado, y a comision taker
+// este patron no sobrevive. La unica ejecucion que paga comision maker es una
+// orden limite esperando en un nivel, y el nivel natural es el cuello ya roto,
+// que pasa de resistencia a soporte (al reves en la M). Por eso cada ruptura
+// abre EN PARALELO una entrada limite 'pending' en el cuello, para medir cara a
+// cara: ruptura a mercado (taker, entra siempre) contra retroceso al cuello
+// (maker, entra solo si el precio vuelve).
+//
+// El coste de esperar es real y se mide: las rupturas que se van sin retroceder
+// quedan anotadas como MISSED. Sin ese numero la comparacion seria tramposa,
+// porque solo se veria la mitad buena de operar con limite.
+const RETEST_STOP_ATR = 0.5;  // stop bajo el cuello: si el cuello no aguanta, el setup fallo
+const RETEST_MAX_BARS = 8;    // velas de su TF que la orden espera antes de cancelarse
+
+// Ganancia a la que se arma el trailing stop de la variante C.
+const TRAIL_ARM_PCT = 5;
+
+// Antigüedad máxima de la ruptura, EN VELAS de su propia temporalidad. Medir
+// esto en horas sería un error: se midieron las señales en 'breaking' y las de
+// 4h con CERO velas transcurridas -lo más fresco que existe, la vela de ruptura
+// ni siquiera ha cerrado- ya marcaban 2,2h, así que un corte de "máximo 2h"
+// las habría matado todas mientras dejaba pasar las de 1h. Con 0 velas se entra
+// solo en la vela que acaba de cerrar más allá del cuello; una entrada con 1
+// vela ya pasada solo ocurre si la pestaña estuvo cerrada y al volver se
+// encontró la ruptura hecha, que es justo lo que no queremos operar.
+const PATTERN_MAX_BREAK_BARS = 0;
+
+// Contador de descartes de la sesión, para poder juzgar si el filtro está
+// dejando pasar poco o demasiado. En memoria: no engorda localStorage.
+let _patSkipped = { rr: 0, old: 0, last: null };
+
+// Llamada por patterns.js SOLO cuando un patrón entra en 'breaking' (una vela ya
+// cerrada más allá del cuello), nunca en 'confirming' ni 'forming'. Dedup: si ya
+// hay una entrada abierta para ese símbolo+lado+temporalidad, no abre otra.
+// Duracion de una vela por temporalidad: hace falta para saber cual es la vela
+// EN CURSO y no examinar su rango completo al resolver (contiene el movimiento
+// anterior a la entrada, que no es nuestro).
+const TF_MS = { '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000 };
+
 function trackPatternSignal(row, p) {
   const side = p.type === 'W' ? 'L' : 'S';
   const tf = p.tf || '15m';
-  if (patternTrack.some(t => t.status === 'open' && t.symbol === row.symbol && t.side === side && (t.tf || '15m') === tf)) return;
-  patternTrack.push({
-    id: Date.now() + Math.random(),
-    symbol: row.symbol, side, type: p.type, tf,
-    entryPrice: row.price, entryTime: Date.now(),
-    target: p.target, stop: p.stop, quality: p.quality, atr: p.atr,
-    status: 'open',
-    // Variantes de salida medidas EN PARALELO sobre la misma señal:
-    v_be: { stop: p.stop, status: 'open' },                 // breakeven al 50% de progreso
-    v_tr: { stop: p.stop, active: false, status: 'open' },  // trailing 1.5×ATR desde el 60%
-  });
-  if (patternTrack.length > 500) patternTrack.splice(0, patternTrack.length - 500);
+  const now = Date.now();
+  const tfMs = TF_MS[tf] || 900_000;
+  const barT = Math.floor(now / tfMs) * tfMs; // apertura de la vela en curso
+  // Una entrada por simbolo+lado+TF y POR TIPO de entrada: la de mercado y la
+  // del retroceso son dos formas de operar la misma ruptura y se miden juntas.
+  const yaHay = kind => patternTrack.some(t =>
+    (t.status === 'open' || t.status === 'pending') &&
+    t.symbol === row.symbol && t.side === side && (t.tf || '15m') === tf &&
+    (t.entryKind || 'break') === kind);
+
+  // STOP DE LA ENTRADA: al otro lado del CUELLO ya roto, no tras el extremo del
+  // patrón. Medido sobre 24 rupturas reales, con el stop tras el extremo el R:R
+  // es estructuralmente imposible: el objetivo está a `profundidad` del precio y
+  // el stop a `profundidad + 0.3·ATR`, así que el riesgo SIEMPRE supera al
+  // beneficio (mediana 0,33; ninguna de las 24 llegaba a 1:1). Con el stop en el
+  // cuello roto -que pasa a ser soporte/resistencia- pasan 8 de 24, y son justo
+  // las rupturas frescas. El stop original se conserva en stopPattern.
+  // Solo rupturas RECIENTES: si la vela de ruptura ya quedó atrás, se descarta.
+  if (p.barsSinceBreak != null && p.barsSinceBreak > PATTERN_MAX_BREAK_BARS) {
+    _patSkipped.old++;
+    _patSkipped.last = { symbol: row.symbol, tf, type: p.type, bars: p.barsSinceBreak, ts: Date.now() };
+    return;
+  }
+
+  const isLong = side === 'L';
+
+  // Constructor comun a las dos entradas. riskPct y feeInPct se fijan aqui,
+  // en la apertura, porque son lo que convierte el resultado en un multiplo de
+  // R neto y no en un porcentaje sin contexto.
+  const nueva = (kind, entryPrice, stop, status) => {
+    const reward = Math.abs(p.target - entryPrice);
+    const risk   = Math.abs(entryPrice - stop);
+    const rr = risk > 0 ? reward / risk : 0;
+    if (rr < PATTERN_MIN_RR) return { rr, rechazada: true };
+    return { rr, entrada: {
+      id: now + Math.random(),
+      symbol: row.symbol, side, type: p.type, tf,
+      entryKind: kind,                       // 'break' (mercado) | 'retest' (limite)
+      entryPrice, entryTime: status === 'open' ? now : null,
+      placedAt: now,                         // cuando se detecto la ruptura
+      target: p.target, stop, stopPattern: p.stop, neckline: p.neckline,
+      quality: p.quality, atr: p.atr, rr,
+      riskPct: entryPrice > 0 ? risk / entryPrice * 100 : null,
+      feeInPct: _feeIn(kind),
+      status,
+      lastBarT: barT,                        // ultima vela ya examinada
+      v_be: { stop, status },                // breakeven al 50% de progreso
+      v_tr: { stop, active: false, status }, // trailing 1.5×ATR desde +5%
+    } };
+  };
+
+  // ── 1) Entrada de RUPTURA, a mercado y al precio de ahora ──────────────────
+  // STOP: al otro lado del CUELLO ya roto, no tras el extremo del patron. Medido
+  // sobre 24 rupturas reales, con el stop tras el extremo el R:R es
+  // estructuralmente imposible: el objetivo esta a `profundidad` del precio y el
+  // stop a `profundidad + 0.3·ATR`, asi que el riesgo SIEMPRE supera al
+  // beneficio (mediana 0,33; ninguna de las 24 llegaba a 1:1). Con el stop en el
+  // cuello roto -que pasa a ser soporte/resistencia- pasan 8 de 24, y son justo
+  // las rupturas frescas. El stop original se conserva en stopPattern.
+  const stopEntry = isLong ? p.neckline - 0.3 * p.atr : p.neckline + 0.3 * p.atr;
+  // Si el precio ya volvió al otro lado del cuello, el stop quedaría del lado
+  // equivocado: no hay entrada válida que medir.
+  const cuelloPerdido = isLong ? row.price <= stopEntry : row.price >= stopEntry;
+  if (!cuelloPerdido && !yaHay('break')) {
+    const r = nueva('break', row.price, stopEntry, 'open');
+    if (r.rechazada) {
+      _patSkipped.rr++;
+      _patSkipped.last = { symbol: row.symbol, tf, type: p.type, rr: r.rr, ts: now };
+    } else {
+      patternTrack.push(r.entrada);
+    }
+  }
+
+  // ── 2) Entrada de RETROCESO, con orden limite en el cuello ─────────────────
+  // Queda 'pending' hasta que el precio vuelva a tocar el cuello. El stop va
+  // medio ATR por debajo (por encima en la M): si el cuello roto no aguanta como
+  // soporte, la premisa del setup es falsa y no hay nada que esperar. Ese stop
+  // corto es lo que da a esta entrada un R:R alto por construccion — la
+  // profundidad del patron es >= 1·ATR y el riesgo es 0,5·ATR — pero tambien
+  // hara que salte mas veces. Cual de las dos cosas pesa mas es exactamente lo
+  // que este seguimiento tiene que responder, no algo que yo deba suponer.
+  if (!yaHay('retest')) {
+    const stopRetest = isLong ? p.neckline - RETEST_STOP_ATR * p.atr
+                              : p.neckline + RETEST_STOP_ATR * p.atr;
+    const r = nueva('retest', p.neckline, stopRetest, 'pending');
+    if (r.entrada) {
+      r.entrada.limitPrice = p.neckline;
+      r.entrada.expiresAfterBar = barT + RETEST_MAX_BARS * tfMs;
+      patternTrack.push(r.entrada);
+    }
+  }
+
+  if (patternTrack.length > 800) patternTrack.splice(0, patternTrack.length - 800);
   savePatternTrack();
 }
 
@@ -278,9 +452,16 @@ function closePatternTrack(t, reason, price) {
   const dir = t.side === 'L' ? 1 : -1;
   t.exitPrice  = price;
   t.exitTime   = Date.now();
-  t.exitReason = reason; // 'TARGET' | 'STOP'
-  t.pnlPct     = dir * (price - t.entryPrice) / t.entryPrice * 100;
-  t.status     = 'closed';
+  t.exitReason = reason; // 'TARGET' | 'STOP' | 'TIME'
+  // NETO, no bruto: pnlPct es el numero que lee todo el panel, asi que el
+  // descuento va aqui y no en la presentacion — si se descontara al pintar,
+  // cualquier sitio que se olvidara de hacerlo volveria a mentir. El bruto se
+  // guarda al lado para poder ver cuanto se lleva exactamente la friccion.
+  t.pnlGrossPct = dir * (price - t.entryPrice) / t.entryPrice * 100;
+  t.costPct     = (t.feeInPct != null ? t.feeInPct : _feeIn(t.entryKind)) + _feeOut(reason);
+  t.pnlPct      = t.pnlGrossPct - t.costPct;
+  t.r           = t.riskPct > 0 ? t.pnlPct / t.riskPct : null; // multiplo de R, neto
+  t.status      = 'closed';
   savePatternTrack();
   if (canAlert('patternDone')) {
     showToast(
@@ -296,63 +477,352 @@ function closePatternTrack(t, reason, price) {
 // paralelo sobre la MISMA señal, dos variantes de salida alternativas:
 //   🅱 Breakeven 50%: al recorrer la mitad hacia el objetivo, el stop sube a
 //      la entrada (elimina los "casi-ganadores" que terminan en pérdida).
-//   🅲 Trailing: SIN take-profit — al 60% de progreso activa un trailing stop
-//      de 1.5×ATR de la temporalidad y deja correr el movimiento.
+//   🅲 Trailing: SIN take-profit — al alcanzar +5% de GANANCIA arma un trailing
+//      stop de 1.5×ATR de la temporalidad y deja correr el movimiento.
 // Así el panel compara con datos reales cuál estrategia de salida rinde más.
+// -- Velas CERRADAS aun sin examinar, en la temporalidad del seguimiento -----
+// Resolver solo con el precio en vivo de cada ciclo (~10 s) deja invisible
+// cualquier mecha que toque un nivel y se recupere, y eso no es un error
+// simetrico: el stop esta mas cerca de la entrada que el objetivo, asi que es al
+// stop al que se le escapan mas toques. La vela EN CURSO se excluye porque su
+// rango todavia no esta cerrado y, en la vela de la entrada, contiene tambien el
+// movimiento anterior a haber entrado, que no nos pertenece.
+function _patBarsSince(row, tf, lastBarT, now) {
+  const k = tf === '15m' ? row.k15
+          : tf === '1h'  ? row.k60
+          : (typeof _patAgg4h === 'function' ? _patAgg4h(row) : row._k240);
+  if (!k || !k.t || !k.t.length) return [];
+  const tfMs = TF_MS[tf] || 900_000;
+  const out = [];
+  for (let i = 0; i < k.t.length; i++) {
+    if (k.t[i] <= lastBarT) continue;      // ya examinada en un ciclo anterior
+    if (k.t[i] + tfMs > now) continue;     // en curso: rango aun sin cerrar
+    out.push({ t: k.t[i], h: k.h[i], l: k.l[i], c: k.c[i] });
+  }
+  return out;
+}
+
+// Cierre de una variante de salida, con el mismo descuento de comisiones que la
+// entrada principal.
+function _patCloseVar(t, v, reason, price, when) {
+  const dir = t.side === 'L' ? 1 : -1;
+  v.status      = 'closed';
+  v.exitReason  = reason;
+  v.pnlGrossPct = dir * (price - t.entryPrice) / t.entryPrice * 100;
+  v.costPct     = (t.feeInPct != null ? t.feeInPct : _feeIn(t.entryKind)) + _feeOut(reason);
+  v.pnlPct      = v.pnlGrossPct - v.costPct;
+  v.r           = t.riskPct > 0 ? v.pnlPct / t.riskPct : null;
+  v.exitTime    = when || Date.now();
+}
+
+// Aplica un "tick" a las tres variantes. `ext` son los extremos de una vela
+// cerrada, o el precio vivo (con h = l = c = precio).
+function _patApplyTick(t, ext, when) {
+  let dirty = false;
+  const isLong = t.side === 'L';
+  const dir = isLong ? 1 : -1;
+  const pnlAt  = px => dir * (px - t.entryPrice) / t.entryPrice * 100;
+  const tocoStop = lvl => (isLong ? ext.l <= lvl : ext.h >= lvl);
+  const tocoTgt  = lvl => (isLong ? ext.h >= lvl : ext.l <= lvl);
+
+  // (A) BASE -- el STOP se comprueba ANTES que el objetivo. Dentro de una misma
+  // vela no hay forma de saber cual se toco primero, y suponer que fue el stop
+  // es la convencion honesta. Antes se comprobaba al contrario, asi que cada
+  // vela que contenia los dos niveles se apuntaba como GANADA.
+  if (t.status === 'open') {
+    if (tocoStop(t.stop))        { closePatternTrack(t, 'STOP',   t.stop);   dirty = true; }
+    else if (tocoTgt(t.target))  { closePatternTrack(t, 'TARGET', t.target); dirty = true; }
+  }
+
+  // (B) BREAKEVEN 50% -- el stop sube a la entrada al recorrer media distancia.
+  // El avance se mide con el CIERRE de la vela, no con su maximo: mover el stop
+  // por una mecha que luego se deshace seria darse una ventaja que no existe.
+  const vb = t.v_be;
+  if (vb && vb.status === 'open') {
+    if (tocoStop(vb.stop))       { _patCloseVar(t, vb, vb.stop === t.entryPrice ? 'BE' : 'STOP', vb.stop, when); dirty = true; }
+    else if (tocoTgt(t.target))  { _patCloseVar(t, vb, 'TARGET', t.target, when); dirty = true; }
+    else {
+      const dist = Math.abs(t.target - t.entryPrice) || 1e-9;
+      if (dir * (ext.c - t.entryPrice) / dist >= 0.5 && vb.stop !== t.entryPrice) { vb.stop = t.entryPrice; dirty = true; }
+    }
+  }
+
+  // (C) TRAILING 1.5xATR, armado al llegar a +5% de ganancia (sin take-profit).
+  // Se arma por GANANCIA REAL, no por porcentaje de recorrido hacia el objetivo:
+  // el 60% de un objetivo pequeno puede ser un +0,8% que no merece proteger, y
+  // el 60% de uno grande puede ser un +9% ya regalado si se gira.
+  const vt = t.v_tr;
+  if (vt && vt.status === 'open') {
+    if (tocoStop(vt.stop)) { _patCloseVar(t, vt, vt.active ? 'TRAIL' : 'STOP', vt.stop, when); dirty = true; }
+    else {
+      if (!vt.active && pnlAt(ext.c) >= TRAIL_ARM_PCT) { vt.active = true; dirty = true; }
+      if (vt.active) {
+        const cand   = isLong ? ext.c - 1.5 * t.atr : ext.c + 1.5 * t.atr;
+        const better = isLong ? Math.max(vt.stop, cand) : Math.min(vt.stop, cand);
+        if (better !== vt.stop) { vt.stop = better; dirty = true; }
+      }
+    }
+  }
+  return dirty;
+}
+
+// La orden limite se llena y la entrada pasa a viva.
+function _patFill(t, price, when) {
+  const tfMs = TF_MS[t.tf || '15m'] || 900_000;
+  t.status     = 'open';
+  t.entryPrice = price;
+  t.entryTime  = when;
+  t.filledAt   = when;
+  t.lastBarT   = Math.floor(when / tfMs) * tfMs;
+  if (t.v_be) { t.v_be.status = 'open'; t.v_be.stop = t.stop; }
+  if (t.v_tr) { t.v_tr.status = 'open'; t.v_tr.stop = t.stop; t.v_tr.active = false; }
+  return true;
+}
+
+// La orden limite se retira sin haberse llenado. MISSED es el caso importante:
+// la ruptura funciono y el precio nunca volvio a darnos la entrada. Es el precio
+// que se paga por exigir comision maker y sin contarlo la comparacion mentiria.
+function _patCancel(t, reason, when) {
+  t.status       = 'cancelled';
+  t.cancelReason = reason; // 'FAILED' | 'MISSED' | 'EXPIRED'
+  t.exitTime     = when;
+  if (t.v_be) t.v_be.status = 'cancelled';
+  if (t.v_tr) t.v_tr.status = 'cancelled';
+  return true;
+}
+
+function _patResolvePending(t, row, tf, tfMs, now) {
+  let dirty = false;
+  const isLong = t.side === 'L';
+  const lim = t.limitPrice != null ? t.limitPrice : t.entryPrice;
+  // Una orden limite de COMPRA se ejecuta cuando el precio BAJA hasta ella; una
+  // de venta, cuando sube. Se mira vela a vela y al final el precio vivo.
+  const toco = ext => (isLong ? ext.l <= lim : ext.h >= lim);
+
+  for (const b of _patBarsSince(row, tf, t.lastBarT || 0, now)) {
+    t.lastBarT = b.t; dirty = true;
+    if (toco(b)) return _patFill(t, lim, b.t + tfMs);
+    // El setup falla cuando una vela CIERRA al otro lado del cuello sin haber
+    // tocado el limite: el cuello ya no hace de soporte y no hay nada que esperar.
+    if (isLong ? b.c < t.neckline : b.c > t.neckline) return _patCancel(t, 'FAILED', now);
+  }
+  if (toco({ h: row.price, l: row.price })) return _patFill(t, lim, now);
+
+  if (isLong ? row.price >= t.target : row.price <= t.target) return _patCancel(t, 'MISSED', now);
+  if (t.expiresAfterBar && now > t.expiresAfterBar)           return _patCancel(t, 'EXPIRED', now);
+  return dirty;
+}
+
+// Sin timeout a proposito -- llamar en CADA ciclo de datos (no solo con el Lab
+// abierto). Resuelve la variante BASE (objetivo fijo vs stop fijo) y, en
+// paralelo sobre la MISMA senal, dos variantes de salida alternativas, y llena
+// o retira las ordenes limite del retroceso al cuello.
 function checkPatternTrackOutcomes() {
   let dirty = false;
+  const now = Date.now();
   for (const t of patternTrack) {
-    // migración perezosa de entradas antiguas (sin variantes)
-    if (!t.v_be) t.v_be = { stop: t.stop, status: t.status === 'open' ? 'open' : 'closed', pnlPct: t.pnlPct ?? null, exitReason: t.exitReason || null };
-    if (!t.v_tr) t.v_tr = { stop: t.stop, active: false, status: t.status === 'open' ? 'open' : 'closed', pnlPct: t.pnlPct ?? null, exitReason: t.exitReason || null };
-    if (t.atr == null) t.atr = Math.abs(t.target - t.entryPrice) / 1.8; // aprox. si la señal es previa a esta versión
+    if (t.status !== 'open' && t.status !== 'pending') continue;
 
-    const baseOpen = t.status === 'open';
-    const beOpen   = t.v_be.status === 'open';
-    const trOpen   = t.v_tr.status === 'open';
-    if (!baseOpen && !beOpen && !trOpen) continue;
+    // migracion perezosa de entradas anteriores a esta version
+    if (!t.entryKind) t.entryKind = 'break';
+    if (t.feeInPct == null) t.feeInPct = _feeIn(t.entryKind);
+    if (t.atr == null) t.atr = Math.abs(t.target - t.entryPrice) / 1.8;
+    if (t.riskPct == null && t.entryPrice > 0) t.riskPct = Math.abs(t.entryPrice - t.stop) / t.entryPrice * 100;
+    if (!t.v_be) t.v_be = { stop: t.stop, status: t.status };
+    if (!t.v_tr) t.v_tr = { stop: t.stop, active: false, status: t.status };
 
-    const row = allRows.find(r => r.symbol === t.symbol);
-    if (!row?.price) continue;
-    const price = row.price;
-    const isLong = t.side === 'L';
-    const dir = isLong ? 1 : -1;
-    const dist = Math.abs(t.target - t.entryPrice) || 1e-9;
-    const progress = dir * (price - t.entryPrice) / dist; // 1 = tocó el objetivo
-    const pnlAt = px => dir * (px - t.entryPrice) / t.entryPrice * 100;
+    const tf   = t.tf || '15m';
+    const tfMs = TF_MS[tf] || 900_000;
+    const row  = allRows.find(r => r.symbol === t.symbol);
 
-    // 🅰 BASE: objetivo fijo vs stop fijo (la oficial del panel)
-    if (baseOpen) {
-      const hitTarget = isLong ? price >= t.target : price <= t.target;
-      const hitStop   = isLong ? price <= t.stop   : price >= t.stop;
-      if (hitTarget)      { closePatternTrack(t, 'TARGET', price); dirty = true; }
-      else if (hitStop)   { closePatternTrack(t, 'STOP',   price); dirty = true; }
+    if (!row || !row.price) {
+      // La moneda salio del universo del screener: en este ciclo no hay precio.
+      // Antes esto era un `continue` seco y la entrada se quedaba abierta PARA
+      // SIEMPRE sin contar en ninguna estadistica. Con las 10 plazas de
+      // movimiento las monedas rotan a diario, asi que el agujero se tragaba
+      // justo a las senales mas finas -- las que mas probabilidades tienen de
+      // ser perdedoras. Se marcan y las resuelve el servidor de snapshots.
+      if (!t.orphanSince) { t.orphanSince = now; dirty = true; }
+      continue;
+    }
+    if (t.orphanSince) { t.orphanSince = null; dirty = true; }
+
+    if (t.status === 'pending') {
+      if (_patResolvePending(t, row, tf, tfMs, now)) dirty = true;
+      continue;
     }
 
-    // 🅱 BREAKEVEN 50%
-    if (beOpen) {
-      const v = t.v_be;
-      if (progress >= 0.5 && v.stop !== t.entryPrice) { v.stop = t.entryPrice; dirty = true; }
-      const hitT = isLong ? price >= t.target : price <= t.target;
-      const hitS = isLong ? price <= v.stop : price >= v.stop;
-      if (hitT)      { v.status = 'closed'; v.exitReason = 'TARGET'; v.pnlPct = pnlAt(t.target); v.exitTime = Date.now(); dirty = true; }
-      else if (hitS) { v.status = 'closed'; v.exitReason = v.stop === t.entryPrice ? 'BE' : 'STOP'; v.pnlPct = pnlAt(v.stop); v.exitTime = Date.now(); dirty = true; }
+    for (const b of _patBarsSince(row, tf, t.lastBarT || 0, now)) {
+      t.lastBarT = b.t; dirty = true;
+      if (_patApplyTick(t, b, b.t + tfMs)) dirty = true;
+      if (t.status !== 'open' && t.v_be.status !== 'open' && t.v_tr.status !== 'open') break;
     }
+    if (_patApplyTick(t, { h: row.price, l: row.price, c: row.price }, now)) dirty = true;
 
-    // 🅲 TRAILING 1.5×ATR desde el 60% de progreso (sin take-profit)
-    if (trOpen) {
-      const v = t.v_tr;
-      if (!v.active && progress >= 0.6) { v.active = true; dirty = true; }
-      if (v.active) {
-        const cand = isLong ? price - 1.5 * t.atr : price + 1.5 * t.atr;
-        const better = isLong ? Math.max(v.stop, cand) : Math.min(v.stop, cand);
-        if (better !== v.stop) { v.stop = better; dirty = true; }
-      }
-      const hitS = isLong ? price <= v.stop : price >= v.stop;
-      if (hitS) { v.status = 'closed'; v.exitReason = v.active ? 'TRAIL' : 'STOP'; v.pnlPct = pnlAt(v.stop); v.exitTime = Date.now(); dirty = true; }
+    // Stop de tiempo: lo que no se resuelve en su plazo se cierra al precio que
+    // haya. Una entrada eterna no es un empate, es una estadistica que falta.
+    const limite = (PATTERN_MAX_HOLD_BARS[tf] || 96) * tfMs;
+    if (t.entryTime && now - t.entryTime > limite) {
+      if (t.status === 'open')      { closePatternTrack(t, 'TIME', row.price); dirty = true; }
+      if (t.v_be.status === 'open') { _patCloseVar(t, t.v_be, 'TIME', row.price, now); dirty = true; }
+      if (t.v_tr.status === 'open') { _patCloseVar(t, t.v_tr, 'TIME', row.price, now); dirty = true; }
     }
   }
   if (dirty) savePatternTrack();
+}
+
+// -- Huerfanas: resolver contra el historico del servidor ---------------------
+// El servidor guarda un snapshot de precio cada 5 min de los 150 pares mas
+// liquidos, 14 dias. Con eso se resuelven las entradas cuya moneda ya no esta en
+// el universo, en vez de dejarlas abiertas fingiendo que no existen. La
+// granularidad de 5 min es peor que la de una vela, asi que aqui tambien se
+// comprueba el stop antes del objetivo.
+const ORPHAN_GRACE_MS = 10 * 60_000;   // margen antes de dar una moneda por ida
+const ORPHAN_EVERY_MS = 5 * 60_000;    // los snapshots del servidor son de 5 min: mirar mas seguido no aporta
+let _orphanBusy = false;
+let _orphanLastRun = 0;
+
+async function resolveOrphanPatternTracks() {
+  if (_orphanBusy) return;
+  const now = Date.now();
+  if (now - _orphanLastRun < ORPHAN_EVERY_MS) return;
+  const huerfanas = patternTrack.filter(t =>
+    (t.status === 'open' || t.status === 'pending') &&
+    t.orphanSince && now - t.orphanSince > ORPHAN_GRACE_MS);
+  if (!huerfanas.length) return;
+
+  _orphanBusy = true;
+  _orphanLastRun = now;
+  try {
+    const symbols = [...new Set(huerfanas.map(t => t.symbol))].slice(0, 60);
+    const from = Math.min(...huerfanas.map(t => t.lastSnapTs || t.entryTime || t.placedAt || now));
+    const res = await fetch('/api/prices/series?symbols=' + encodeURIComponent(symbols.join(',')) + '&from=' + from);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!Array.isArray(data.rows)) return;
+
+    const bySym = new Map();
+    for (const r of data.rows) {
+      if (!bySym.has(r.symbol)) bySym.set(r.symbol, []);
+      bySym.get(r.symbol).push(r);
+    }
+
+    let dirty = false;
+    for (const t of huerfanas) {
+      const serie = bySym.get(t.symbol);
+      if (!serie || !serie.length) continue;
+      const desde = t.lastSnapTs || t.entryTime || t.placedAt || 0;
+      for (const s of serie) {
+        if (s.ts <= desde) continue;
+        t.lastSnapTs = s.ts; dirty = true;
+        if (t.status === 'pending') {
+          const isLong = t.side === 'L';
+          const lim = t.limitPrice != null ? t.limitPrice : t.entryPrice;
+          if (isLong ? s.price <= lim : s.price >= lim) { _patFill(t, lim, s.ts); continue; }
+          if (isLong ? s.price >= t.target : s.price <= t.target) { _patCancel(t, 'MISSED', s.ts); break; }
+          if (t.expiresAfterBar && s.ts > t.expiresAfterBar)      { _patCancel(t, 'EXPIRED', s.ts); break; }
+          continue;
+        }
+        _patApplyTick(t, { h: s.price, l: s.price, c: s.price }, s.ts);
+        if (t.status !== 'open' && t.v_be.status !== 'open' && t.v_tr.status !== 'open') break;
+      }
+      // Agotado el plazo y sin poder resolverla, se cierra al ultimo precio
+      // conocido. Si el servidor tampoco cubre esa moneda queda abierta y se
+      // muestra como tal: un hueco declarado es honesto, uno escondido no.
+      const tfMs = TF_MS[t.tf || '15m'] || 900_000;
+      const limite = (PATTERN_MAX_HOLD_BARS[t.tf || '15m'] || 96) * tfMs;
+      const ultimo = serie[serie.length - 1];
+      if (t.status === 'open' && t.entryTime && now - t.entryTime > limite) {
+        closePatternTrack(t, 'TIME', ultimo.price); dirty = true;
+      }
+      if (t.status === 'pending' && t.expiresAfterBar && now > t.expiresAfterBar) {
+        _patCancel(t, 'EXPIRED', now); dirty = true;
+      }
+    }
+    if (dirty) savePatternTrack();
+  } catch (_) {
+    /* sin red o sin datos: el siguiente ciclo lo reintenta */
+  } finally {
+    _orphanBusy = false;
+  }
+}
+
+// -- Migracion unica a resultados NETOS --------------------------------------
+// Las entradas cerradas antes de esta version guardan el PnL en bruto. Mezclarlas
+// con las nuevas daria una media sin sentido, asi que se les descuenta el coste
+// una sola vez (marcador netV) suponiendo entrada a mercado, que es como se
+// tomaron. Se conserva el bruto para poder auditar el cambio.
+function _patMigrateToNet() {
+  let dirty = false;
+  const conv = (o, kind, riskPct) => {
+    if (!o || o.netV === 2 || o.pnlPct == null || o.status !== 'closed') return false;
+    o.pnlGrossPct = o.pnlPct;
+    o.costPct = _feeIn(kind) + _feeOut(o.exitReason || 'STOP');
+    o.pnlPct  = o.pnlGrossPct - o.costPct;
+    o.r = riskPct > 0 ? o.pnlPct / riskPct : null;
+    o.netV = 2;
+    return true;
+  };
+  for (const t of patternTrack) {
+    const kind = t.entryKind || 'break';
+    if (t.riskPct == null && t.entryPrice > 0 && t.stop != null) {
+      t.riskPct = Math.abs(t.entryPrice - t.stop) / t.entryPrice * 100;
+    }
+    if (conv(t, kind, t.riskPct)) dirty = true;
+    if (conv(t.v_be, kind, t.riskPct)) dirty = true;
+    if (conv(t.v_tr, kind, t.riskPct)) dirty = true;
+  }
+  if (dirty) savePatternTrack();
+}
+_patMigrateToNet();
+
+
+// Exporta el seguimiento completo a JSON. Este historial vive SOLO en el
+// localStorage de este navegador y nunca ha viajado al servidor, asi que sin
+// esto no hay forma de sacarlo para analizarlo fuera. Incluye la configuracion
+// de reglas vigente, porque un win-rate no significa nada sin saber con que
+// filtros y que stop se genero.
+function exportPatternTrack() {
+  const abiertas = patternTrackOpen().length;
+  const cerradas = patternTrackClosed().length;
+  const datos = {
+    exportadoEl: new Date().toISOString(),
+    origen: location.origin,          // Render y localhost son almacenes distintos
+    reglas: {
+      minRR: PATTERN_MIN_RR,
+      maxVelasDesdeRuptura: PATTERN_MAX_BREAK_BARS,
+      trailingArmadoEnPct: TRAIL_ARM_PCT,
+      stopDeEntrada: 'cuello roto -/+ 0.3 ATR',
+      stopDelRetroceso: 'cuello -/+ ' + RETEST_STOP_ATR + ' ATR',
+      velasQueEsperaLaOrdenLimite: RETEST_MAX_BARS,
+      plazoMaximoEnVelas: PATTERN_MAX_HOLD_BARS,
+      // Sin esto un win-rate no significa nada: son los numeros que convierten
+      // un PnL bruto en un resultado que se puede creer.
+      costes: { takerPct: FEE_TAKER_PCT, makerPct: FEE_MAKER_PCT, deslizamientoPct: SLIP_PCT },
+      resolucion: 'maximo/minimo de vela; si una vela contiene stop y objetivo se supone STOP',
+      resultadosNetos: true,
+    },
+    descartadasEstaSesion: { porRR: _patSkipped.rr, porNoRecientes: _patSkipped.old },
+    resumen: {
+      abiertas, cerradas, total: patternTrack.length,
+      pendientes: patternTrackPending().length,
+      canceladas: patternTrackCancelled().length,
+      sinPrecioEnVivo: patternTrack.filter(t => t.orphanSince).length,
+    },
+    entradas: patternTrack,
+  };
+  const blob = new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `patrones-wm-${location.hostname}-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (typeof showToast === 'function') {
+    showToast(`Exportadas ${patternTrack.length} entradas (${abiertas} abiertas, ${cerradas} cerradas)`, 'long');
+  }
 }
 
 function clearPatternTrack() {
@@ -363,13 +833,26 @@ function clearPatternTrack() {
 }
 
 function renderPatternTrack() {
-  const open   = patternTrackOpen();
-  const closed = patternTrackClosed(); // ya solo tiene TARGET/STOP (no hay otro motivo de cierre)
+  const open    = patternTrackOpen();
+  const pending = patternTrackPending();
+  const closed  = patternTrackClosed();
+  const canceladas = patternTrackCancelled();
 
   const wins    = closed.filter(t => t.exitReason === 'TARGET');
   const winRate = closed.length ? Math.round(wins.length / closed.length * 100) : null;
-  const avgPnl  = closed.length ? closed.reduce((a, t) => a + t.pnlPct, 0) / closed.length : null;
-  const avgTimeMs = closed.length ? closed.reduce((a, t) => a + (t.exitTime - t.entryTime), 0) / closed.length : null;
+  const conPnl  = closed.filter(t => Number.isFinite(t.pnlPct));
+  const avgPnl  = conPnl.length ? conPnl.reduce((a, t) => a + t.pnlPct, 0) / conPnl.length : null;
+  // La expectativa en R es el unico numero que dice si esto gana dinero: un
+  // acierto del 40% con 3R de media gana, y uno del 70% con 0,3R pierde.
+  const conR = closed.filter(t => t.r != null);
+  const avgR = conR.length ? conR.reduce((a, t) => a + t.r, 0) / conR.length : null;
+  // Cuanto del riesgo se lleva la friccion. Por encima del ~15% la comision
+  // decide el resultado, y ese fue el diagnostico de este patron: 23%.
+  const conCost = closed.filter(t => t.costPct != null && t.riskPct > 0);
+  const friccion = conCost.length
+    ? conCost.reduce((a, t) => a + t.costPct / t.riskPct, 0) / conCost.length * 100 : null;
+  const avgTimeMs = closed.length
+    ? closed.reduce((a, t) => a + ((t.exitTime || 0) - (t.entryTime || t.exitTime || 0)), 0) / closed.length : null;
 
   const set = (id, html, color) => {
     const el = document.getElementById(id);
@@ -377,35 +860,159 @@ function renderPatternTrack() {
     el.innerHTML = html;
     if (color) el.style.color = color;
   };
-  set('patt-stat-open',  `${open.length}`);
-  set('patt-stat-total', `${closed.length}`);
-  set('patt-stat-wr',    closed.length ? wrChip(winRate, closed.length) : '—', closed.length ? (winRate >= 50 ? '#00c878' : '#ee5555') : '');
-  set('patt-stat-pnl',   avgPnl != null ? `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%` : '—', avgPnl != null ? (avgPnl >= 0 ? '#00c878' : '#ee5555') : '');
-  set('patt-stat-time',  avgTimeMs != null ? fmtDur(avgTimeMs) : '—');
+  const col = v => (v == null ? '' : v >= 0 ? '#00c878' : '#ee5555');
+  set('patt-stat-open',    `${open.length}`);
+  set('patt-stat-pending', `${pending.length}`, pending.length ? '#7fd4ff' : '');
+  set('patt-stat-total',   `${closed.length}`);
+  set('patt-stat-wr',      closed.length ? wrChip(winRate, closed.length) : '—', closed.length ? (winRate >= 50 ? '#00c878' : '#ee5555') : '');
+  set('patt-stat-r',       avgR != null ? `${avgR >= 0 ? '+' : ''}${avgR.toFixed(3)} R <span style="font-weight:400;color:#8b9098">(n=${conR.length})</span>` : '—', col(avgR));
+  set('patt-stat-pnl',     avgPnl != null ? `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%` : '—', col(avgPnl));
+  set('patt-stat-fee',     friccion != null ? `${friccion.toFixed(1)}% del riesgo` : '—',
+      friccion == null ? '' : friccion > 15 ? '#ee5555' : friccion > 8 ? '#ffbe3c' : '#00c878');
+  set('patt-stat-time',    avgTimeMs != null ? fmtDur(avgTimeMs) : '—');
 
-  // ── Comparador de estrategias de salida (mismas señales, medidas en paralelo) ──
   const vEl = document.getElementById('patt-variants');
   if (vEl) {
     const agg = arr => {
       if (!arr.length) return null;
-      const w = arr.filter(p => p > 0).length;
-      return { n: arr.length, wr: Math.round(w / arr.length * 100), avg: arr.reduce((a, b) => a + b, 0) / arr.length };
+      const v = arr.filter(Number.isFinite);
+      if (!v.length) return null;
+      const w = v.filter(x => x > 0).length;
+      return { n: v.length, wr: Math.round(w / v.length * 100), avg: v.reduce((a, b) => a + b, 0) / v.length };
     };
+
+    // -- Ruptura a mercado contra retroceso al cuello --------------------------
+    // Esta es la comparacion que decide el diseno del screener, no un detalle:
+    // el barrido de backtest/RESULTADOS-SCALP.md dio 0 de 1.728 configuraciones
+    // rentables a comision taker y 44 de 1.728 a comision maker. La pregunta no
+    // es si el patron W/M funciona, es si se puede ejecutar sin pagar taker.
+    // MISSED es la mitad incomoda de la respuesta: rupturas que funcionaron y a
+    // las que la orden limite se quedo mirando. Sin ese numero esto seria un
+    // argumento de vendedor, no una medicion.
+    const ENTRADAS = [
+      { kind: 'break',  label: '⚡ Ruptura a mercado', sub: 'taker 0,065%' },
+      { kind: 'retest', label: '⏳ Retroceso al cuello', sub: 'maker 0,020%' },
+    ];
+    const porEntrada = ENTRADAS.map(e => {
+      const c  = closed.filter(t => (t.entryKind || 'break') === e.kind);
+      const rs = c.filter(t => t.r != null).map(t => t.r);
+      const cc = canceladas.filter(t => (t.entryKind || 'break') === e.kind);
+      return {
+        ...e,
+        n: c.length,
+        nR: rs.length,   // cuantas aportaron un R: puede ser menos que n
+        wr: c.length ? Math.round(c.filter(t => t.exitReason === 'TARGET').length / c.length * 100) : null,
+        r: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
+        abiertas: open.filter(t => (t.entryKind || 'break') === e.kind).length,
+        pend: pending.filter(t => (t.entryKind || 'break') === e.kind).length,
+        missed:  cc.filter(t => t.cancelReason === 'MISSED').length,
+        failed:  cc.filter(t => t.cancelReason === 'FAILED').length,
+        expired: cc.filter(t => t.cancelReason === 'EXPIRED').length,
+      };
+    });
+    const mejorEntrada = porEntrada.filter(x => x.r != null && x.n >= 10).sort((a, b) => b.r - a.r)[0] || null;
+    const entradaHtml = porEntrada.map(x => {
+      const esMejor = mejorEntrada && x === mejorEntrada;
+      const noTomadas = x.missed + x.failed + x.expired;
+      const detalle = !x.n
+        ? '<span style="color:#aab3c1">sin cerradas aún</span>'
+        : x.r == null
+          ? `${wrChip(x.wr, x.n)} <span style="color:#aab3c1">(n=${x.n}, sin R medible)</span>`
+          : `${wrChip(x.wr, x.n)} · <b style="color:${col(x.r)}">${x.r >= 0 ? '+' : ''}${x.r.toFixed(3)} R</b> <span style="color:#aab3c1" title="Operaciones que aportaron un R medible${x.nR < x.n ? ` — las otras ${x.n - x.nR} son de una versión anterior y no guardaban el riesgo` : ''}">(n=${x.nR}${x.nR < x.n ? ` de ${x.n}` : ''})</span>`;
+      const espera = x.pend ? ` · <span style="color:#7fd4ff">${x.pend} esperando</span>` : '';
+      const perdidas = noTomadas
+        ? ` · <span style="color:#ffbe3c" title="No se tomaron: ${x.missed} se fueron sin retroceder (MISSED) · ${x.failed} perdieron el cuello antes de llenar (FAILED) · ${x.expired} caducaron">${noTomadas} no tomadas${x.missed ? ` (${x.missed} se fueron sin volver)` : ''}</span>`
+        : '';
+      return `<span class="patt-var patt-var-entry${esMejor ? ' patt-var-best' : ''}" title="${x.sub}">${esMejor ? '👑 ' : ''}<b>${x.label}</b>
+        <span style="color:#8b9098">${x.sub}</span>: ${detalle}${espera}${perdidas}</span>`;
+    }).join('');
+
     const sBase = agg(closed.filter(t => t.pnlPct != null).map(t => t.pnlPct));
     const sBe   = agg(patternTrack.filter(t => t.v_be?.status === 'closed' && t.v_be.pnlPct != null).map(t => t.v_be.pnlPct));
     const sTr   = agg(patternTrack.filter(t => t.v_tr?.status === 'closed' && t.v_tr.pnlPct != null).map(t => t.v_tr.pnlPct));
     const rows2 = [
       { name: '🅰 Objetivo fijo (base)', s: sBase },
       { name: '🅱 Breakeven al 50%', s: sBe },
-      { name: '🅲 Trailing 1.5×ATR (desde 60%)', s: sTr },
+      { name: '🅲 Trailing 1.5×ATR (armado a +5%)', s: sTr },
     ];
+
+    // -- Desglose por temporalidad --
+    // Mezclar 15m, 1h y 4h en un solo win-rate esconde lo unico que importa
+    // decidir: en que temporalidad merece la pena operar el patron.
+    const TFS = ['15m', '1h', '4h'];
+    const byTf = TFS.map(tf => {
+      const c = closed.filter(t => (t.tf || '15m') === tf);
+      const o = open.filter(t => (t.tf || '15m') === tf);
+      const rs = c.filter(t => t.r != null).map(t => t.r);
+      const w = c.filter(t => t.exitReason === 'TARGET').length;
+      return {
+        tf, abiertas: o.length, n: c.length, nR: rs.length,
+        wr: c.length ? Math.round(w / c.length * 100) : null,
+        r: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
+      };
+    }).filter(x => x.n || x.abiertas);
+    const tfHtml = byTf.length ? byTf.map(x => {
+      const det = !x.n
+        ? '<span style="color:#aab3c1">sin cerradas aún</span>'
+        : x.r == null
+          ? `${wrChip(x.wr, x.n)} <span style="color:#aab3c1">(n=${x.n}, sin R medible)</span>`
+          : `${wrChip(x.wr, x.n)} · <b style="color:${col(x.r)}">${x.r >= 0 ? '+' : ''}${x.r.toFixed(3)} R</b> <span style="color:#aab3c1" title="Operaciones que aportaron un R medible${x.nR < x.n ? ` — las otras ${x.n - x.nR} son de una versión anterior y no guardaban el riesgo` : ''}">(n=${x.nR}${x.nR < x.n ? ` de ${x.n}` : ''})</span>`;
+      return `<span class="patt-var">◭ <b>${x.tf}</b> · ${x.abiertas} abierta${x.abiertas === 1 ? '' : 's'} · ${det}</span>`;
+    }).join('') : '';
+
     const best = rows2.filter(r => r.s && r.s.n >= 10).sort((a, b) => b.s.avg - a.s.avg)[0] || null;
-    vEl.innerHTML = rows2.map(r => {
+    const skipHtml = (_patSkipped.rr || _patSkipped.old)
+      ? `<span class="patt-var" title="Rupturas confirmadas que no se tomaron: por no pagar el riesgo (R:R) o por no ser recientes (la vela de ruptura ya había quedado atrás)">
+           🚫 descartadas: <b style="color:#ffbe3c">${_patSkipped.rr}</b> por R:R &lt; ${PATTERN_MIN_RR}:1 ·
+           <b style="color:#ffbe3c">${_patSkipped.old}</b> por no ser recientes <span style="color:#aab3c1">(esta sesión)</span></span>`
+      : '';
+    // Entradas cuya moneda salio del universo y que el servidor tampoco cubre.
+    // Se declara el hueco en vez de esconderlo: son las que antes se quedaban
+    // abiertas para siempre sin contar en nada.
+    const huerf = [...open, ...pending].filter(t => t.orphanSince).length;
+    const huerfHtml = huerf
+      ? `<span class="patt-var" title="Su moneda salió del universo del screener. Se intentan resolver contra el histórico de precios del servidor; las que el servidor tampoco cubre quedan aquí a la vista en vez de desaparecer de las estadísticas.">
+           🛰 <b style="color:#ffbe3c">${huerf}</b> sin precio en vivo (fuera del universo)</span>`
+      : '';
+
+    vEl.innerHTML = entradaHtml + tfHtml + skipHtml + huerfHtml + rows2.map(r => {
       const isBest = best && r === best;
       if (!r.s) return `<span class="patt-var">${r.name}: <b style="color:#aab3c1">sin datos aún</b></span>`;
       return `<span class="patt-var${isBest ? ' patt-var-best' : ''}">${isBest ? '👑 ' : ''}${r.name}:
-        <b>${wrChip(r.s.wr, r.s.n)}</b> · <b style="color:${r.s.avg >= 0 ? '#00c878' : '#ee5555'}">${r.s.avg >= 0 ? '+' : ''}${r.s.avg.toFixed(2)}% prom.</b> <span style="color:#aab3c1">(n=${r.s.n})</span></span>`;
+        <b>${wrChip(r.s.wr, r.s.n)}</b> · <b style="color:${col(r.s.avg)}">${r.s.avg >= 0 ? '+' : ''}${r.s.avg.toFixed(2)}% neto</b> <span style="color:#aab3c1">(n=${r.s.n})</span></span>`;
     }).join('');
+  }
+
+  // -- Ordenes limite esperando el retroceso --------------------------------
+  const pendBody = document.getElementById('patt-pending-body');
+  if (pendBody) {
+    if (!pending.length) {
+      pendBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin órdenes esperando — se ponen solas en el cuello al confirmarse una ruptura</td></tr>`;
+    } else {
+      const ordenTf = { '15m': 0, '1h': 1, '4h': 2 };
+      const ord = [...pending].sort((a, b) =>
+        (ordenTf[a.tf || '15m'] - ordenTf[b.tf || '15m']) || (b.placedAt - a.placedAt));
+      pendBody.innerHTML = ord.map(t => {
+        const row = allRows.find(r => r.symbol === t.symbol);
+        const curr = row?.price;
+        const isLong = t.side === 'L';
+        const lim = t.limitPrice != null ? t.limitPrice : t.entryPrice;
+        // Cuanto le falta al precio para llegar a la orden (positivo = aun no).
+        const falta = curr ? (isLong ? (curr - lim) / curr * 100 : (lim - curr) / curr * 100) : null;
+        const faltaC = falta == null ? '#8b9098' : falta <= 0.3 ? '#2fe08a' : falta <= 1 ? '#ffbe3c' : '#8090b0';
+        const restan = t.expiresAfterBar ? t.expiresAfterBar - Date.now() : null;
+        return `<tr>
+          <td class="pt-sym">${t.symbol}</td>
+          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:8px;color:#7fd4ff" title="Beneficio/riesgo desde el precio límite">R${t.rr.toFixed(1)}</span>` : ''}</td>
+          <td style="color:#7fd4ff">$${fmtPrice(lim)}</td>
+          <td style="color:#8090b0">${curr ? '$' + fmtPrice(curr) : '<span title="La moneda salió del universo del screener">—</span>'}</td>
+          <td style="color:${faltaC}">${falta == null ? '—' : (falta >= 0 ? falta.toFixed(2) + '%' : '<b>en zona</b>')}</td>
+          <td style="color:#00c878">$${fmtPrice(t.target)}</td>
+          <td style="color:#ee5555">$${fmtPrice(t.stop)}</td>
+          <td style="color:#a5adb7">${restan == null ? '—' : restan <= 0 ? 'caducada' : fmtDur(restan)}</td>
+        </tr>`;
+      }).join('');
+    }
   }
 
   const openBody = document.getElementById('patt-open-body');
@@ -413,7 +1020,7 @@ function renderPatternTrack() {
     if (!open.length) {
       openBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin patrones en seguimiento — se registran solos al romper el cuello</td></tr>`;
     } else {
-      openBody.innerHTML = open.map(t => {
+      const patternOpenRow = t => {
         const row  = allRows.find(r => r.symbol === t.symbol);
         const curr = row?.price ?? t.entryPrice;
         const isLong = t.side === 'L';
@@ -421,16 +1028,37 @@ function renderPatternTrack() {
           ? (curr - t.entryPrice) / (t.target - t.entryPrice) * 100
           : (t.entryPrice - curr) / (t.entryPrice - t.target) * 100;
         const progC = progress >= 0 ? '#00c878' : '#ee5555';
+        const kind = (t.entryKind || 'break') === 'retest'
+          ? ' <span style="font-size:8px;color:#7fd4ff" title="Entró con orden límite en el cuello (comisión maker)">⏳LÍM</span>'
+          : '';
+        const huerfana = t.orphanSince
+          ? ' <span style="font-size:8px;color:#ffbe3c" title="Su moneda salió del universo: se resuelve contra el histórico del servidor">🛰</span>' : '';
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span></td>
+          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:8px;color:#7fd4ff" title="Beneficio/riesgo al precio de entrada real">R${t.rr.toFixed(1)}</span>` : ''}${kind}${t.v_tr?.active ? ' <span style="font-size:8px;color:#ffbe3c" title="Trailing stop armado: la posición ya pasó de +5%">⇡TR</span>' : ''}${huerfana}</td>
           <td style="color:#b3bcc9">$${fmtPrice(t.entryPrice)}</td>
           <td style="color:#8090b0">$${fmtPrice(curr)}</td>
           <td style="color:#00c878">$${fmtPrice(t.target)}</td>
           <td style="color:#ee5555">$${fmtPrice(t.stop)}</td>
           <td style="color:${progC}">${progress.toFixed(0)}%</td>
-          <td style="color:#a5adb7">${fmtDur(Date.now() - t.entryTime)}</td>
+          <td style="color:#a5adb7">${fmtDur(Date.now() - (t.entryTime || t.placedAt || Date.now()))}</td>
         </tr>`;
+      };
+      const ordenTf = { '15m': 0, '1h': 1, '4h': 2 };
+      // Agrupadas por temporalidad: las tres TF rompen a ritmos muy distintos
+      // y mezcladas no se lee cual esta activa ahora.
+      const ordenadas = [...open].sort((a, b) =>
+        (ordenTf[a.tf || '15m'] - ordenTf[b.tf || '15m']) || (b.entryTime - a.entryTime));
+      let tfActual = null;
+      openBody.innerHTML = ordenadas.map(t => {
+        const tfT = t.tf || '15m';
+        let cab = '';
+        if (tfT !== tfActual) {
+          tfActual = tfT;
+          const n = ordenadas.filter(x => (x.tf || '15m') === tfT).length;
+          cab = `<tr class="patt-tf-row"><td colspan="8">◭ ${tfT} — ${n} en seguimiento</td></tr>`;
+        }
+        return cab + patternOpenRow(t);
       }).join('');
     }
   }
@@ -439,17 +1067,42 @@ function renderPatternTrack() {
   if (closedBody) {
     const recent = [...closed].reverse().slice(0, 20);
     if (!recent.length) {
-      closedBody.innerHTML = `<tr><td colspan="5" class="pt-empty">Sin patrones completados aún</td></tr>`;
+      closedBody.innerHTML = `<tr><td colspan="6" class="pt-empty">Sin patrones completados aún</td></tr>`;
     } else {
-      closedBody.innerHTML = recent.map(t => {
-        const pnlC = t.pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
+      // Mismo criterio que la tabla de abiertas: separadas por temporalidad,
+      // porque el acierto de una no dice nada del de las otras.
+      const ordTf = { '15m': 0, '1h': 1, '4h': 2 };
+      const ordRec = [...recent].sort((x, y) =>
+        (ordTf[x.tf || '15m'] - ordTf[y.tf || '15m']) || (y.exitTime - x.exitTime));
+      let tfPrev = null;
+      closedBody.innerHTML = ordRec.map(t => {
+        const tfC = t.tf || '15m';
+        let cabC = '';
+        if (tfC !== tfPrev) {
+          tfPrev = tfC;
+          const grupo = ordRec.filter(x => (x.tf || '15m') === tfC);
+          const aciertos = grupo.filter(x => x.exitReason === 'TARGET').length;
+          cabC = `<tr class="patt-tf-row"><td colspan="6">◭ ${tfC} — ${aciertos}/${grupo.length} en objetivo</td></tr>`;
+        }
+        return cabC + (() => {
+        const tienePnl = Number.isFinite(t.pnlPct);
+        const pnlC = !tienePnl ? '' : t.pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
+        const motivo = t.exitReason === 'TARGET' ? '🎯 Objetivo'
+                     : t.exitReason === 'TIME'   ? '⏱ Plazo agotado'
+                     : '🛑 Stop';
+        const clsMotivo = t.exitReason === 'TARGET' ? 'pt-reason-tp' : t.exitReason === 'TIME' ? '' : 'pt-reason-sl';
+        const kind = (t.entryKind || 'break') === 'retest'
+          ? ' <span style="font-size:8px;color:#7fd4ff" title="Entró con orden límite en el cuello (comisión maker)">⏳LÍM</span>' : '';
+        const brutoTip = (Number.isFinite(t.pnlGrossPct) && Number.isFinite(t.costPct))
+          ? ` title="Bruto ${t.pnlGrossPct >= 0 ? '+' : ''}${t.pnlGrossPct.toFixed(2)}% − comisión ${t.costPct.toFixed(3)}% = neto"` : '';
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${t.side === 'L' ? 'long' : 'short'}">${t.type} ${t.side === 'L' ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span></td>
-          <td class="${t.exitReason === 'TARGET' ? 'pt-reason-tp' : 'pt-reason-sl'}">${t.exitReason === 'TARGET' ? '🎯 Objetivo' : '🛑 Stop'}</td>
-          <td class="${pnlC}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</td>
-          <td style="color:#a5adb7">${fmtDur(t.exitTime - t.entryTime)}</td>
-        </tr>`;
+          <td class="pt-${t.side === 'L' ? 'long' : 'short'}">${t.type} ${t.side === 'L' ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span>${kind}</td>
+          <td class="${clsMotivo}" style="${clsMotivo ? '' : 'color:#aab3c1'}">${motivo}</td>
+          <td class="${pnlC}"${brutoTip}>${tienePnl ? (t.pnlPct >= 0 ? '+' : '') + t.pnlPct.toFixed(2) + '%' : '—'}</td>
+          <td style="color:${col(t.r)}">${t.r != null ? (t.r >= 0 ? '+' : '') + t.r.toFixed(2) : '—'}</td>
+          <td style="color:#a5adb7">${fmtDur((t.exitTime || 0) - (t.entryTime || t.exitTime || 0))}</td>
+        </tr>`; })();
       }).join('');
     }
   }

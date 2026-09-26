@@ -236,6 +236,25 @@ function renderDetail() {
       ? `<div class="dt-row"><span>Rompió el cuello</span><b style="color:${late.color}">${patAgo(Date.now() - pp.breakAt)} · ${late.txt}</b></div>`
         + (prog == null ? '' : `<div class="dt-row"><span>Recorrido al objetivo</span><b style="color:${progCol}">${prog.toFixed(0)}%</b></div>`)
       : `<div class="dt-row"><span>Antigüedad</span><b>${pp.startAt ? patAgo(Date.now() - pp.startAt) : '—'} desde el 1er ${isW ? 'suelo' : 'techo'} · ${pp.spanBars} velas entre extremos</b></div>`;
+    // ── La entrada que paga comisión maker ──────────────────────────────────
+    // La ruptura solo se puede tomar a mercado, y a comisión taker este patrón
+    // no sobrevive (0 de 1.728 configuraciones rentables en el barrido de
+    // backtest/RESULTADOS-SCALP.md, frente a 44 con comisión maker). La orden
+    // límite espera en el cuello ya roto; aquí se da el nivel exacto y su R:R.
+    const rt = typeof patRetest === 'function' ? patRetest(pp, row.price) : null;
+    const retestHtml = !rt ? '' : (() => {
+      const enZona = rt.state !== 'waiting';
+      const c = enZona ? '#7fd4ff' : '#9aa6b8';
+      const est = rt.state === 'reached' ? 'el precio YA está en el cuello — la orden habría entrado'
+                : rt.state === 'active'  ? 'el precio acaba de llegar al cuello — la orden entra ahora'
+                : `falta ${rt.distPct.toFixed(2)}% de retroceso para que entre`;
+      return `<div class="dt-row" title="Comisión maker (0,020%) en lugar de taker (0,055%). El stop va medio ATR al otro lado del cuello: si el cuello roto no aguanta como ${isW ? 'soporte' : 'resistencia'}, la premisa del setup es falsa.">
+          <span>${enZona ? '↩' : '⏳'} Orden límite en el cuello</span>
+          <b style="color:${c}">${fmtPrice(rt.level)} · stop ${fmtPrice(rt.stop)}${rt.rr ? ` · R:R ${rt.rr.toFixed(1)}:1` : ''}</b>
+        </div>
+        <div class="dt-row"><span>Estado del retroceso</span><b style="color:${c}">${est}</b></div>`;
+    })();
+
     return `<div class="dt-section" style="border-color:${stCol}40">
       <div class="dt-sec-title" style="color:${stCol}">${isW ? '🟢 DOBLE SUELO (W)' : '🔴 DOBLE TECHO (M)'} · ${tfLabel} · calidad ${pp.quality}/10</div>
       <div class="dt-row"><span>Estado</span><b style="color:${stCol}">${stTxt}</b></div>
@@ -243,6 +262,7 @@ function renderDetail() {
       <div class="dt-row"><span>Línea de cuello</span><b style="color:${tfLabel === '4h' ? '#7fd4ff' : tfLabel === '1h' ? '#c9a2ff' : '#ffd76a'}">${fmtPrice(pp.neckline)}</b></div>
       <div class="dt-row"><span>Objetivo (mov. medido)</span><b class="pos">${fmtPrice(pp.target)} (${f((pp.target - row.price) / row.price * 100)})</b></div>
       <div class="dt-row"><span>Stop sugerido</span><b class="neg">${fmtPrice(pp.stop)} (${f((pp.stop - row.price) / row.price * 100)})</b></div>
+      ${retestHtml}
     </div>`;
   };
   const patternHtml = patternSection(p, '15m') + patternSection(row.pattern1h, '1h') + patternSection(row.pattern4h, '4h');

@@ -6,3 +6,7 @@ server.log
 server-error.log
 *.log
 graphify-out/
+
+# Velas historicas de Bybit para el backtest (~48 MB). Se regeneran con
+# node backtest/fetch-bybit.js <SIMBOLO> <INTERVALO> <DESDE>
+backtest/data/

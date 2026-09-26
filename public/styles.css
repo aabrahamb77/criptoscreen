@@ -187,15 +187,14 @@ header h1 {
 /* Barra "cuadrante alineado" bajo el mapa: una sola fila, scroll horizontal */
 #aligned-strip {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 3px 12px 4px;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; row-gap: 3px;
+  padding: 4px 12px 5px;
   background: #05070a; border-top: 1px solid #0c1119;
-  overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: thin; scrollbar-color: #1a2535 transparent;
 }
 #aligned-strip:empty { display: none; }
 #aligned-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
-#aligned-strip .qal-grid { flex-wrap: nowrap; }
+#aligned-strip .qal-grid { flex-wrap: wrap; }
 #aligned-strip .qal-chip { flex-shrink: 0; white-space: nowrap; }
 #aligned-strip .cc-note { white-space: nowrap; font-size: 9px; }
 
@@ -280,6 +279,18 @@ header h1 {
   border-radius: 5px;
 }
 .patt-var-best { background: rgba(255, 190, 60, .08); border: 1px solid rgba(255, 190, 60, .3); }
+/* Ruptura a mercado contra retroceso al cuello: es la comparacion que decide si
+   el patron se puede operar pagando comision, asi que va destacada sobre el
+   resto de variantes. */
+.patt-var-entry {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(127, 212, 255, .06);
+  border: 1px solid rgba(127, 212, 255, .22);
+  margin-bottom: 3px;
+}
+.patt-var-entry.patt-var-best { background: rgba(255, 190, 60, .1); border-color: rgba(255, 190, 60, .4); }
 
 /* ── Panel de configuración de alertas ── */
 #alert-cfg-panel {
@@ -303,19 +314,67 @@ header h1 {
 }
 .acfg-vol input[type=range] { flex: 1; accent-color: #2fe08a; cursor: pointer; min-width: 90px; }
 .acfg-vol b { color: #eef2fa; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+.acfg-bar {
+  flex: 1; min-width: 90px; height: 6px; border-radius: 3px;
+  background: #10161f; border: 1px solid #1a2230; overflow: hidden;
+}
+.acfg-bar i { display: block; height: 100%; border-radius: 3px; transition: width .3s, background .3s; }
+/* Cabecera de grupo por temporalidad en las tablas de patrones W/M */
+/* ── Monedas que entraron por PLAZA DE MOVIMIENTO (fuera del top 90 por
+   liquidez, dentro de las 10 que más se mueven en 24h). Se tiñen en ámbar
+   para distinguirlas de un vistazo: mueven mucho pero son más finas, así que
+   conviene saber cuáles son antes de operarlas. */
+tr.mv-row .sym-name { color: #ffbe3c; }
+tr.mv-row .rank-num { color: #a5761f; }
+tr.mv-row td:first-child { box-shadow: inset 3px 0 0 #ffbe3c; }
+tr.mv-row:hover td { background: #17120a; }
+
+/* Moneda que entro al universo por plaza de movimiento, no por liquidez */
+.mv-badge {
+  font-size: 8px; font-weight: 800; color: #ffbe3c;
+  border: 1px solid #553a10; background: #1a1206;
+  border-radius: 4px; padding: 0 3px; margin-left: 3px; cursor: help;
+}
+
+.patt-tf-row td {
+  background: #0a0f18; color: #7fd4ff;
+  font-size: 8.5px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
+  padding: 3px 8px !important; border-top: 1px solid #16202e;
+}
 .acfg-note { font-size: 8.5px; color: #a5adb7; margin-top: 8px; line-height: 1.5; }
 
 /* ── Patrones W/M (doble suelo / doble techo) ── */
-#pattern-strip, #pattern-strip-1h, #pattern-strip-4h {
+#pattern-strip {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 3px 12px 4px;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap;                /* en vez de desbordarse por la derecha */
+  row-gap: 3px;
+  padding: 4px 12px 5px;
   background: #05070a; border-top: 1px solid #0c1119;
-  overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: thin; scrollbar-color: #1a2535 transparent;
 }
-#pattern-strip:empty, #pattern-strip-1h:empty, #pattern-strip-4h:empty { display: none; }
-#pattern-strip .qal-head, #pattern-strip-1h .qal-head, #pattern-strip-4h .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+#pattern-strip:empty { display: none; }
+#pattern-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+#pattern-strip .pat-chip { flex-shrink: 0; }
+
+/* «+N más» / «− menos»: despliega el resto de la tira. Los que esconde son
+   siempre los últimos del orden, o sea los menos accionables. */
+.pat-chip-more {
+  cursor: pointer;
+  background: rgba(127, 212, 255, .10) !important;
+  border: 1px dashed rgba(127, 212, 255, .45) !important;
+  color: #7fd4ff !important;
+  font-weight: 700;
+}
+.pat-chip-more:hover { background: rgba(127, 212, 255, .20) !important; }
+
+/* Hay al menos una ruptura RECIEN confirmada (la vela que rompio sigue siendo la
+   ultima cerrada). Ambar, a juego con el ⚡ de los chips, y estatico a proposito:
+   ver el comentario en renderPatternStrip. */
+.strip-ready {
+  background: linear-gradient(90deg, rgba(255, 190, 60, .10), rgba(255, 190, 60, .03) 55%, transparent) !important;
+  border-top: 1px solid rgba(255, 190, 60, .45) !important;
+}
+.strip-ready .qal-head { color: #ffd76a; font-weight: 800; }
 
 /* Etiqueta de temporalidad dentro del badge W/M (patrones de 1h y 4h) */
 .pat-tf {
@@ -326,11 +385,10 @@ header h1 {
 /* ── Outliers reales (sostenido vs. pico) ── */
 #outlier-strip {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 3px 12px 4px;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; row-gap: 3px;
+  padding: 4px 12px 5px;
   background: #05070a; border-top: 1px solid #0c1119;
-  overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: thin; scrollbar-color: #1a2535 transparent;
 }
 #outlier-strip:empty { display: none; }
 #outlier-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
@@ -338,11 +396,10 @@ header h1 {
 /* ── Momentum confirmado (umbrales absolutos 5%/10%) ── */
 #momentum-strip {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 3px 12px 4px;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; row-gap: 3px;
+  padding: 4px 12px 5px;
   background: #05070a; border-top: 1px solid #0c1119;
-  overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: thin; scrollbar-color: #1a2535 transparent;
 }
 #momentum-strip:empty { display: none; }
 #momentum-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }

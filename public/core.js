@@ -60,6 +60,35 @@ const sumArr = arr => arr.reduce((a, b) => a + b, 0);
 const oiSnaps  = new Map();
 const oiPrevUSD = new Map(); // para detectar caídas de OI → liquidaciones
 
+// ── Qué símbolos merece la pena historiar ───────────────────────────────────
+// pollSnapshots recorre los ~600 pares USDT de Bybit, pero el historial de OI
+// solo se consulta (snapAt) para los ~100 del universo y nunca más atrás de 24h.
+// Guardarlo para los 600 costaba unos 70 MB de RAM al cabo de un día por nada, y
+// esta pestaña se queda abierta días enteros para que suenen las alarmas.
+//
+// oiPrevUSD sí se mantiene para TODOS: es una entrada por símbolo (barata) y es
+// lo que detecta las caídas de OI que alimentan el feed de liquidaciones, que
+// tiene sentido en cualquier moneda, esté o no en la tabla.
+const _universo = new Set();          // símbolos (con USDT) del ciclo actual
+const _universoVisto = new Map();     // símbolo → ts de la última vez que estuvo
+const CACHE_GRACIA_MS = 30 * 60_000;  // margen antes de tirar sus series
+const SNAP_MAX_MS = 25 * 3600_000;    // snapAt nunca mira más atrás de 24h
+
+// Llamada desde loadData con el universo del ciclo: marca lo vigente y tira las
+// series de lo que lleva fuera más de la gracia.
+function podarCachesDeSimbolos(simbolos) {
+  const now = Date.now();
+  _universo.clear();
+  for (const sym of simbolos) { _universo.add(sym); _universoVisto.set(sym, now); }
+  for (const [sym, visto] of _universoVisto) {
+    if (now - visto <= CACHE_GRACIA_MS) continue;
+    _universoVisto.delete(sym);
+    _symCache.delete(sym);
+    _oi24Cache.delete(sym);
+    oiSnaps.delete(sym);
+  }
+}
+
 async function pollSnapshots() {
   try {
     const res = await bybitGet('/v5/market/tickers?category=linear');
@@ -69,11 +98,18 @@ async function pollSnapshots() {
       const oiUSD = parseFloat(t.openInterestValue);
       const sym = t.symbol;
 
-      // Guardar snapshot para cálculos de OI%
-      if (!oiSnaps.has(sym)) oiSnaps.set(sym, []);
-      const arr = oiSnaps.get(sym);
-      arr.unshift({ ts: now, oiUSD });
-      if (arr.length > 1500) arr.length = 1500;
+      // Guardar snapshot para cálculos de OI% — solo del universo vigente.
+      // Mientras no haya habido una primera carga (_universo vacío) se guarda
+      // todo, para no perder el arranque.
+      if (!_universo.size || _universo.has(sym)) {
+        if (!oiSnaps.has(sym)) oiSnaps.set(sym, []);
+        const arr = oiSnaps.get(sym);
+        arr.unshift({ ts: now, oiUSD });
+        // Podado por TIEMPO, no por número de elementos: así el límite dice lo
+        // que de verdad importa (snapAt no mira más atrás de 24h) y no depende
+        // de cada cuánto corra este poll.
+        while (arr.length && now - arr[arr.length - 1].ts > SNAP_MAX_MS) arr.pop();
+      }
 
       // Detectar caída de OI >= 0.4% → probable liquidación
       if (oiPrevUSD.has(sym)) {
@@ -272,10 +308,38 @@ async function loadData() {
     _bybitBanUntil = Date.now() + 60_000;
     throw new Error('Bybit sin datos (posible rate limit) — pausado 60s');
   }
-  const tickers = tickRes.result.list
+  // ── Universo: 90 por liquidez + 10 plazas reservadas al movimiento ──────────
+  // Antes eran los 100 primeros por turnover a secas, y eso dejaba fuera a
+  // monedas que se estaban moviendo de verdad solo por ser finas: SUSHI con un
+  // +27,7% en 24h quedaba en el puesto #128 porque le faltaban $1,95M de
+  // turnover para el corte. El coste en peticiones es EL MISMO (siguen siendo
+  // 100 símbolos), solo cambia a quién se le da la plaza.
+  //
+  // El movimiento se mide en VALOR ABSOLUTO: un -30% interesa tanto como un
+  // +30%, porque el screener opera los dos lados (cuadrantes SHORT/LIQ, LXR de
+  // reversión tras cascada). Las que entran por esta vía llevan `byMove` para
+  // poder distinguirlas: son más finas por definición y conviene saberlo.
+  const UNIVERSO_TOTAL = 100;
+  const PLAZAS_MOVIMIENTO = 10;
+
+  const elegibles = tickRes.result.list
     .filter(t => t.symbol.endsWith('USDT') && parseFloat(t.turnover24h) > 500_000)
-    .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
-    .slice(0, 100);
+    .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h));
+
+  const porLiquidez = elegibles.slice(0, UNIVERSO_TOTAL - PLAZAS_MOVIMIENTO);
+  const yaDentro = new Set(porLiquidez.map(t => t.symbol));
+  const porMovimiento = elegibles
+    .filter(t => !yaDentro.has(t.symbol))
+    .sort((a, b) => Math.abs(parseFloat(b.price24hPcnt)) - Math.abs(parseFloat(a.price24hPcnt)))
+    .slice(0, PLAZAS_MOVIMIENTO)
+    .map(t => ({ ...t, _byMove: true }));
+
+  const tickers = [...porLiquidez, ...porMovimiento];
+
+  // Series pesadas de monedas que ya no están: _symCache guarda por símbolo 288
+  // velas de 5m + 200 de 1h + 200 puntos de OI, y no se purgaba nunca, así que
+  // crecía con cada moneda que hubiera pasado por el universo en toda la sesión.
+  podarCachesDeSimbolos(tickers.map(t => t.symbol));
 
   const rows = [];
   for (let i = 0; i < tickers.length; i += 8) {
@@ -290,6 +354,7 @@ async function loadData() {
         fundingRate: parseFloat(t.fundingRate) * 100,
         oiUSD: parseFloat(t.openInterestValue),
         turnover24h: parseFloat(t.turnover24h),
+        byMove: !!t._byMove,   // entro por plaza de movimiento, no por liquidez
         ...d,
       };
     }));
@@ -349,6 +414,7 @@ const ALERT_DEFAULTS = {
   pattern15:   true,   // ◭ ruptura de cuello W/M en 15m
   pattern1h:   true,   // ◭ ruptura de cuello W/M en 1h
   pattern4h:   true,   // ◭ ruptura de cuello W/M en 4h
+  patternRetest: true, // ⏳ el precio vuelve al cuello roto: entrada con orden limite (maker)
   patternDone: true,   // 🎯 patrón completado (tocó objetivo o stop)
   btcBias:     true,   // ₿ el sesgo de BTC cambió de dirección
   marketBias:  true,   // ⚖️ el sesgo general del mercado cambió (ALCISTA/BAJISTA/NEUTRAL)
@@ -364,6 +430,7 @@ const ALERT_LABELS = {
   pattern15:   '◭ Ruptura de cuello W/M (15m)',
   pattern1h:   '◭ Ruptura de cuello W/M (1h)',
   pattern4h:   '◭ Ruptura de cuello W/M (4h)',
+  patternRetest: '⏳ Retroceso al cuello — entrada con orden límite (maker)',
   patternDone: '🎯 Patrón completado (objetivo/stop)',
   btcBias:     '₿ Cambio de sesgo de BTC',
   marketBias:  '⚖️ Cambio de sesgo general del mercado',
@@ -420,6 +487,14 @@ const ALERT_PRIORITY = {
   pattern4h:   3,  // ◭ ruptura de cuello W/M confirmada — lo más accionable
   pattern1h:   3,
   pattern15:   3,
+  // El retroceso se oye por debajo de la ruptura, aunque sea la entrada más
+  // barata de ejecutar (0 de 1.728 configuraciones rentables a comisión taker en
+  // backtest/RESULTADOS-SCALP.md, frente a 44 a maker). El motivo es que la
+  // ruptura CADUCA -ocurre en una vela y si no te enteras la pierdes- mientras
+  // que el retroceso es una situación que sigue ahí dentro de diez minutos. Si
+  // las dos sonaran igual de fuerte, el oído no podría distinguir la que corre
+  // prisa de la que no.
+  patternRetest: 2,
   patternDone: 2,  // 🎯 el patrón ya tocó objetivo o stop
 };                 // el resto: 1 (por defecto)
 
@@ -471,12 +546,100 @@ function playAlertSound(cat, dir) {
 document.addEventListener('click', () => stopAlertSound(), true);
 document.addEventListener('keydown', () => stopAlertSound(), true);
 
-// ── Safe Storage Helper ───────────────────────────────────────────────────
+// ── localStorage: recorte y reintento cuando se llena ───────────────────────
+// safeSetItem se tragaba el QuotaExceededError con un console.warn y seguia: la
+// escritura se perdia en silencio. Eso era tolerable mientras existia el
+// respaldo en Turso, pero desde que el respaldo solo guarda favoritos este es
+// el UNICO sitio donde vive la evidencia (Comparador, historial, patrones).
+// Ahora, si no cabe, se sacrifica lo mas viejo -que es lo menos valioso- y se
+// reintenta; y si aun asi falla, se avisa EN PANTALLA, no solo en la consola.
+let _storageWarned = false;
+
+// Bytes ocupados por las claves de la app. localStorage guarda UTF-16, asi que
+// cada caracter cuenta doble; el limite habitual del navegador son ~5 MB.
+const STORAGE_LIMIT = 5 * 1024 * 1024;
+function storageBytes() {
+  try {
+    let n = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf('scalp_') !== 0) continue;
+      n += k.length + (localStorage.getItem(k) || '').length;
+    }
+    return n * 2;
+  } catch (_) { return null; }
+}
+
+// Como re-serializar cada buffer recortable: al reintentar hay que escribir la
+// version YA recortada, no el texto original que no cabia.
+const _STORAGE_SERIALIZE = {
+  scalp_stratsig: () => JSON.stringify(stratSignals),
+  scalp_track:    () => JSON.stringify(trackHistory),
+  scalp_confsig2: () => JSON.stringify(typeof confSignals !== 'undefined' ? confSignals : []),
+};
+
+// Libera espacio tirando la mitad mas ANTIGUA de los buffers grandes, de menos
+// a mas valioso. Se recorta en memoria y se persiste, para que la copia en RAM
+// y la del disco no se separen.
+// Devuelve si logro RECORTAR (progreso en memoria), no si logro persistir: el
+// put es un intento oportunista y puede fallar porque el buffer siga siendo
+// enorme. Confundir ambas cosas hacia que safeSetItem se rindiera en la primera
+// ronda aunque hubiera hecho sitio.
+function _freeStorage() {
+  const half = a => a.slice(-Math.max(1, Math.floor(a.length / 2)));
+  const put = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (_) { return false; } };
+  let trimmed = false;
+
+  // 1) Evidencia del Comparador: el buffer mas gordo con diferencia (~1,7 MB
+  //    con las 8.000 senales del tope). Perder las mas viejas apenas mueve el
+  //    win-rate y es lo que menos duele.
+  if (typeof stratSignals !== 'undefined' && Array.isArray(stratSignals) && stratSignals.length > 200) {
+    stratSignals = half(stratSignals); trimmed = true;
+    put('scalp_stratsig', JSON.stringify(stratSignals));
+  }
+  // 2) Snapshots de precio: recuperables desde el servidor con backfillTrackHistory().
+  if (typeof trackHistory !== 'undefined' && trackHistory) {
+    let touched = false;
+    for (const s of Object.keys(trackHistory)) {
+      if (Array.isArray(trackHistory[s]) && trackHistory[s].length > 60) { trackHistory[s] = half(trackHistory[s]); touched = true; }
+    }
+    if (touched) { trimmed = true; put('scalp_track', JSON.stringify(trackHistory)); }
+  }
+  // 3) Senales del radar de confluencia.
+  if (typeof confSignals !== 'undefined' && Array.isArray(confSignals) && confSignals.length > 200) {
+    confSignals = half(confSignals); trimmed = true;
+    put('scalp_confsig2', JSON.stringify(confSignals));
+  }
+  return trimmed;
+}
+
 function safeSetItem(key, val) {
   try {
     localStorage.setItem(key, val);
+    return true;
   } catch (e) {
-    console.warn(`[Storage] Excedido el límite de localStorage al guardar ${key}:`, e.message);
+    // Hasta 4 rondas de recorte. Una sola division a la mitad no basta cuando el
+    // valor que entra es precisamente el buffer gigante: hay que seguir bajando
+    // hasta que quepa, o el dato nuevo se pierde igual que antes.
+    for (let ronda = 0; ronda < 4; ronda++) {
+      if (!_freeStorage()) break; // ya no queda nada que recortar
+      const v2 = _STORAGE_SERIALIZE[key] ? _STORAGE_SERIALIZE[key]() : val;
+      try {
+        localStorage.setItem(key, v2);
+        console.warn(`[Storage] Sin espacio al guardar ${key}: recortado el historial mas antiguo (ronda ${ronda + 1}) y reintentado con exito.`);
+        if (!_storageWarned && typeof showToast === 'function') {
+          _storageWarned = true;
+          showToast('Almacenamiento del navegador lleno: se ha recortado el historial mas antiguo del Comparador y del seguimiento para poder seguir guardando.', 'short');
+        }
+        return true;
+      } catch (_) { /* sigue sin caber: otra ronda */ }
+    }
+    console.warn(`[Storage] Excedido el limite de localStorage al guardar ${key}:`, e.message);
+    if (!_storageWarned && typeof showToast === 'function') {
+      _storageWarned = true;
+      showToast('No se pudo guardar en el navegador: almacenamiento lleno. Limpia el Comparador o el seguimiento de patrones para no perder datos nuevos.', 'short');
+    }
+    return false;
   }
 }
 

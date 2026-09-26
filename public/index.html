@@ -6,7 +6,7 @@
 <title>Scalp Screener</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css?v=31">
+<link rel="stylesheet" href="/styles.css?v=38">
 
 </head>
 <body>
@@ -76,9 +76,7 @@
     <canvas id="bubble-chart"></canvas>
   </div>
   <div id="aligned-strip" title="Monedas con el MISMO cuadrante en 15m·1h·4h·1d — tendencia consistente de punta a punta. Clic: localizar en la tabla."></div>
-  <div id="pattern-strip" title="Dobles suelos (W) y dobles techos (M) detectados en velas 15m (~24h). ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico con el patrón dibujado."></div>
-  <div id="pattern-strip-1h" title="Dobles suelos (W) y dobles techos (M) detectados en velas 1h (~8 días) — estructura de swing más grande, rupturas más lentas pero de mayor recorrido. ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico."></div>
-  <div id="pattern-strip-4h" title="Dobles suelos (W) y dobles techos (M) detectados en velas 4h (~50 velas, ~8 días) — la estructura más grande de las tres: las más raras, las más lentas en confirmar y las de mayor recorrido. La ruptura solo cuenta cuando CIERRA una vela de 4h, así que puede tardar horas en confirmarse. ⚡ = rompiendo la línea de cuello AHORA. Clic: abrir gráfico."></div>
+  <div id="pattern-strip" title="Dobles suelos (W) y dobles techos (M) en las tres temporalidades a la vez — 15m (~24h), 1h y 4h (~8 días) — ordenados por lo que se puede HACER con cada uno, no por su temporalidad, que va como etiqueta en cada chip.&#10;&#10;↩ = el precio ha vuelto al cuello: es el único momento en que la entrada se pone con orden LÍMITE (comisión maker). Se muestra el precio del límite y su R:R.&#10;⚡ = ruptura confirmada por cierre de vela: entrada a mercado (comisión taker).&#10;⏳ = está cruzando el cuello pero la vela aún no ha cerrado.&#10;% = todavía formándose, con el cuello a esa distancia.&#10;&#10;Los patrones con el cuello lejos no salen aquí: siguen en la tabla y en el badge junto al símbolo. Clic en un chip: abrir el gráfico con el patrón dibujado."></div>
   <div id="outlier-strip" title="Monedas que se separan del resto del mercado (OI+precio 1h) con liquidez real detrás. 🔥 sostenido = ≥15min seguidas fuera de rango · ⚡ pico puntual = acaba de saltar fuerte. Clic: abrir en el radar."></div>
   <div id="momentum-strip" title="Momentum confirmado por umbrales absolutos: precio 1h ≥5% Y OI 1h ≥10% expandiéndose (dinero nuevo, no cierre de posiciones), con liquidez real. Clic: abrir en el radar."></div>
   <div id="map-resizer" title="Arrastra para ajustar la altura del mapa"></div>
@@ -277,15 +275,27 @@
         <span class="pt-title">🎯 Patrones W/M — seguimiento hasta objetivo/stop</span>
         <div class="pt-stats-bar">
           <span>Abiertos <b id="patt-stat-open">0</b></span>
+          <span title="Órdenes límite puestas en el cuello, esperando el retroceso">Esperando <b id="patt-stat-pending">0</b></span>
           <span>Completados <b id="patt-stat-total">0</b></span>
           <span>Acierto <b id="patt-stat-wr">—</b></span>
-          <span>PnL prom. <b id="patt-stat-pnl">—</b></span>
+          <span title="Expectativa por operación en múltiplos de R, NETA de comisiones. Es el único número que dice si la estrategia gana: positivo = gana, negativo = pierde.">Expectativa <b id="patt-stat-r">—</b></span>
+          <span title="PnL medio por operación, NETO de comisiones y deslizamiento">PnL neto <b id="patt-stat-pnl">—</b></span>
+          <span title="Qué porcentaje del riesgo de cada operación se lleva la comisión. Por encima del 15% la fricción decide el resultado.">Fricción <b id="patt-stat-fee">—</b></span>
           <span>Tiempo prom. <b id="patt-stat-time">—</b></span>
         </div>
+        <button class="pt-btn" onclick="exportPatternTrack()" title="Descargar el seguimiento completo en JSON: este historial solo existe en este navegador">Exportar JSON</button>
         <button class="pt-btn pt-btn-danger" onclick="clearPatternTrack()">Limpiar</button>
       </div>
-      <div style="padding:6px 10px;font-size:9px;color:#aab3c1;border-bottom:1px solid #141e2e">Sin límite de tiempo — se cierra solo al tocar el objetivo o el stop del patrón. Cada señal se mide EN PARALELO con 3 estrategias de salida para saber cuál rinde más:</div>
+      <div style="padding:6px 10px;font-size:9px;color:#aab3c1;border-bottom:1px solid #141e2e">
+        Resultados <b style="color:#eef2fa">NETOS</b> de comisión (taker 0,055% · maker 0,020%) y deslizamiento (0,010%) — en bruto este panel daba por buenas estrategias que pierden dinero.
+        Se resuelve con el <b style="color:#eef2fa">máximo y mínimo de cada vela</b>, no solo con el precio de cada ciclo, y si una vela contiene los dos niveles se supone que tocó el <b style="color:#eef2fa">stop</b>.
+        Cada ruptura genera <b style="color:#eef2fa">dos entradas</b>: una a mercado en la ruptura y una orden límite en el cuello (comisión maker). Y 3 estrategias de salida en paralelo sobre cada una:</div>
       <div id="patt-variants" style="padding:6px 10px;border-bottom:1px solid #141e2e"><span class="lr-empty">Acumulando señales completadas…</span></div>
+      <div class="pt-section" title="La entrada en la ruptura solo se puede ejecutar a mercado (taker). Estas órdenes esperan a que el precio vuelva al cuello para entrar con comisión maker.">⏳ Órdenes límite esperando el retroceso al cuello</div>
+      <table class="pt-table">
+        <thead><tr><th>Símbolo</th><th>Patrón</th><th>Límite (cuello)</th><th>Actual</th><th>Falta</th><th>Objetivo</th><th>Stop</th><th>Caduca en</th></tr></thead>
+        <tbody id="patt-pending-body"><tr><td colspan="8" class="pt-empty">Sin órdenes esperando</td></tr></tbody>
+      </table>
       <div class="pt-section">En seguimiento</div>
       <table class="pt-table">
         <thead><tr><th>Símbolo</th><th>Patrón</th><th>Entrada</th><th>Actual</th><th>Objetivo</th><th>Stop</th><th>Progreso</th><th>Tiempo</th></tr></thead>
@@ -293,8 +303,8 @@
       </table>
       <div class="pt-section">Completados</div>
       <table class="pt-table">
-        <thead><tr><th>Símbolo</th><th>Patrón</th><th>Resultado</th><th>PnL%</th><th>Duración</th></tr></thead>
-        <tbody id="patt-closed-body"><tr><td colspan="5" class="pt-empty">Sin patrones completados aún</td></tr></tbody>
+        <thead><tr><th>Símbolo</th><th>Patrón</th><th>Resultado</th><th>PnL neto</th><th>R</th><th>Duración</th></tr></thead>
+        <tbody id="patt-closed-body"><tr><td colspan="6" class="pt-empty">Sin patrones completados aún</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -335,18 +345,18 @@
 
 <!-- ── Módulos JS (el orden importa: main.js arranca la app y va al final) ── -->
 <script src="/lxr.js?v=8"></script>
-<script src="/radar.js?v=22"></script>
-<script src="/core.js?v=31"></script>
-<script src="/screener.js?v=22"></script>
-<script src="/map.js?v=14"></script>
-<script src="/patterns.js?v=18"></script>
-<script src="/detail.js?v=21"></script>
+<script src="/radar.js?v=23"></script>
+<script src="/core.js?v=35"></script>
+<script src="/screener.js?v=26"></script>
+<script src="/map.js?v=15"></script>
+<script src="/patterns.js?v=21"></script>
+<script src="/detail.js?v=22"></script>
 <script src="/smc.js?v=6"></script>
 <script src="/btc.js?v=28"></script>
-<script src="/lab.js?v=20"></script>
+<script src="/lab.js?v=24"></script>
 <script src="/track.js?v=18"></script>
 <script src="/backtest.js?v=9"></script>
 <script src="/brief.js?v=4"></script>
-<script src="/main.js?v=16"></script>
+<script src="/main.js?v=17"></script>
 </body>
 </html>

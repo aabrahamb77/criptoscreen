@@ -98,6 +98,39 @@ function patProgress(p, price) {
   return (price - p.neckline) / total * 100;
 }
 
+// ── El retroceso al cuello: la unica entrada que paga comision maker ─────────
+// Una ruptura solo se puede tomar a mercado, y el barrido de
+// backtest/RESULTADOS-SCALP.md es contundente: 0 de 1.728 configuraciones de
+// scalping resultaron rentables a comision taker (0,055%/lado) frente a 44 de
+// 1.728 a comision maker (0,020%). La comision no es un ajuste fino, es la
+// variable que decide si hay estrategia.
+//
+// La orden limite espera en el cuello ya roto, que pasa de resistencia a soporte
+// (al reves en la M). No es un truco de backtest: es la forma natural de operar
+// un retest. Lo que si es un supuesto es que la orden se llene -- si el precio
+// no vuelve, la operacion no existe-- y por eso el Lab cuenta aparte las
+// rupturas que se fueron sin dar entrada.
+const RETEST_STOP_ATR_UI = 0.5;   // stop al otro lado del cuello (igual que en lab.js)
+const RETEST_ZONE_ATR    = 0.15;  // margen alrededor del cuello que cuenta como "en zona"
+
+function patRetest(p, price) {
+  if (!p || price == null || p.neckline == null || !p.atr) return null;
+  if (p.state !== 'breaking' && p.state !== 'broken') return null;
+  const isW = p.type === 'W';
+  const level = p.neckline;                                   // el limite va en el cuello
+  const stop  = isW ? level - RETEST_STOP_ATR_UI * p.atr
+                    : level + RETEST_STOP_ATR_UI * p.atr;
+  const risk  = Math.abs(level - stop);
+  const rr    = risk > 0 ? Math.abs(p.target - level) / risk : null;
+  // Cuanto le falta al precio para llegar al limite (>0 = todavia no).
+  const dist = isW ? (price - level) : (level - price);
+  const zone = RETEST_ZONE_ATR * p.atr;
+  const state = dist <= 0   ? 'reached'   // ya en el cuello o por detras: la orden habria entrado
+              : dist <= zone ? 'active'   // se llenaria ahora mismo
+              : 'waiting';                // la ruptura se ha ido, la orden espera
+  return { level, stop, rr, dist, distPct: price ? dist / price * 100 : null, zone, state };
+}
+
 // ── Pivotes (fractales) ──────────────────────────────────────────────────────
 function _patPivots(k, win) {
   const piv = [];
@@ -269,6 +302,7 @@ function detectDoublePattern4h(row) { return _detectDouble(_patAgg4h(row), PATTE
 // ── Escaneo por ciclo + alertas de ruptura de cuello ────────────────────────
 const _patPrevState = new Map(); // sym|tf → 'W:breaking' etc. (transiciones)
 const _patAlertAt   = new Map(); // sym|type|tf → ts de la última alerta (cooldown)
+const _patRetestState = new Map(); // sym|tf → 'waiting'|'active'|'reached' del retroceso
 
 // Categoría de alerta y cooldown por temporalidad. El cooldown crece con la
 // vela: la misma ruptura sigue "viva" mientras la vela no cierre, así que en 4h
@@ -277,9 +311,42 @@ const _PAT_ALERT_CAT = { '15m': 'pattern15', '1h': 'pattern1h', '4h': 'pattern4h
 const _PAT_COOLDOWN  = { '15m': 30 * 60_000, '1h': 2 * 3600_000, '4h': 8 * 3600_000 };
 
 function _patAlerts(r, p, tf, breakingEntries) {
-  if (!p) { _patPrevState.set(r.symbol + '|' + tf, null); return; }
+  if (!p) {
+    _patPrevState.set(r.symbol + '|' + tf, null);
+    _patRetestState.delete(r.symbol + '|' + tf);
+    return;
+  }
   const cur = p.type + ':' + p.state;
   const prev = _patPrevState.get(r.symbol + '|' + tf);
+
+  // ── El precio vuelve al cuello: momento de la entrada con orden limite ──────
+  // Se avisa al ENTRAR en la zona, no mientras siga dentro, y con el mismo
+  // cooldown por temporalidad que la ruptura.
+  const rt = patRetest(p, r.price);
+  const rkey = r.symbol + '|' + tf;
+  const rprev = _patRetestState.get(rkey);
+  if (rt) {
+    const enZona = rt.state === 'active' || rt.state === 'reached';
+    if (enZona && rprev === 'waiting') {
+      const key = rkey + '|retest|' + p.type;
+      const lastAlert = _patAlertAt.get(key) || 0;
+      const cooldown = _PAT_COOLDOWN[tf] ?? 30 * 60_000;
+      if (canAlert('patternRetest') && Date.now() - lastAlert > cooldown) {
+        _patAlertAt.set(key, Date.now());
+        const isW = p.type === 'W';
+        showToast(
+          `⏳ ${r.symbol} (${tf}) — el precio VOLVIÓ al cuello ${fmtPrice(rt.level)}: entrada con orden límite${rt.rr ? ` · R:R ${rt.rr.toFixed(1)}:1` : ''}`,
+          isW ? 'long' : 'short');
+        playAlertSound('patternRetest', isW ? 'long' : 'short');
+        notifyDesktop(
+          `⏳ ${r.symbol} (${tf}) — retroceso al cuello ${isW ? 'de la W' : 'de la M'}`,
+          `Orden límite en ${fmtPrice(rt.level)} · stop ${fmtPrice(rt.stop)} · objetivo ${fmtPrice(p.target)}${rt.rr ? ` · R:R ${rt.rr.toFixed(1)}:1` : ''} — comisión maker`);
+      }
+    }
+    _patRetestState.set(rkey, rt.state);
+  } else {
+    _patRetestState.delete(rkey);
+  }
 
   if (p.state === 'breaking') {
     const isW = p.type === 'W';
@@ -332,6 +399,10 @@ function scanPatterns(rows) {
   // Resuelve objetivo/stop de los patrones en seguimiento — SIEMPRE, tenga o
   // no la pestaña Lab abierta.
   if (typeof checkPatternTrackOutcomes === 'function') checkPatternTrackOutcomes();
+  // Y las entradas cuya moneda ya salió del universo, contra el histórico de
+  // precios del servidor. Va sin await a propósito: es una petición de red y no
+  // debe retrasar el pintado del ciclo. Se autolimita a una cada 5 min.
+  if (typeof resolveOrphanPatternTracks === 'function') resolveOrphanPatternTracks();
 
   renderPatternStrip(rows);
 }
@@ -344,10 +415,18 @@ function _patBadgeOne(row, p, tf) {
                  : p.state === 'confirming' ? 'cruzando el cuello — ESPERANDO CIERRE de vela ' + tf
                  : p.state === 'forming' ? 'formándose' : 'cuello roto';
   const ageTxt = p.breakAt ? ` · rompió ${patAgo(Date.now() - p.breakAt)}` : '';
-  const title = `${isW ? 'Doble suelo (W)' : 'Doble techo (M)'} en ${tf} — ${stateTxt}${ageTxt} · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · stop ${fmtPrice(p.stop)} · calidad ${p.quality}/10 — clic para ver el gráfico`;
-  const cls = `pat-badge ${isW ? 'pat-w' : 'pat-m'}${p.state === 'breaking' ? ' pat-breaking' : ''}${p.state === 'forming' || p.state === 'confirming' ? ' pat-dim' : ''}`;
+  // El retroceso al cuello es la entrada que paga comisión maker: si está en
+  // zona, es más accionable que la propia ruptura y el badge lo dice.
+  const rt = patRetest(p, row.price);
+  const rtTxt = !rt ? ''
+    : rt.state === 'waiting'
+      ? ` · ⏳ orden límite en el cuello ${fmtPrice(rt.level)} (falta ${rt.distPct.toFixed(2)}%)`
+      : ` · ⏳ EL PRECIO ESTÁ EN EL CUELLO ${fmtPrice(rt.level)} — entrada con orden límite${rt.rr ? `, R:R ${rt.rr.toFixed(1)}:1` : ''}`;
+  const title = `${isW ? 'Doble suelo (W)' : 'Doble techo (M)'} en ${tf} — ${stateTxt}${ageTxt} · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · stop ${fmtPrice(p.stop)} · calidad ${p.quality}/10${rtTxt} — clic para ver el gráfico`;
+  const enZona = rt && rt.state !== 'waiting';
+  const cls = `pat-badge ${isW ? 'pat-w' : 'pat-m'}${p.state === 'breaking' || enZona ? ' pat-breaking' : ''}${p.state === 'forming' || p.state === 'confirming' ? ' pat-dim' : ''}`;
   const tfTag = tf === '15m' ? '' : `<span class="pat-tf">${tf}</span>`; // 15m es el implícito
-  const suffix = p.state === 'breaking' ? '⚡' : p.state === 'confirming' ? '⏳' : p.state === 'broken' ? '✓' : '';
+  const suffix = enZona ? '↩' : p.state === 'breaking' ? '⚡' : p.state === 'confirming' ? '⏳' : p.state === 'broken' ? '✓' : '';
   return `<span class="${cls}" title="${title}" onclick="event.stopPropagation();openDetail('${row.symbol}','${tf}')">${isW ? 'W' : 'M'}${tfTag}${suffix}</span>`;
 }
 
@@ -357,40 +436,148 @@ function patternBadge(row) {
        + _patBadgeOne(row, row.pattern4h, '4h');
 }
 
-// ── Strips bajo el mapa: 15m arriba, luego 1h y 4h ──────────────────────────
-function _patStripInto(elId, rows, field, label) {
-  const el = document.getElementById(elId);
-  if (!el) return;
-  const order = { breaking: 0, confirming: 1, forming: 2, broken: 3 };
-  const items = rows
-    .filter(r => r[field])
-    .sort((a, b) => order[a[field].state] - order[b[field].state] || b[field].quality - a[field].quality)
-    .slice(0, 16);
-  if (!items.length) { el.innerHTML = ''; return; }
+// ── Tira única de patrones W/M ──────────────────────────────────────────────
+// Antes había una tira por temporalidad: tres filas para el mismo concepto, y
+// cada una se salía de la pantalla por la derecha. Ahora es UNA, ordenada por lo
+// que se puede HACER con cada patrón; la temporalidad va como etiqueta dentro
+// del chip, que es donde ocupa casi nada.
+//
+// Y se quita el relleno. Midiendo una pantalla real: de 13 chips en la fila de
+// 4h solo 5 eran accionables, y el resto eran patrones con el cuello a +17,57%,
+// +9,06%, +4,06%... o sea, cosas que no vas a operar hoy ocupando el ancho que
+// necesitan las que sí. Esos patrones no se pierden: siguen en su badge junto al
+// símbolo y en el panel de detalle.
+//
+// El corte se mide en ATR y no en un % fijo, igual que el resto del detector: un
+// 2% es estar pegado al cuello en BTC y estar lejísimos en una moneda fina.
+const STRIP_FORMING_ATR   = 0.6;  // 'formándose' entra solo si el cuello está a ≤0,6 ATR
+const STRIP_BROKEN_ATR    = 3;    // 'roto' entra solo si el retroceso al cuello aún es plausible
+const STRIP_MAX_COLLAPSED = 16;   // chips sin desplegar (~2 líneas en pantalla ancha)
+const STRIP_MAX_TOTAL     = 40;   // tope duro con la tira desplegada
 
-  const breaking = items.filter(r => r[field].state === 'breaking').length;
-  const chips = items.map(r => {
-    const p = r[field];
-    const isW = p.type === 'W';
-    const distPct = (p.neckline - r.price) / r.price * 100 * (isW ? 1 : -1); // >0 = aún no llega al cuello
-    const stateHtml = p.state === 'breaking'
-      ? `<b style="color:#ffbe3c">⚡ CONFIRMADA</b>${p.breakAt ? ` <span style="color:${(patLateness(p) || {}).color || '#8b9098'}">${patAgo(Date.now() - p.breakAt)}</span>` : ''}`
-      : p.state === 'confirming'
-        ? `<b style="color:#e0a830">⏳ esperando cierre</b>`
-        : p.state === 'forming'
-          ? `<span style="color:#bbc2cd">cuello a ${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%</span>`
-          : `<span style="color:${isW ? '#2fe08a' : '#ff6666'}">roto ${(-distPct).toFixed(2)}%</span>${p.breakAt ? ` <span style="color:#ff9a9a">${patAgo(Date.now() - p.breakAt)}</span>` : ''}`;
-    return `<span class="pat-chip${p.state === 'breaking' ? ' pat-breaking' : ''}" onclick="openDetail('${r.symbol}','${p.tf}')"
-      title="${isW ? 'Doble suelo' : 'Doble techo'} (${p.tf}) · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)} · calidad ${p.quality}/10${p.breakAt ? ' · rompió ' + patAgo(Date.now() - p.breakAt) + ((patLateness(p) || {}).txt ? ' (' + patLateness(p).txt + ')' : '') : ''}">
-      ${r.symbol} <span class="pat-badge ${isW ? 'pat-w' : 'pat-m'}">${isW ? 'W' : 'M'}</span> ${stateHtml}
-    </span>`;
-  }).join('');
+let _stripExpanded = false;
+function togglePatternStrip() {
+  _stripExpanded = !_stripExpanded;
+  if (typeof allRows !== 'undefined' && allRows.length) renderPatternStrip(allRows);
+}
 
-  el.innerHTML = `<span class="qal-head">${label}${breaking ? ` — <b style="color:#ffbe3c">${breaking} rompiendo cuello</b>` : ''}</span>${chips}`;
+// Orden de la tira: primero la NOTICIA, después el estado.
+//
+// La ruptura confirmada ocurre en un instante y caduca: una vez pasadas un par
+// de velas ya no se opera igual, y si no la ves cuando pasa, la has perdido. El
+// retroceso al cuello, en cambio, es una situación que se mantiene mientras el
+// precio siga en la zona — sigue estando ahí dentro de diez minutos. Por eso
+// manda la ruptura, aunque el retroceso sea la entrada más barata de ejecutar.
+function _patUrgencia(p, rt) {
+  if (p.state === 'breaking')       return 0;   // ⚡ ruptura confirmada por cierre
+  if (rt && rt.state !== 'waiting') return 1;   // ↩ el precio está EN el cuello
+  if (p.state === 'confirming')     return 2;   // ⏳ cruzando, falta el cierre
+  if (p.state === 'forming')        return 3;   // formándose cerca del cuello
+  return 4;                                     // roto, esperando que vuelva
+}
+
+function _patStripItems(rows) {
+  const out = [];
+  for (const r of rows) {
+    for (const field of ['pattern', 'pattern1h', 'pattern4h']) {
+      const p = r[field];
+      if (!p || !r.price) continue;
+      const rt = patRetest(p, r.price);
+      const u = _patUrgencia(p, rt);
+      // Un patrón aún sin romper solo interesa si el cuello está a tiro.
+      if (u === 3) {
+        if (!p.atr || Math.abs(p.neckline - r.price) > STRIP_FORMING_ATR * p.atr) continue;
+      }
+      // Uno ya roto solo interesa mientras el retroceso siga siendo creíble: si
+      // el precio se fue 3 ATR, esa orden límite no se va a llenar.
+      if (u === 4) {
+        if (!rt || !p.atr || rt.dist > STRIP_BROKEN_ATR * p.atr) continue;
+      }
+      out.push({ r, p, rt, u });
+    }
+  }
+  // Dentro de las rupturas confirmadas manda la MÁS RECIENTE, no la de más
+  // calidad: el objetivo aquí es enterarse cuanto antes, y una ruptura de hace
+  // 20 minutos ya no es una noticia por muy bonito que sea el patrón. En el
+  // resto de grupos, donde no hay nada que caduque, sigue mandando la calidad.
+  out.sort((a, b) => {
+    if (a.u !== b.u) return a.u - b.u;
+    if (a.u === 0) return (b.p.breakAt || 0) - (a.p.breakAt || 0);
+    return b.p.quality - a.p.quality;
+  });
+  return out;
 }
 
 function renderPatternStrip(rows) {
-  _patStripInto('pattern-strip',    rows, 'pattern',   '◭ Patrones W/M 15m');
-  _patStripInto('pattern-strip-1h', rows, 'pattern1h', '◭ Patrones W/M 1h');
-  _patStripInto('pattern-strip-4h', rows, 'pattern4h', '◭ Patrones W/M 4h');
+  const el = document.getElementById('pattern-strip');
+  if (!el) return;
+  const items = _patStripItems(rows).slice(0, STRIP_MAX_TOTAL);
+  if (!items.length) { el.innerHTML = ''; el.classList.remove('strip-ready'); return; }
+
+  const nConf   = items.filter(x => x.u === 0).length;
+  // Recién rota = la vela que rompió el cuello sigue siendo la última cerrada.
+  // Es el mismo listón que usa el seguimiento en el Lab para dar una entrada por
+  // buena, así que lo que se resalta aquí es exactamente lo que es operable.
+  const nFresca = items.filter(x => x.u === 0 && x.p.barsSinceBreak === 0).length;
+  const nCuello = items.filter(x => x.u === 1).length;
+  const nCierre = items.filter(x => x.u === 2).length;
+
+  const visibles = _stripExpanded ? items : items.slice(0, STRIP_MAX_COLLAPSED);
+  const ocultos  = items.length - visibles.length;
+
+  const chips = visibles.map(({ r, p, rt, u }) => {
+    const isW = p.type === 'W';
+    // Distancia al cuello con signo: >0 = el precio aún no ha llegado.
+    const distPct = (p.neckline - r.price) / r.price * 100 * (isW ? 1 : -1);
+    // Texto corto: el icono y el color ya dicen el estado, y el detalle completo
+    // está en el tooltip. Antes cada chip repetía "EN EL CUELLO" entero.
+    // Una ruptura recién confirmada -la vela de la ruptura aún es la última-
+    // lleva marca propia: es LO que hay que ver cuanto antes.
+    const fresca = u === 0 && p.barsSinceBreak === 0;
+    const cuando = p.breakAt ? patAgo(Date.now() - p.breakAt).replace('hace ', '') : 'ahora';
+    // Una ruptura puede tener ADEMÁS el precio de vuelta en el cuello: entonces
+    // se dan las dos cosas, la noticia y el nivel al que poner la orden límite.
+    const rtEnZona = rt && rt.state !== 'waiting';
+    const estado =
+        u === 0 ? `<b style="color:${fresca ? '#ffd76a' : '#ffbe3c'}">${fresca ? '🔴 ' : ''}⚡ ${cuando}</b>`
+                  + (rtEnZona ? ` <b style="color:#7fd4ff">↩ ${fmtPrice(rt.level)}</b>`
+                              : rt ? ` <span style="color:#7fd4ff">↩${rt.distPct.toFixed(1)}%</span>` : '')
+      : u === 1 ? `<b style="color:#7fd4ff">↩ ${fmtPrice(rt.level)}</b>${rt.rr ? ` <span style="color:#2fe08a">${rt.rr.toFixed(1)}R</span>` : ''}`
+      : u === 2 ? `<b style="color:#e0a830">⏳ cierre</b>`
+      : u === 3 ? `<span style="color:#bbc2cd">${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%</span>`
+      :           `<span style="color:#7fd4ff">↩${rt.distPct.toFixed(1)}%</span>`;
+
+    const late = patLateness(p);
+    const title = `${isW ? 'Doble suelo (W)' : 'Doble techo (M)'} en ${p.tf} · calidad ${p.quality}/10`
+      + ` · cuello ${fmtPrice(p.neckline)} · objetivo ${fmtPrice(p.target)}`
+      + (p.breakAt ? ` · rompió ${patAgo(Date.now() - p.breakAt)}${late ? ' (' + late.txt + ')' : ''}` : '')
+      + (rt ? `\n↩ Orden límite en el cuello ${fmtPrice(rt.level)} · stop ${fmtPrice(rt.stop)}`
+            + (rt.rr ? ` · R:R ${rt.rr.toFixed(1)}:1` : '')
+            + (rt.state === 'waiting' ? ` — falta ${rt.distPct.toFixed(2)}% de retroceso` : ' — EL PRECIO ESTÁ AHÍ AHORA')
+          : '');
+
+    return `<span class="pat-chip${u <= 1 ? ' pat-breaking' : ''}" onclick="openDetail('${r.symbol}','${p.tf}')" title="${title}">
+      ${r.symbol} <span class="pat-badge ${isW ? 'pat-w' : 'pat-m'}">${isW ? 'W' : 'M'}<span class="pat-tf">${p.tf}</span></span> ${estado}
+    </span>`;
+  }).join('');
+
+  const masChip = ocultos > 0
+    ? `<span class="pat-chip pat-chip-more" onclick="togglePatternStrip()" title="Los ${ocultos} restantes están ordenados por detrás: son los menos accionables de la lista">+${ocultos} más</span>`
+    : (_stripExpanded && items.length > STRIP_MAX_COLLAPSED
+        ? `<span class="pat-chip pat-chip-more" onclick="togglePatternStrip()">− menos</span>` : '');
+
+  const resumen = [
+    nConf   ? `<b style="color:#ffbe3c">${nConf} confirmada${nConf === 1 ? '' : 's'}</b>`
+              + (nFresca ? ` <b style="color:#ffd76a">(${nFresca} recién)</b>` : '') : '',
+    nCuello ? `<b style="color:#7fd4ff">${nCuello} en el cuello</b>` : '',
+    nCierre ? `<span style="color:#e0a830">${nCierre} esperando cierre</span>` : '',
+  ].filter(Boolean).join(' · ');
+
+  el.innerHTML = `<span class="qal-head">◭ Patrones W/M${resumen ? ' — ' + resumen : ''}</span>${chips}${masChip}`;
+  // El resaltado se enciende solo con rupturas RECIÉN confirmadas, no con que
+  // haya confirmadas a secas: de esas hay casi siempre alguna entre las tres
+  // temporalidades, y una tira encendida de forma permanente deja de avisar de
+  // nada. Es estático a propósito, sin el parpadeo de .strip-hot: ese queda
+  // reservado a momentum y outliers, donde sí es un evento raro.
+  el.classList.toggle('strip-ready', nFresca > 0);
 }

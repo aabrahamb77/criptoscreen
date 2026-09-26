@@ -36,7 +36,9 @@ let confCalibOpen = false;
 
 function saveConfSignals() {
   if (confSignals.length > CONF_SIG_MAX) confSignals = confSignals.slice(-CONF_SIG_MAX);
-  try { localStorage.setItem('scalp_confsig2', JSON.stringify(confSignals)); } catch (_) {}
+  // Por safeSetItem: si no cabe, recorta lo mas viejo y reintenta. Antes era un
+  // setItem directo con catch vacio, asi que se perdia sin avisar de nada.
+  safeSetItem('scalp_confsig2', JSON.stringify(confSignals));
   if (typeof syncToServer === 'function') syncToServer();
 }
 

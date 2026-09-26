@@ -1,0 +1,125 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// Ruptura de tendencia (Trendlines with Breaks [LuxAlgo]) + filtro de TRAMA,
+// con objetivo en el nivel de RSI del overlay.
+//
+//   LARGO : el precio ROMPE al alza la línea superior  Y  está por ENCIMA de la
+//           trama  ->  entrar  ->  objetivo cuando el RSI alcanza 70
+//   CORTO : el precio ROMPE a la baja la línea inferior Y está por DEBAJO de la
+//           trama  ->  entrar  ->  objetivo cuando el RSI alcanza 30
+//
+// Las líneas y la trama NO se reimplementan: se enganchan por input.source a
+// los indicadores que ya tienes en el gráfico, así lo que opera la estrategia
+// es exactamente lo que ves. Hay que asignarlas a mano en los ajustes:
+//   Línea superior -> "Trendlines with Breaks [LuxAlgo]: Upper"
+//   Línea inferior -> "Trendlines with Breaks [LuxAlgo]: Lower"
+//   Trama          -> "Trend Regularity Adaptive Moving Average: Plot"
+// ─────────────────────────────────────────────────────────────────────────────
+strategy("Ruptura LuxAlgo + TRAMA → objetivo RSI", overlay = true,
+     initial_capital        = 10000,
+     default_qty_type       = strategy.percent_of_equity,
+     default_qty_value      = 100,
+     commission_type        = strategy.commission.percent,
+     commission_value       = 0.055,   // taker Bybit perpetuos
+     slippage               = 2,       // ticks
+     process_orders_on_close = true,
+     calc_on_every_tick     = false)
+
+// ── Conexiones con tus indicadores ──────────────────────────────────────────
+grpC = "1 · Conexiones (asignar a mano)"
+srcUpper = input.source(close, "Línea superior  ← Trendlines LuxAlgo: Upper", group = grpC)
+srcLower = input.source(close, "Línea inferior  ← Trendlines LuxAlgo: Lower", group = grpC)
+srcTrama = input.source(close, "Trama           ← TRAMA: Plot",              group = grpC)
+
+// ── Objetivo por RSI ────────────────────────────────────────────────────────
+grpR = "2 · Objetivo RSI"
+rsiLen   = input.int(14,  "Longitud del RSI (igual que tu overlay)", minval = 2, group = grpR)
+rsiTPl   = input.float(70, "RSI objetivo en LARGOS",  minval = 50, maxval = 99, group = grpR)
+rsiTPs   = input.float(30, "RSI objetivo en CORTOS",  minval = 1,  maxval = 50, group = grpR)
+
+// ── Salida y riesgo ─────────────────────────────────────────────────────────
+grpS = "3 · Salida y riesgo"
+modoStop = input.string("Cruce de la trama", "Stop de pérdidas",
+     options = ["Cruce de la trama", "ATR", "Línea contraria", "Sin stop"], group = grpS)
+atrLen   = input.int(14,   "Longitud ATR",      minval = 1,   group = grpS)
+atrMult  = input.float(2.0, "Múltiplo de ATR",  minval = 0.1, step = 0.1, group = grpS)
+soloLargos = input.bool(false, "Solo largos",  group = grpS)
+soloCortos = input.bool(false, "Solo cortos",  group = grpS)
+
+// ── RSI y su equivalencia en precio ─────────────────────────────────────────
+// El overlay dibuja, para cada nivel de RSI, el precio al que habría que llegar
+// en la vela siguiente para que el RSI valga eso. Se invierte la fórmula de
+// Wilder: rma_nueva = (rma_previa*(n-1) + valor) / n
+cambio = ta.change(close)
+mediaG = ta.rma(math.max(cambio,  0), rsiLen)   // media de ganancias
+mediaP = ta.rma(-math.min(cambio, 0), rsiLen)   // media de pérdidas
+rsiAct = ta.rsi(close, rsiLen)
+
+precioParaRsi(objetivo) =>
+    rs = objetivo / (100.0 - objetivo)
+    // ¿cuánto tendría que SUBIR el precio? Si sale negativo, tendría que bajar.
+    subida = (rsiLen - 1) * (rs * mediaP - mediaG)
+    bajada = rs <= 0 ? na : (rsiLen - 1) * (mediaG / rs - mediaP)
+    subida >= 0 ? close + subida : close - bajada
+
+nivelLargo = precioParaRsi(rsiTPl)
+nivelCorto = precioParaRsi(rsiTPs)
+
+// ── Condiciones ─────────────────────────────────────────────────────────────
+// La ruptura CONFIRMADA es el cierre cruzando la línea, que es justo cuando el
+// indicador de LuxAlgo pinta su etiqueta B / S (con backpaint desactivado, que
+// es como lo tienes: la señal no se redibuja hacia atrás).
+rupturaAlza = ta.crossover(close,  srcUpper)
+rupturaBaja = ta.crossunder(close, srcLower)
+sobreTrama  = close > srcTrama
+bajoTrama   = close < srcTrama
+
+entraLargo = rupturaAlza and sobreTrama and not soloCortos
+entraCorto = rupturaBaja and bajoTrama  and not soloLargos
+
+// ── Stop ────────────────────────────────────────────────────────────────────
+atr = ta.atr(atrLen)
+var float stopLargo = na
+var float stopCorto = na
+
+if entraLargo
+    stopLargo := modoStop == "ATR"             ? close - atrMult * atr :
+                 modoStop == "Línea contraria" ? srcLower              :
+                 modoStop == "Cruce de la trama" ? srcTrama            : na
+if entraCorto
+    stopCorto := modoStop == "ATR"             ? close + atrMult * atr :
+                 modoStop == "Línea contraria" ? srcUpper              :
+                 modoStop == "Cruce de la trama" ? srcTrama            : na
+
+// ── Órdenes ─────────────────────────────────────────────────────────────────
+if entraLargo
+    strategy.entry("L", strategy.long)
+if entraCorto
+    strategy.entry("S", strategy.short)
+
+// Objetivo: se cierra cuando el RSI ALCANZA el nivel, que es la lectura literal
+// de "apuntar al RSI 70". El nivel de precio equivalente se dibuja abajo para
+// que puedas verlo, pero quien manda es el RSI.
+if strategy.position_size > 0 and rsiAct >= rsiTPl
+    strategy.close("L", comment = "RSI " + str.tostring(rsiTPl, "#"))
+if strategy.position_size < 0 and rsiAct <= rsiTPs
+    strategy.close("S", comment = "RSI " + str.tostring(rsiTPs, "#"))
+
+// Stop: el de "cruce de la trama" se reevalúa en cada vela (es dinámico), los
+// demás quedan fijos en la entrada.
+if modoStop == "Cruce de la trama"
+    if strategy.position_size > 0 and close < srcTrama
+        strategy.close("L", comment = "trama")
+    if strategy.position_size < 0 and close > srcTrama
+        strategy.close("S", comment = "trama")
+else if modoStop != "Sin stop"
+    if strategy.position_size > 0
+        strategy.exit("salL", "L", stop = stopLargo)
+    if strategy.position_size < 0
+        strategy.exit("salS", "S", stop = stopCorto)
+
+// ── Dibujo ──────────────────────────────────────────────────────────────────
+plot(nivelLargo, "Precio para RSI " + str.tostring(rsiTPl, "#"), color.new(color.red,   40), 1, plot.style_circles)
+plot(nivelCorto, "Precio para RSI " + str.tostring(rsiTPs, "#"), color.new(color.green, 40), 1, plot.style_circles)
+plotshape(entraLargo, "Entrada larga", shape.triangleup,   location.belowbar, color.lime, size = size.small)
+plotshape(entraCorto, "Entrada corta", shape.triangledown, location.abovebar, color.red,  size = size.small)
