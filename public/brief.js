@@ -28,7 +28,7 @@
 // para que todo el sistema descarte con la misma vara.
 const BRIEF_MIN_VOL1H    = 300_000;
 const BRIEF_MIN_TURNOVER = 10e6;
-const BRIEF_TIER_A = 72;   // fiable: se puede operar
+const BRIEF_TIER_A = 80;   // fiable: se puede operar
 const BRIEF_TIER_B = 55;   // vigilable: falta una pieza
 const BRIEF_TIER_C = 40;   // débil: solo para contexto
 const BRIEF_LIQ_CAP = 45;  // techo si no cumple liquidez (no puede ser tier A)
@@ -479,10 +479,14 @@ const BRIEF_FLAG_LABEL = {
 // calcula y avisa siempre; renderBrief() solo dibuja lo ya calculado.
 let briefCache = null;
 let briefAlertArmed = new Map();  // symbol → {armed, ts}
-let _prevBriefVerdict = null;
 
-const BRIEF_ALERT_REARM    = BRIEF_TIER_A - 8; // hay que enfriarse por debajo para volver a avisar
-const BRIEF_ALERT_COOLDOWN = 45 * 60_000;      // y como mucho 1 aviso por moneda cada 45 min
+// La alarma NO salta al entrar en tier A (80), sino a partir de una nota propia
+// más exigente. El tier A sigue marcando las etiquetas y el veredicto: lo que
+// cambia es solo cuándo interrumpe. Se separa a propósito para poder probar el
+// medidor con un listón alto sin tocar cómo se clasifican las monedas.
+const BRIEF_ALERT_MIN      = 85;                  // nota mínima para que suene
+const BRIEF_ALERT_REARM    = BRIEF_ALERT_MIN - 8; // hay que enfriarse por debajo para volver a avisar
+const BRIEF_ALERT_COOLDOWN = 45 * 60_000;         // y como mucho 1 aviso por moneda cada 45 min
 
 function briefOnCycle() {
   if (!allRows.length) return;
@@ -490,41 +494,32 @@ function briefOnCycle() {
   if (briefCache) briefAlerts(briefCache);
 }
 
-/** Avisos. Dos únicos disparadores, ambos raros y accionables: que el mercado
- *  cambie de veredicto (decide el tamaño) y que una moneda entre en tier A. */
+/** Avisos. Un único disparador: que una moneda alcance la nota BRIEF_ALERT_MIN
+ *  (85). El cambio de veredicto de mercado ya no avisa; se sigue viendo en la
+ *  cabecera del panel, pero no interrumpe. */
 function briefAlerts(b) {
   const now = Date.now();
 
-  // 1) Veredicto de mercado. Es la decisión que más dinero ahorra, y cambia
-  //    pocas veces al día: merece interrumpir.
-  const v = b.mkt.verdict;
-  if (_prevBriefVerdict && v !== _prevBriefVerdict && canAlert('briefMkt')) {
-    const dir = v === 'COMPRAR' ? 'long' : v === 'VENDER' ? 'short' : 'neutral';
-    showToast(`🧠 Mercado → ${v} · tamaño ${b.mkt.sizePct}%`, dir === 'neutral' ? '' : dir);
-    playAlertSound('briefMkt', dir);
-    notifyDesktop(`🧠 Brief: mercado → ${v}`, b.mkt.mode);
-  }
-  _prevBriefVerdict = v;
-
-  // 2) Promoción a tier A, CON HISTÉRESIS. Una moneda rondando el umbral
+  // Nota >= BRIEF_ALERT_MIN, CON HISTÉRESIS. Una moneda rondando el umbral
   //    cruzaría arriba y abajo cada ciclo y avisaría cada 10 segundos: se avisa
-  //    al entrar y no se vuelve a armar hasta que caiga claramente por debajo.
+  //    al llegar y no se vuelve a armar hasta que caiga claramente por debajo.
+  //    Una bandera 'hard' (tier EVITAR) no avisa nunca, puntúe lo que puntúe.
   //    Se recorre b.all y no b.list a propósito — las alertas no deben depender
   //    del filtro "solo longs" de la cabecera, que es cosa de la vista.
   const seen = new Set();
   for (const a of b.all) {
     seen.add(a.symbol);
     const st = briefAlertArmed.get(a.symbol) || { armed: true, ts: 0 };
-    if (a.tier !== 'A') {
+    if (a.tier === 'EVITAR' || a.score < BRIEF_ALERT_MIN) {
       if (a.score < BRIEF_ALERT_REARM) st.armed = true; // se enfrió: rearmar
       briefAlertArmed.set(a.symbol, st);
       continue;
     }
     if (st.armed && now - st.ts > BRIEF_ALERT_COOLDOWN && canAlert('briefTop')) {
       const lv = a.levels;
-      showToast(`🧠 ${a.symbol} ${a.side.toUpperCase()} → tier A (${a.score}/100)`, a.side);
+      showToast(`🧠 ${a.symbol} ${a.side.toUpperCase()} — nota ${a.score}/100 (≥${BRIEF_ALERT_MIN}): fiable para operar`, a.side);
       playAlertSound('briefTop', a.side);
-      notifyDesktop(`🧠 ${a.symbol} ${a.side.toUpperCase()} es tier A · ${a.score}/100`,
+      notifyDesktop(`🧠 ${a.symbol} ${a.side.toUpperCase()} · nota ${a.score}/100 (≥${BRIEF_ALERT_MIN})`,
         a.verdict + (lv ? `\nEntrada ${fmtPrice(lv.entry)} · stop ${fmtPrice(lv.stop)} · TP ${fmtPrice(lv.tp1)}` : ''));
       st.armed = false; st.ts = now;
     }
@@ -645,6 +640,7 @@ function renderBrief() {
   if (head) head.innerHTML = `
     <span class="bf-badge" style="background:${m.color}1f;color:${m.color};border-color:${m.color}66">${m.verdict}</span>
     <span class="bf-size">tamaño sugerido <b style="color:${m.color}">${m.sizePct}%</b></span>
+    <span class="bf-size" title="La alarma del brief solo suena cuando una moneda alcanza esta nota. El tier A (FIABLE) empieza en ${BRIEF_TIER_A}, pero entre ${BRIEF_TIER_A} y ${BRIEF_ALERT_MIN - 1} se muestra sin avisar.">🔔 avisa desde <b style="color:#ffd76a">${BRIEF_ALERT_MIN}</b></span>
     <button class="chart-tf-btn${briefOnlyLongs ? ' active' : ''}" onclick="toggleBriefLongs()" title="Ocultar las tesis cortas">solo longs</button>`;
 
   const ctx = `<div class="bf-ctx">

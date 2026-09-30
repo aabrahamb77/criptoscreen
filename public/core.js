@@ -292,9 +292,19 @@ async function fetchSymbolData(symbol, currentOIusd, currentPrice) {
     v: k1h.map(k => parseFloat(k[5])).reverse(),
   };
 
+  // Velas de 5m (viejo→nuevo) con el TURNOVER en USD, para el detector de olas
+  // de volumen (olas.js). fetchedAt es cuándo se descargaron: la vela que estaba
+  // en curso en ese momento tiene el volumen a medias y no debe contar como
+  // cerrada aunque, por el caché de 90 s, ya haya pasado su hora.
+  const k5 = { t: [], o: [], h: [], l: [], c: [], q: [], fetchedAt: c.ts5 };
+  for (let i = c.k5m.length - 1; i >= 0; i--) {
+    const b = c.k5m[i];
+    k5.t.push(+b[0]); k5.o.push(+b[1]); k5.h.push(+b[2]); k5.l.push(+b[3]); k5.c.push(+b[4]); k5.q.push(+b[6]);
+  }
+
   return { oi5m, oi15m, oi1h, oi4h, oi24h, vol15mPct, vol1hPct, vol12hPct, vol24hPct,
            price5mPct, price15mPct, price1hPct, price4hPct, vol1hUSD: vol1h[1] ?? 0,
-           cvd1m, cvd5m, atr1h, spark, k15, k60 };
+           cvd1m, cvd5m, atr1h, spark, k15, k60, k5 };
 }
 
 async function loadData() {
@@ -328,13 +338,24 @@ async function loadData() {
 
   const porLiquidez = elegibles.slice(0, UNIVERSO_TOTAL - PLAZAS_MOVIMIENTO);
   const yaDentro = new Set(porLiquidez.map(t => t.symbol));
+  // Una moneda con una ola de volumen vigente (olas.js) pasa por delante en las
+  // plazas de movimiento: si el prefiltro la detectó fuera del universo, así
+  // entra en la tabla al ciclo siguiente. No cuesta peticiones: siguen siendo 100.
+  const enOla = typeof olasPrioridad === 'function' ? olasPrioridad() : new Set();
   const porMovimiento = elegibles
     .filter(t => !yaDentro.has(t.symbol))
-    .sort((a, b) => Math.abs(parseFloat(b.price24hPcnt)) - Math.abs(parseFloat(a.price24hPcnt)))
+    .sort((a, b) => (enOla.has(b.symbol) - enOla.has(a.symbol))
+      || Math.abs(parseFloat(b.price24hPcnt)) - Math.abs(parseFloat(a.price24hPcnt)))
     .slice(0, PLAZAS_MOVIMIENTO)
     .map(t => ({ ...t, _byMove: true }));
 
   const tickers = [...porLiquidez, ...porMovimiento];
+
+  // Prefiltro de olas sobre TODO el mercado elegible, no solo el universo: el
+  // 18% de las olas medidas cayó en monedas que no estaban dentro.
+  if (typeof olasRegistrarTickers === 'function') {
+    olasRegistrarTickers(elegibles, new Set(tickers.map(t => t.symbol)));
+  }
 
   // Series pesadas de monedas que ya no están: _symCache guarda por símbolo 288
   // velas de 5m + 200 de 1h + 200 puntos de OI, y no se purgaba nunca, así que
@@ -420,8 +441,8 @@ const ALERT_DEFAULTS = {
   marketBias:  true,   // ⚖️ el sesgo general del mercado cambió (ALCISTA/BAJISTA/NEUTRAL)
   btcFib:      true,   // ₿ BTC entró en la zona dorada del Fibonacci (50%–61.8%)
   qalHot:      true,   // 🔥 moneda entra resaltada al cuadrante alineado (>5% en 1h)
-  briefTop:    true,   // 🧠 el brief promueve una moneda a tier A (fiable)
-  briefMkt:    true,   // 🧠 cambia el veredicto de mercado del brief
+  briefTop:    true,   // 🧠 una moneda del brief alcanza nota >= 85 (BRIEF_ALERT_MIN)
+  volWave:     true,   // 🌊 ola de volumen alcista: arranque de una explosión (olas.js)
   confluence:  false,  // 🎯 confluencia alta en el radar (ruidosa)
   score:       false,  // 📈 score salta a ≥8 (ruidosa)
   align:       false,  // 🔊 beep de alineación total (ruidosa)
@@ -436,8 +457,8 @@ const ALERT_LABELS = {
   marketBias:  '⚖️ Cambio de sesgo general del mercado',
   btcFib:      '🟡 BTC en zona dorada del Fibonacci (50%–61.8%)',
   qalHot:      '🔥 Moneda resaltada en cuadrante alineado (>5% en 1h)',
-  briefTop:    '🧠 Brief: moneda promovida a tier A (fiable)',
-  briefMkt:    '🧠 Brief: cambia el veredicto de mercado',
+  briefTop:    '🧠 Brief: moneda con nota ≥85 (fiable para operar)',
+  volWave:     '🌊 Ola de volumen alcista (arranque de explosión)',
   confluence:  '🎯 Confluencia alta del radar — ruidosa',
   score:       '📈 Score salta a ≥8 — ruidosa',
   align:       '🔊 Beep de alineación total — ruidosa',
@@ -446,8 +467,38 @@ let alertCfg = { ...ALERT_DEFAULTS, ...JSON.parse(localStorage.getItem('scalp_al
 function canAlert(cat) { return alertCfg[cat] !== false; }
 function setAlertCfg(cat, on) {
   alertCfg[cat] = !!on;
-  safeSetItem('scalp_alert_cfg', JSON.stringify(alertCfg));
+  // Desmarcar la categoría que está sonando la corta YA: antes seguía hasta
+  // completar sus 10 segundos y parecía que la casilla no había funcionado.
+  if (!on && _alarm && _alarm.cat === cat) stopAlertSound();
+  // Si el navegador no deja guardarlo (almacenamiento lleno), el cambio vale
+  // para esta pestaña pero al recargar volvería a sonar: hay que decirlo.
+  if (!safeSetItem('scalp_alert_cfg', JSON.stringify(alertCfg)) && typeof showToast === 'function') {
+    showToast('No se pudo guardar la configuración de alertas (almacenamiento lleno): al recargar volverían a sonar. Libera espacio en ⚙️.', 'short');
+  }
 }
+
+// Silenciar desde el aviso de "qué está sonando", sin buscarla en la lista.
+function silenciarCategoria(cat) {
+  setAlertCfg(cat, false);
+  stopAlertSound();
+  _ocultarAlarmaActual();
+  if (typeof showToast === 'function') showToast(`🔕 Silenciada: ${ALERT_LABELS[cat] || cat} — se reactiva en ⚙️`, '');
+  const panel = document.getElementById('alert-cfg-panel');
+  if (panel && panel.style.display !== 'none' && typeof renderAlertCfg === 'function') renderAlertCfg();
+}
+
+// Varias pestañas del screener comparten localStorage pero NO la memoria: cada
+// una leía las casillas al cargar y no se enteraba de los cambios hechos en
+// otra, así que una pestaña olvidada seguía sonando con la configuración vieja.
+// El evento 'storage' salta en las DEMÁS pestañas del mismo origen al guardar.
+// (La web de Render es otro origen, con su propia configuración aparte.)
+window.addEventListener('storage', e => {
+  if (e.key !== 'scalp_alert_cfg') return;
+  try { alertCfg = { ...ALERT_DEFAULTS, ...JSON.parse(e.newValue || '{}') }; } catch (_) { return; }
+  if (_alarm && !canAlert(_alarm.cat)) stopAlertSound();
+  const panel = document.getElementById('alert-cfg-panel');
+  if (panel && panel.style.display !== 'none' && typeof renderAlertCfg === 'function') renderAlertCfg();
+});
 
 // ── Personalidad sonora por categoría ───────────────────────────────────────
 // Cada categoría de alerta suena distinto (timbre + ritmo, no solo tono) para
@@ -469,7 +520,9 @@ const ALERT_SOUNDS = {
   // Brief: acorde ascendente de 3 notas (el aviso más "importante" del sistema,
   // por eso suena a fanfarria corta y no se parece a ninguna otra categoría).
   briefTop:    dir => { const b = dir === 'short' ? 400 : 620; return [[b,'sine',120],[b*1.26,'sine',120],[b*1.5,'sine',220]]; },
-  briefMkt:    ()  => [[540,'triangle',170],[540,'triangle',170],[760,'triangle',260]],
+  // Ola: barrido ascendente rápido de 4 notas — suena a "subida", y no se
+  // parece a la ruptura W/M (cuadrada) ni al brief (acorde sinusoidal).
+  volWave:     ()  => [[520,'sawtooth',70],[780,'sawtooth',70],[1040,'sawtooth',70],[1400,'sawtooth',180]],
   confluence:  dir => [[dir === 'long' ? 1040 : 460,'triangle',180]],
   score:       ()  => [[660,'square',110]],
   align:       dir => [[dir === 'long' ? 880 : 440,'sine',130]],
@@ -496,6 +549,9 @@ const ALERT_PRIORITY = {
   // prisa de la que no.
   patternRetest: 2,
   patternDone: 2,  // 🎯 el patrón ya tocó objetivo o stop
+  // La ola caduca aún más rápido que una ruptura: en la medición, la mitad del
+  // recorrido de la hora siguiente se hacía en los primeros 15 minutos.
+  volWave:     3,
 };                 // el resto: 1 (por defecto)
 
 // Hueco entre repeticiones: las W/M repiten más seguido (cadencia insistente),
@@ -517,6 +573,9 @@ function stopAlertSound() {
 
 function playAlertSound(cat, dir) {
   if (!soundEnabled) return;
+  // Segunda barrera: cada llamada ya comprueba su casilla, pero si alguna se
+  // olvida, una categoría silenciada no puede sonar desde ningún sitio.
+  if (!canAlert(cat)) return;
   const prio = ALERT_PRIORITY[cat] || 1;
   if (_alarm && prio < _alarm.prio) return; // suena algo más importante: no la pisamos
   stopAlertSound();
@@ -538,6 +597,32 @@ function playAlertSound(cat, dir) {
   }
   _alarm = { cat, prio, timers };
   timers.push(setTimeout(() => { _alarm = null; }, ALERT_ALARM_MS));
+  _mostrarAlarmaActual(cat);
+}
+
+// ── ¿Qué está sonando? ──────────────────────────────────────────────────────
+// Con varias categorías activas no había forma de saber cuál sonaba, y una que
+// seguía activa se confundía con otra que ya estaba silenciada. Este aviso
+// nombra la categoría y permite silenciarla ahí mismo. Se queda 30 s aunque la
+// alarma se calle con un clic, para que dé tiempo a leerlo.
+let _alarmaActualTimer = null;
+function _mostrarAlarmaActual(cat) {
+  let el = document.getElementById('alarma-actual');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'alarma-actual';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<span>🔊 <b>${ALERT_LABELS[cat] || cat}</b></span>
+    <button onclick="silenciarCategoria('${cat}')" title="Desmarca esta categoría en ⚙️ y deja de sonar">🔕 silenciar esta alarma</button>
+    <button onclick="_ocultarAlarmaActual()" title="Cerrar este aviso">✕</button>`;
+  el.style.display = 'flex';
+  clearTimeout(_alarmaActualTimer);
+  _alarmaActualTimer = setTimeout(_ocultarAlarmaActual, 30_000);
+}
+function _ocultarAlarmaActual() {
+  const el = document.getElementById('alarma-actual');
+  if (el) el.style.display = 'none';
 }
 
 // Una alarma de 10 s necesita interruptor: el primer clic o tecla después de
@@ -556,8 +641,23 @@ document.addEventListener('keydown', () => stopAlertSound(), true);
 let _storageWarned = false;
 
 // Bytes ocupados por las claves de la app. localStorage guarda UTF-16, asi que
-// cada caracter cuenta doble; el limite habitual del navegador son ~5 MB.
-const STORAGE_LIMIT = 5 * 1024 * 1024;
+// cada caracter cuenta doble. El limite de Chrome/Edge es de ~5,2 millones de
+// caracteres por origen, o sea 10 MB contados asi. Antes se comparaba contra
+// 5 MB y la barra marcaba "lleno" con la mitad del espacio real.
+const STORAGE_LIMIT = 10 * 1024 * 1024;
+
+// Qué ocupa el espacio, de mayor a menor (para saber qué recortar).
+function storageDesglose() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf('scalp_') !== 0) continue;
+      out.push({ k, bytes: (k.length + (localStorage.getItem(k) || '').length) * 2 });
+    }
+  } catch (_) { /* sin acceso */ }
+  return out.sort((a, b) => b.bytes - a.bytes);
+}
 function storageBytes() {
   try {
     let n = 0;

@@ -275,12 +275,16 @@ function renderAlertCfg() {
   const _sb = typeof storageBytes === 'function' ? storageBytes() : null;
   const _sPct = _sb == null ? null : Math.min(100, _sb / STORAGE_LIMIT * 100);
   const _sCol = _sPct == null ? '#8b9098' : _sPct >= 85 ? '#ff6666' : _sPct >= 60 ? '#ffbe3c' : '#2fe08a';
+  // Qué lo ocupa: sin esto, "lleno" no dice qué hay que limpiar.
+  const _desg = typeof storageDesglose === 'function' ? storageDesglose() : [];
+  const _mb = b => (b / 1048576).toFixed(1) + ' MB';
   const storageRow = _sb == null ? '' : `
-    <div class="acfg-vol" title="Cuando se llena, se recorta automaticamente el historial mas antiguo del Comparador y del seguimiento para poder seguir guardando">
+    <div class="acfg-vol" title="Cuando se llena, se recorta automaticamente el historial mas antiguo del Comparador y del seguimiento para poder seguir guardando.&#10;Limite del navegador: ~${_mb(STORAGE_LIMIT)}.&#10;&#10;${_desg.slice(0, 8).map(d => d.k.replace('scalp_', '') + ': ' + _mb(d.bytes)).join('&#10;')}">
       <span>&#128190; Espacio</span>
       <div class="acfg-bar"><i style="width:${_sPct.toFixed(0)}%;background:${_sCol}"></i></div>
-      <b style="color:${_sCol}">${(_sb / 1048576).toFixed(1)} MB</b>
-    </div>`;
+      <b style="color:${_sCol}">${_mb(_sb)} de ${_mb(STORAGE_LIMIT)}</b>
+    </div>
+    ${_desg.length && _sPct >= 60 ? `<div class="acfg-desg">Lo que más ocupa: ${_desg.slice(0, 3).map(d => `<b>${d.k.replace('scalp_', '')}</b> ${_mb(d.bytes)}`).join(' · ')}</div>` : ''}`;
   panel.innerHTML = `
     <div class="acfg-head">⚙️ Alertas — qué puede avisarte
       <button class="dt-close" onclick="toggleAlertCfg()" style="margin-left:auto">✕</button>
@@ -295,7 +299,8 @@ function renderAlertCfg() {
     ${storageRow}
     ${rows}
     <div class="acfg-note">El toast, el sonido (🔔) y la notificación de escritorio (🖥) de cada categoría se activan o silencian juntos. Los cambios se guardan solos.<br>
-    Cada alarma suena <b>10 segundos</b>; cualquier clic o tecla la calla. Las rupturas de cuello <b>W/M (15m · 1h · 4h)</b> tienen prioridad: si están sonando, ninguna otra alerta las interrumpe, si entra una W/M mientras suena otra cosa la pisa, y además suenan al volumen máximo mientras el resto va un 30% por debajo.</div>`;
+    Cada alarma suena <b>10 segundos</b>; cualquier clic o tecla la calla. Mientras suena, arriba aparece <b>cuál es</b> con un botón para silenciarla.
+    Si tienes el screener abierto en varias pestañas, los cambios se aplican en todas; la web de Render tiene su propia configuración aparte. Las rupturas de cuello <b>W/M (15m · 1h · 4h)</b> tienen prioridad: si están sonando, ninguna otra alerta las interrumpe, si entra una W/M mientras suena otra cosa la pisa, y además suenan al volumen máximo mientras el resto va un 30% por debajo.</div>`;
 }
 
 function showToast(msg, type = '') {
@@ -548,6 +553,14 @@ function applyLiveTickers() {
 let _wsSubscribed = new Set();
 let _liqWS = null;
 
+// Desde cuándo hay operaciones COMPLETAS de cada moneda (símbolo sin USDT). El
+// detector de olas (olas.js) suma el volumen de los últimos 15 min a partir de
+// las operaciones de publicTrade, y si la suscripción es más reciente que eso la
+// suma saldría corta. Se reinicia al reconectar: lo negociado mientras el socket
+// estuvo caído no llegó nunca.
+const _wsDesde = new Map();
+function wsCoberturaDesde(sym) { return _wsDesde.get(sym) || null; }
+
 function _wsTopicsFor(sym) {
   return [`allLiquidation.${sym}USDT`, `publicTrade.${sym}USDT`, `tickers.${sym}USDT`];
 }
@@ -578,8 +591,9 @@ function syncLiqWSUniverse(symbols) {
     _wsSubscribed = deseados;
     return;
   }
-  if (nuevos.length && _wsSend('subscribe', nuevos))   nuevos.forEach(s => _wsSubscribed.add(s));
-  if (idos.length   && _wsSend('unsubscribe', idos))   idos.forEach(s => _wsSubscribed.delete(s));
+  const ahora = Date.now();
+  if (nuevos.length && _wsSend('subscribe', nuevos))   nuevos.forEach(s => { _wsSubscribed.add(s); _wsDesde.set(s, ahora); });
+  if (idos.length   && _wsSend('unsubscribe', idos))   idos.forEach(s => { _wsSubscribed.delete(s); _wsDesde.delete(s); });
 }
 
 function connectLiqWS(symbols) {
@@ -605,6 +619,9 @@ function connectLiqWS(symbols) {
       // Se resuscribe al universo VIGENTE, no al que había al arrancar: tras una
       // reconexión el conjunto puede haber cambiado varias veces.
       _wsSend('subscribe', [..._wsSubscribed]);
+      _wsDesde.clear();
+      const ahora = Date.now();
+      for (const s of _wsSubscribed) _wsDesde.set(s, ahora);
       pingTimer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ op: 'ping' }));
       }, 20_000);
@@ -657,6 +674,7 @@ function connectLiqWS(symbols) {
     };
 
     ws.onclose = () => {
+      _wsDesde.clear();
       setLiqDot('err');
       clearInterval(pingTimer);
       setTimeout(connect, 5000);

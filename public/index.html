@@ -6,7 +6,7 @@
 <title>Scalp Screener</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css?v=38">
+<link rel="stylesheet" href="/styles.css?v=40">
 
 </head>
 <body>
@@ -78,6 +78,7 @@
   <div id="aligned-strip" title="Monedas con el MISMO cuadrante en 15m·1h·4h·1d — tendencia consistente de punta a punta. Clic: localizar en la tabla."></div>
   <div id="pattern-strip" title="Dobles suelos (W) y dobles techos (M) en las tres temporalidades a la vez — 15m (~24h), 1h y 4h (~8 días) — ordenados por lo que se puede HACER con cada uno, no por su temporalidad, que va como etiqueta en cada chip.&#10;&#10;↩ = el precio ha vuelto al cuello: es el único momento en que la entrada se pone con orden LÍMITE (comisión maker). Se muestra el precio del límite y su R:R.&#10;⚡ = ruptura confirmada por cierre de vela: entrada a mercado (comisión taker).&#10;⏳ = está cruzando el cuello pero la vela aún no ha cerrado.&#10;% = todavía formándose, con el cuello a esa distancia.&#10;&#10;Los patrones con el cuello lejos no salen aquí: siguen en la tabla y en el badge junto al símbolo. Clic en un chip: abrir el gráfico con el patrón dibujado."></div>
   <div id="outlier-strip" title="Monedas que se separan del resto del mercado (OI+precio 1h) con liquidez real detrás. 🔥 sostenido = ≥15min seguidas fuera de rango · ⚡ pico puntual = acaba de saltar fuerte. Clic: abrir en el radar."></div>
+  <div id="ola-strip" title="🌊 Olas de volumen: monedas que en los últimos 15 minutos suben un 5% o más, con 8 veces o más su volumen normal (al menos $50K negociados) y por encima de su máximo de 4h. Solo alcistas. Vigila todo el mercado, también las monedas finas, que salen marcadas. Las de la tabla se revisan cada 5 segundos con las operaciones en vivo.&#10;&#10;Es un aviso para mirar el gráfico, no una señal de entrada. Clic en una moneda: abrir su gráfico."></div>
   <div id="momentum-strip" title="Momentum confirmado por umbrales absolutos: precio 1h ≥5% Y OI 1h ≥10% expandiéndose (dinero nuevo, no cierre de posiciones), con liquidez real. Clic: abrir en el radar."></div>
   <div id="map-resizer" title="Arrastra para ajustar la altura del mapa"></div>
 <div id="filter-bar">
@@ -346,8 +347,8 @@
 <!-- ── Módulos JS (el orden importa: main.js arranca la app y va al final) ── -->
 <script src="/lxr.js?v=8"></script>
 <script src="/radar.js?v=23"></script>
-<script src="/core.js?v=35"></script>
-<script src="/screener.js?v=26"></script>
+<script src="/core.js?v=39"></script>
+<script src="/screener.js?v=28"></script>
 <script src="/map.js?v=15"></script>
 <script src="/patterns.js?v=21"></script>
 <script src="/detail.js?v=22"></script>
@@ -356,7 +357,8 @@
 <script src="/lab.js?v=24"></script>
 <script src="/track.js?v=18"></script>
 <script src="/backtest.js?v=9"></script>
-<script src="/brief.js?v=4"></script>
-<script src="/main.js?v=17"></script>
+<script src="/olas.js?v=3"></script>
+<script src="/brief.js?v=6"></script>
+<script src="/main.js?v=18"></script>
 </body>
 </html>

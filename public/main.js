@@ -40,6 +40,7 @@ async function load() {
     renderQuadAligned(allRows); // barra "cuadrante alineado" bajo el mapa (y en Estrategia)
     renderOutlierStrip(allRows); // 🎯 outliers reales: dist real + liquidez + sostenido vs. pico
     renderMomentumStrip(allRows); // 🚀 momentum confirmado: umbrales absolutos precio 5% + OI 10%
+    olasOnCycle(allRows); // 🌊 olas de volumen: arranque de explosiones alcistas (+ alarma)
     scanPatterns(allRows); // detector W/M + alertas de ruptura de cuello (antes de render: pinta badges)
     btcOnCycle(); // ₿ direccionalidad BTC: factores, sesiones y alertas de cambio de sesgo
     // El universo rota (10 plazas se dan por movimiento), así que la suscripción
