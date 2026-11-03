@@ -447,7 +447,37 @@ tr.mv-row:hover td { background: #17120a; }
 #lab-macd .pt-table th, #lab-macd .pt-table td { text-align: right; height: auto; }
 #lab-macd .pt-table th:first-child, #lab-macd .pt-table td:first-child { text-align: left; }
 #lab-macd .pt-table td { padding: 3px 10px; }
-#lab-macd .patt-tf-row td { text-align: left; font-weight: 700; color: #eef2fa; }
+#lab-macd .pt-title { font-size: 12px; color: #eef2fa; }
+#lab-macd .pt-btn { margin-left: 0; color: #eef2fa; border-color: #2a3a55; font-size: 10px; padding: 3px 9px; }
+#lab-macd .pt-btn:hover { color: #fff; border-color: #5a78a8; }
+#lab-macd .mp-nueva { margin-left: auto; color: #2fe08a; border-color: rgba(47, 224, 138, .45); font-weight: 700; }
+#lab-macd .pt-table th { color: #d7dde8; font-size: 9px; }
+#lab-macd .pt-sym { color: #eef2fa; }
+#mp-cuerpo { overflow-x: auto; }
+.mp-nota { padding: 7px 10px; font-size: 10px; line-height: 1.5; color: #d7dde8; border-bottom: 1px solid #141e2e; }
+.mp-nota b { color: #fff; }
+.mp-tabla { font-variant-numeric: tabular-nums; }
+.mp-fila { cursor: pointer; }
+.mp-fila b { color: #eef2fa; font-size: 11px; }
+.mp-sel td { background: rgba(90, 130, 210, .13); }
+.mp-reglas { font-size: 9px; color: #c8d0dc; margin-top: 1px; white-space: normal; max-width: 330px; }
+.mp-acc { white-space: nowrap; }
+.mp-acc button { background: none; border: 1px solid #2a3a55; border-radius: 4px; color: #eef2fa; font-size: 10px; padding: 1px 5px; margin-left: 3px; cursor: pointer; }
+.mp-acc button:hover { border-color: #5a78a8; background: rgba(90, 130, 210, .15); }
+.mp-curva { display: block; margin-left: auto; }
+.mp-resumen { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 7px 10px; font-size: 10px; color: #d7dde8; border-top: 1px solid #1a2535; border-bottom: 1px solid #141e2e; }
+.mp-resumen b { color: #eef2fa; }
+#mp-form { background: #0a0f1a; border-bottom: 1px solid #2a3a55; padding: 8px 10px; }
+#mp-form[hidden] { display: none; }
+.mp-form-titulo { font-size: 11px; font-weight: 700; color: #eef2fa; margin-bottom: 7px; }
+.mp-form-titulo span { font-weight: 400; color: #d7dde8; }
+.mp-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); gap: 8px 10px; }
+.mp-campos label { display: flex; flex-direction: column; gap: 3px; font-size: 10px; color: #d7dde8; }
+.mp-campos input:not([type=checkbox]), .mp-campos select { background: #0d1524; color: #eef2fa; border: 1px solid #2a3a55; border-radius: 5px; padding: 4px 6px; font-size: 11px; width: 100%; box-sizing: border-box; }
+.mp-campos .mp-check { flex-direction: row; align-items: center; gap: 6px; align-self: end; padding-bottom: 5px; }
+.mp-ancho { grid-column: span 2; }
+#mp-ayuda { margin-top: 8px; font-size: 10px; line-height: 1.5; color: #ffd76a; }
+.mp-botones { display: flex; gap: 6px; margin-top: 8px; }
 #lab-macd > .pt-table { font-variant-numeric: tabular-nums; }
 
 /* 🌊 Olas de volumen (olas.js) */
