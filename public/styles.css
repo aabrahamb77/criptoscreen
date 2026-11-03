@@ -418,6 +418,38 @@ tr.mv-row:hover td { background: #17120a; }
 }
 #momentum-strip:empty { display: none; }
 
+/* 📊 MACD (macd.js) */
+#macd-strip {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; row-gap: 3px;
+  padding: 4px 12px 5px;
+  background: #05070a; border-top: 1px solid #0c1119;
+}
+#macd-strip:empty { display: none; }
+#macd-strip .qal-head { margin-bottom: 0; white-space: nowrap; flex-shrink: 0; }
+#macd-strip .chart-tf-btn { padding: 1px 7px; }
+#macd-strip .chart-tf-btn.active { color: #eef2fa; background: rgba(255, 255, 255, .08); }
+.macd-resumen { font-size: 10px; color: #aab3c1; white-space: nowrap; }
+.macd-celda { display: flex; justify-content: center; gap: 3px; }
+.macd-tag {
+  font-style: normal; font-size: 9px; font-weight: 700; min-width: 17px; text-align: center;
+  padding: 1px 2px; border-radius: 3px; opacity: .85; color: #b3bcc9;
+}
+.macd-tag.fresca { opacity: 1; background: rgba(255, 255, 255, .09); box-shadow: inset 0 0 0 1px currentColor; }
+#dt-macd { width: 100%; height: 110px; display: block; background: #05070a; border: 1px solid #10161f; border-radius: 8px; flex-shrink: 0; margin-top: 4px; }
+#lab-macd { background: #0c1220; border: 1px solid #1a2535; border-radius: 10px; overflow: hidden; flex-shrink: 0; }
+#lab-macd .chart-tf-btn.active { color: #eef2fa; background: rgba(255, 255, 255, .08); }
+/* La regla global de table (min-width 1440px, para el screener) aqui las solaparia */
+#lab-macd table { min-width: 0; }
+.macd-tablas { display: flex; flex-wrap: wrap; }
+.macd-tablas > div { flex: 1 1 460px; min-width: 0; }
+#lab-macd .pt-table th, #lab-macd .pt-table td { text-align: right; height: auto; }
+#lab-macd .pt-table th:first-child, #lab-macd .pt-table td:first-child { text-align: left; }
+#lab-macd .pt-table td { padding: 3px 10px; }
+#lab-macd .patt-tf-row td { text-align: left; font-weight: 700; color: #eef2fa; }
+#lab-macd > .pt-table { font-variant-numeric: tabular-nums; }
+
 /* 🌊 Olas de volumen (olas.js) */
 #ola-strip {
   flex-shrink: 0;
@@ -527,9 +559,10 @@ tr.mv-row:hover td { background: #17120a; }
 }
 .dt-tf-btn:hover { color: #c8d8ff; background: #141c28; }
 .dt-tf-btn.active { background: #101722; border-color: #2a3850; color: #eef2fa; }
-.dt-tf-btn:nth-child(1).active { border-color: #ffd76a; color: #ffd76a; }
-.dt-tf-btn:nth-child(2).active { border-color: #c9a2ff; color: #c9a2ff; }
-.dt-tf-btn:nth-child(3).active { border-color: #7fd4ff; color: #7fd4ff; }
+.dt-tf-btn:nth-child(1).active { border-color: #8ff0c0; color: #8ff0c0; }
+.dt-tf-btn:nth-child(2).active { border-color: #ffd76a; color: #ffd76a; }
+.dt-tf-btn:nth-child(3).active { border-color: #c9a2ff; color: #c9a2ff; }
+.dt-tf-btn:nth-child(4).active { border-color: #7fd4ff; color: #7fd4ff; }
 .dt-tf-pat { font-style: normal; font-size: 8.5px; font-weight: 800; opacity: .95; }
 .dt-tf-pat.pat-w { color: #2fe08a; }
 .dt-tf-pat.pat-m { color: #ff6666; }
@@ -624,10 +657,10 @@ tr.mv-row:hover td { background: #17120a; }
   .quad-flt-btn, .preset-btn, .row-radar, #risk-light { display: none; }
   /* tds ocultos = EXACTAMENTE las columnas cuyo th se oculta arriba
      (visibles: #, símbolo, precio, funding, CVD, OI 5m/1h, Vol 1h, Precio 15m/1h, RS BTC) */
-  td:nth-child(7), td:nth-child(9), td:nth-child(10),
-  td:nth-child(11), td:nth-child(13), td:nth-child(14),
-  td:nth-child(15), td:nth-child(18), td:nth-child(19),
-  td:nth-child(20), td:nth-child(21), td:nth-child(22), td:nth-child(24)
+  td:nth-child(8), td:nth-child(10), td:nth-child(11),
+  td:nth-child(12), td:nth-child(14), td:nth-child(15),
+  td:nth-child(16), td:nth-child(19), td:nth-child(20),
+  td:nth-child(21), td:nth-child(22), td:nth-child(23), td:nth-child(25)
   { display: none; }
   th { font-size: 9px; padding: 0 5px; }
   td { height: 32px; }
@@ -742,12 +775,12 @@ th.left-align { text-align: left; }
 th .sort-arrow { font-size: 8px; margin-left: 3px; vertical-align: middle; color: #3a78cc; }
 
 /* Separadores visuales entre grupos */
-th[data-col="oi5m"],       td:nth-child(6)  { border-left: 1px solid rgba(0,190,110,0.12); }
-th[data-col="vol15mPct"],  td:nth-child(11) { border-left: 1px solid rgba(60,130,240,0.12); }
-th[data-col="price5mPct"], td:nth-child(15) { border-left: 1px solid rgba(210,170,40,0.10); }
-th[data-col="liq5m"],      td:nth-child(21) { border-left: 1px solid rgba(240,160,48,0.12); }
-th[data-col="btcCorr"],    td:nth-child(22) { border-left: 1px solid rgba(110,150,220,0.12); }
-th[data-col="score"],      td:nth-child(24) { border-left: 1px solid rgba(160,100,255,0.10); }
+th[data-col="oi5m"],       td:nth-child(7)  { border-left: 1px solid rgba(0,190,110,0.12); }
+th[data-col="vol15mPct"],  td:nth-child(12) { border-left: 1px solid rgba(60,130,240,0.12); }
+th[data-col="price5mPct"], td:nth-child(16) { border-left: 1px solid rgba(210,170,40,0.10); }
+th[data-col="liq5m"],      td:nth-child(22) { border-left: 1px solid rgba(240,160,48,0.12); }
+th[data-col="btcCorr"],    td:nth-child(23) { border-left: 1px solid rgba(110,150,220,0.12); }
+th[data-col="score"],      td:nth-child(25) { border-left: 1px solid rgba(160,100,255,0.10); }
 
 td {
   padding: 0;

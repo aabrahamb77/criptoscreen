@@ -18,6 +18,7 @@ function switchTab(tab) {
   if (tab === 'btc'      && allRows.length) renderBTC();
   if (tab === 'strategy' && allRows.length) renderStrategy();
   if (tab === 'lab'      && allRows.length) renderLab();
+  if (tab === 'lab') renderMacdPanel();
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ async function load() {
     renderOutlierStrip(allRows); // 🎯 outliers reales: dist real + liquidez + sostenido vs. pico
     renderMomentumStrip(allRows); // 🚀 momentum confirmado: umbrales absolutos precio 5% + OI 10%
     olasOnCycle(allRows); // 🌊 olas de volumen: arranque de explosiones alcistas (+ alarma)
+    macdOnCycle(allRows); // 📊 MACD 15·26·34: L/S/PB/▲▼ por temporalidad y su seguimiento
     scanPatterns(allRows); // detector W/M + alertas de ruptura de cuello (antes de render: pinta badges)
     btcOnCycle(); // ₿ direccionalidad BTC: factores, sesiones y alertas de cambio de sesgo
     // El universo rota (10 plazas se dan por movimiento), así que la suscripción

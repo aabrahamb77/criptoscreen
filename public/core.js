@@ -443,6 +443,8 @@ const ALERT_DEFAULTS = {
   qalHot:      true,   // 🔥 moneda entra resaltada al cuadrante alineado (>5% en 1h)
   briefTop:    true,   // 🧠 una moneda del brief alcanza nota >= 85 (BRIEF_ALERT_MIN)
   volWave:     true,   // 🌊 ola de volumen alcista: arranque de una explosión (olas.js)
+  macd5:       true,   // 📊 MACD: cruce confirmado al cerrar la vela de 5m (macd.js)
+  macd15:      true,   // 📊 MACD: cruce confirmado al cerrar la vela de 15m
   confluence:  false,  // 🎯 confluencia alta en el radar (ruidosa)
   score:       false,  // 📈 score salta a ≥8 (ruidosa)
   align:       false,  // 🔊 beep de alineación total (ruidosa)
@@ -459,6 +461,8 @@ const ALERT_LABELS = {
   qalHot:      '🔥 Moneda resaltada en cuadrante alineado (>5% en 1h)',
   briefTop:    '🧠 Brief: moneda con nota ≥85 (fiable para operar)',
   volWave:     '🌊 Ola de volumen alcista (arranque de explosión)',
+  macd5:       '📊 MACD 5m: cruce confirmado (L o S)',
+  macd15:      '📊 MACD 15m: cruce confirmado (L o S)',
   confluence:  '🎯 Confluencia alta del radar — ruidosa',
   score:       '📈 Score salta a ≥8 — ruidosa',
   align:       '🔊 Beep de alineación total — ruidosa',
@@ -523,6 +527,9 @@ const ALERT_SOUNDS = {
   // Ola: barrido ascendente rápido de 4 notas — suena a "subida", y no se
   // parece a la ruptura W/M (cuadrada) ni al brief (acorde sinusoidal).
   volWave:     ()  => [[520,'sawtooth',70],[780,'sawtooth',70],[1040,'sawtooth',70],[1400,'sawtooth',180]],
+  // MACD: dos notas de triángulo, sube en L y baja en S; 15m lleva una más, como la familia W/M.
+  macd5:       dir => dir === 'short' ? [[660,'triangle',110],[440,'triangle',170]] : [[660,'triangle',110],[990,'triangle',170]],
+  macd15:      dir => dir === 'short' ? [[660,'triangle',110],[550,'triangle',110],[440,'triangle',170]] : [[660,'triangle',110],[820,'triangle',110],[990,'triangle',170]],
   confluence:  dir => [[dir === 'long' ? 1040 : 460,'triangle',180]],
   score:       ()  => [[660,'square',110]],
   align:       dir => [[dir === 'long' ? 880 : 440,'sine',130]],
@@ -540,6 +547,8 @@ const ALERT_PRIORITY = {
   pattern4h:   3,  // ◭ ruptura de cuello W/M confirmada — lo más accionable
   pattern1h:   3,
   pattern15:   3,
+  macd5:       3,  // 📊 cruce MACD confirmado: caduca igual de rápido que una ruptura
+  macd15:      3,
   // El retroceso se oye por debajo de la ruptura, aunque sea la entrada más
   // barata de ejecutar (0 de 1.728 configuraciones rentables a comisión taker en
   // backtest/RESULTADOS-SCALP.md, frente a 44 a maker). El motivo es que la

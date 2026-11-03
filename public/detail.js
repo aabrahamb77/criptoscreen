@@ -19,13 +19,15 @@ let detailSym = null;
 let dtTf = '15m';
 
 const DT_TF_STYLE = {
+  '5m':  { color: '#8ff0c0', glow: 'rgba(143,240,192,.5)', dash: [3, 3],  mins: 5 },
   '15m': { color: '#ffd76a', glow: 'rgba(255,215,106,.5)', dash: [4, 3],  mins: 15 },
   '1h':  { color: '#c9a2ff', glow: 'rgba(201,162,255,.5)', dash: [6, 3],  mins: 60 },
   '4h':  { color: '#7fd4ff', glow: 'rgba(127,212,255,.5)', dash: [12, 4], mins: 240 },
 };
-const DT_TFS = ['15m', '1h', '4h'];
+const DT_TFS = ['5m', '15m', '1h', '4h'];
 
 function dtPattern(row, tf) {
+  if (tf === '5m') return null;   // el detector W/M no mira 5m; esta TF es para el MACD
   return tf === '4h' ? row.pattern4h : tf === '1h' ? row.pattern1h : row.pattern;
 }
 
@@ -34,6 +36,7 @@ function dtPattern(row, tf) {
 // usa TAL CUAL la serie contra la que se detectó el patrón, así que es 0 y los
 // índices encajan exactos sin corrección.
 function dtSeries(row, tf) {
+  if (tf === '5m') return { k: row.k5 || null, offset: 0 };
   if (tf === '1h') return { k: row.k60 || null, offset: 0 };
   if (tf === '4h') return { k: (typeof _patAgg4h === 'function' ? _patAgg4h(row) : null), offset: 0 };
   return dtBuildChartData(row);
@@ -43,7 +46,7 @@ function dtSeries(row, tf) {
 // sobra sin que las velas queden como pelos; en 4h se enseñan todas las que hay.
 function dtVisibleN(k, tf, offset) {
   if (!k || !k.c) return 0;
-  return Math.min(k.c.length, tf === '15m' ? (offset > 0 ? 200 : 110) : tf === '1h' ? 140 : 60);
+  return Math.min(k.c.length, tf === '5m' ? 144 : tf === '15m' ? (offset > 0 ? 200 : 110) : tf === '1h' ? 140 : 60);
 }
 
 // Al abrir, ir a la temporalidad del patrón más accionable. A igualdad de
@@ -332,7 +335,9 @@ function renderDetail() {
     </div>
     <div class="dt-tf-nav">${tfBtns}</div>
     <canvas id="dt-chart"></canvas>
+    <canvas id="dt-macd"></canvas>
     <div class="dt-chart-hint">${dtHint}</div>
+    ${macdSeccionDetalle(row)}
     ${patternHtml}
     <div class="dt-section">
       <div class="dt-sec-title">Métricas</div>
@@ -408,6 +413,7 @@ function drawDetailChart(row) {
   const RGAP = Math.max(6, Math.round(N * 0.15));
   const x = i => PADL + (i - start) / Math.max(1, N - 1 + RGAP) * (W - PADL - PADR);
   const y = v => PADT + (max - v) / (max - min) * (H - PADT - PADB);
+  macdDibujarPanel(row.symbol, tf, k, start, N, RGAP, PADL, PADR);
 
   // Grid + eje derecho (tenue, pegado al borde)
   ctx.font = '9px Inter,system-ui';

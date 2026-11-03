@@ -300,6 +300,7 @@ function renderAlertCfg() {
     ${rows}
     <div class="acfg-note">El toast, el sonido (🔔) y la notificación de escritorio (🖥) de cada categoría se activan o silencian juntos. Los cambios se guardan solos.<br>
     Cada alarma suena <b>10 segundos</b>; cualquier clic o tecla la calla. Mientras suena, arriba aparece <b>cuál es</b> con un botón para silenciarla.
+    Los cruces <b>MACD (5m · 15m)</b> tienen la misma prioridad y agrupan en un aviso las monedas de un mismo cierre.
     Si tienes el screener abierto en varias pestañas, los cambios se aplican en todas; la web de Render tiene su propia configuración aparte. Las rupturas de cuello <b>W/M (15m · 1h · 4h)</b> tienen prioridad: si están sonando, ninguna otra alerta las interrumpe, si entra una W/M mientras suena otra cosa la pisa, y además suenan al volumen máximo mientras el resto va un 30% por debajo.</div>`;
 }
 
@@ -562,7 +563,7 @@ const _wsDesde = new Map();
 function wsCoberturaDesde(sym) { return _wsDesde.get(sym) || null; }
 
 function _wsTopicsFor(sym) {
-  return [`allLiquidation.${sym}USDT`, `publicTrade.${sym}USDT`, `tickers.${sym}USDT`];
+  return [`allLiquidation.${sym}USDT`, `publicTrade.${sym}USDT`, `tickers.${sym}USDT`, `kline.5.${sym}USDT`, `kline.15.${sym}USDT`];
 }
 
 function _wsSend(op, symbols) {
@@ -636,6 +637,12 @@ function connectLiqWS(symbols) {
 
         const msg = JSON.parse(e.data);
         if (!msg.topic || !msg.data) return;
+
+        // --- cierre de vela: la estrategia MACD avisa en cuanto Bybit lo confirma ---
+        if (msg.topic.startsWith('kline.')) {
+          macdOnKline(msg);
+          return;
+        }
 
         // --- tickers en tiempo real (precio/funding/OI) ---
         if (msg.topic.startsWith('tickers.')) {
@@ -1022,7 +1029,7 @@ function render() {
 
   const tbody = document.getElementById('tbody');
   if (!sorted.length) {
-    tbody.innerHTML = `<tr class="state-row"><td colspan="24">Sin datos</td></tr>`;
+    tbody.innerHTML = `<tr class="state-row"><td colspan="25">Sin datos</td></tr>`;
     return;
   }
 
@@ -1041,6 +1048,7 @@ function render() {
         <span class="star${isFav?' on':''}" onclick="toggleFav('${row.symbol}')">★</span>
       </div></td>
       <td class="left-align"><div class="sym-cell">${icon}<span class="sym-name">${row.symbol}</span>${row.byMove ? `<span class="mv-badge" title="Entro al universo por PLAZA DE MOVIMIENTO, no por liquidez: esta fuera del top 90 por turnover pero es de las 10 que mas se mueven en 24h. Ojo, es mas fina de lo habitual.">↕</span>` : ''}${gem}${quadBadge(row)}${patternBadge(row)}${streakBadge(row)}<span class="row-radar" title="Abrir en el radar de confluencia (checklist de 7 señales)" onclick="event.stopPropagation();openInRadar('${row.symbol}')">🎯</span></div></td>
+      <td>${macdCelda(row.symbol)}</td>
       <td><div class="price-cell"><span title="Mini-gráfico: ${sparkTitle()} — cambia con la temporalidad seleccionada en el mapa">${sparkSVG(sparkSeries(row))}</span><span style="margin-left:6px">${fmtPrice(row.price)}</span></div></td>
       <td>${fundingCell(row.fundingRate)}</td>
       <td>${cvdCell(row.cvd1m)}</td>
