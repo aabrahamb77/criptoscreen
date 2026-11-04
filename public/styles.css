@@ -272,6 +272,40 @@ header h1 {
 .conf-card.cc-dim { opacity: .5; }
 .conf-card.cc-dim:hover { opacity: .9; }
 
+/* 🧮 Calculadora de posición: a la izquierda, para no tapar el detalle ni las alertas */
+#calc-panel {
+  position: fixed; top: 44px; left: 12px; z-index: 130; box-sizing: border-box;
+  width: min(350px, calc(100vw - 24px)); max-height: calc(100vh - 60px); overflow-y: auto;
+  padding: 10px 12px; font-size: 12px; color: #d7dde8;
+  background: #0c1220; border: 1px solid #2a3a55; border-radius: 10px; box-shadow: 0 14px 40px rgba(0, 0, 0, .7);
+}
+#calc-panel[hidden] { display: none; }
+.calc-cab { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #eef2fa; }
+.calc-cerrar { background: none; border: 1px solid #2a3a55; border-radius: 5px; color: #eef2fa; cursor: pointer; padding: 1px 7px; font-size: 11px; }
+.calc-cerrar:hover { border-color: #5a78a8; }
+.calc-campos { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 8px; }
+.calc-campos label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #d7dde8; min-width: 0; }
+.calc-campos input, .calc-campos select {
+  width: 100%; box-sizing: border-box; padding: 5px 7px; font-size: 13px; font-variant-numeric: tabular-nums;
+  background: #0a0f1a; color: #eef2fa; border: 1px solid #2a3a55; border-radius: 5px;
+}
+.calc-campos input:focus-visible, .calc-campos select:focus-visible { outline: 2px solid #7fb0ff; outline-offset: 1px; }
+.calc-vacio { margin-top: 10px; padding: 8px 2px 2px; color: #d7dde8; }
+.calc-grande { margin: 10px 0 6px; padding: 8px 10px; background: #0a0f1a; border-radius: 8px; color: #d7dde8; font-size: 11px; }
+.calc-grande span { display: block; }
+.calc-lado { font-weight: 700; }
+.calc-monto { display: block; font-size: 24px; font-weight: 700; line-height: 1.25; color: #eef2fa; font-variant-numeric: tabular-nums; }
+.calc-fila { display: flex; justify-content: space-between; gap: 10px; padding: 3px 2px; font-variant-numeric: tabular-nums; }
+.calc-fila b { color: #eef2fa; font-weight: 600; text-align: right; }
+.calc-estado { margin-top: 7px; padding: 6px 8px; border-radius: 6px; line-height: 1.4; }
+.calc-ok { color: #2fe08a; background: rgba(47, 224, 138, .08); }
+.calc-aviso { color: #ffd76a; background: rgba(255, 215, 106, .1); }
+.calc-peligro { color: #ff9a9a; background: rgba(255, 102, 128, .13); font-weight: 600; }
+.calc-mini { background: none; border: none; cursor: pointer; font-size: 11px; padding: 0 0 0 5px; opacity: .8; }
+.calc-mini:hover { opacity: 1; }
+.calc-boton { align-self: flex-start; margin-top: 4px; padding: 3px 9px; font-size: 11px; cursor: pointer; color: #eef2fa; background: none; border: 1px solid #2a3a55; border-radius: 5px; }
+.calc-boton:hover { border-color: #5a78a8; }
+
 /* ── Panel de configuración de alertas ── */
 #alert-cfg-panel {
   position: fixed; top: 44px; right: 12px; z-index: 120; width: 320px;

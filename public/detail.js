@@ -266,6 +266,7 @@ function renderDetail() {
       <div class="dt-row"><span>Objetivo (mov. medido)</span><b class="pos">${fmtPrice(pp.target)} (${f((pp.target - row.price) / row.price * 100)})</b></div>
       <div class="dt-row"><span>Stop sugerido</span><b class="neg">${fmtPrice(pp.stop)} (${f((pp.stop - row.price) / row.price * 100)})</b></div>
       ${retestHtml}
+      <button class="calc-boton" onclick="calcDesde('${row.symbol}', ${row.price}, ${pp.stop}, ${pp.target})" title="Entrada al precio actual, con el stop sugerido y el objetivo del patrón">🧮 Calcular posición</button>
     </div>`;
   };
   const patternHtml = patternSection(p, '15m') + patternSection(row.pattern1h, '1h') + patternSection(row.pattern4h, '4h');

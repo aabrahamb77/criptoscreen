@@ -650,6 +650,8 @@ function clearPatternTrack() {
 const PATT_ANTIGUA_MS = 10 * 864e5;
 const _pattDura = t => (t.exitTime || 0) - (t.entryTime || t.exitTime || 0);
 
+const _pattBotonCalc = (t, precio) => `<button class="calc-mini" title="Calcular posición con el stop tras el extremo del patrón" onclick="calcDesde('${t.symbol}', ${precio}, ${t.stopPattern ?? t.stop}, ${t.target})">🧮</button>`;
+
 function renderPatternTrack() {
   const open    = patternTrackOpen();
   const pending = patternTrackPending();
@@ -777,7 +779,7 @@ function renderPatternTrack() {
         const faltaC = falta == null ? '#d7dde8' : falta <= 0.3 ? '#2fe08a' : falta <= 1 ? '#ffbe3c' : '#d7dde8';
         const restan = t.expiresAfterBar ? t.expiresAfterBar - Date.now() : null;
         return `<tr>
-          <td class="pt-sym">${t.symbol}</td>
+          <td class="pt-sym">${t.symbol}${_pattBotonCalc(t, lim)}</td>
           <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:10px;opacity:.85">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:10px;color:#7fd4ff" title="Beneficio/riesgo desde el precio límite">R${t.rr.toFixed(1)}</span>` : ''}</td>
           <td style="color:#7fd4ff">${fmtPrice(lim)}</td>
           <td style="color:#d7dde8">${curr ? fmtPrice(curr) : '<span title="La moneda salió del universo del screener">—</span>'}</td>
@@ -809,7 +811,7 @@ function renderPatternTrack() {
         const huerfana = t.orphanSince
           ? ' <span style="font-size:10px;color:#ffbe3c" title="Su moneda salió del universo: se resuelve contra el histórico del servidor">🛰</span>' : '';
         return `<tr>
-          <td class="pt-sym">${t.symbol}</td>
+          <td class="pt-sym">${t.symbol}${_pattBotonCalc(t, curr)}</td>
           <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:10px;opacity:.85">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:10px;color:#7fd4ff" title="Beneficio/riesgo al precio de entrada real">R${t.rr.toFixed(1)}</span>` : ''}${kind}${t.v_tr?.active ? ' <span style="font-size:10px;color:#ffbe3c" title="Trailing stop armado: la posición ya pasó de +5%">⇡TR</span>' : ''}${huerfana}</td>
           <td style="color:#d7dde8">${fmtPrice(t.entryPrice)}</td>
           <td style="color:#d7dde8">${fmtPrice(curr)}</td>
