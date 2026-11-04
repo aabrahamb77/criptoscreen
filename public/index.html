@@ -6,7 +6,7 @@
 <title>Scalp Screener</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css?v=45">
+<link rel="stylesheet" href="/styles.css?v=48">
 
 </head>
 <body>
@@ -192,155 +192,152 @@
   </div>
 </div>
 
-<!-- ── Laboratorio de estrategias ── -->
+<!-- ── Laboratorio: una sección a la vez; cada pestaña ya dice cómo va ── -->
 <div id="lab-tab">
-  <div id="lab-regime">
-    <div id="lab-regime-badge" style="color:#b3bcc9;border-color:#1a2535">CALCULANDO</div>
-    <div id="lab-regime-stats">Esperando datos...</div>
-    <div id="lab-regime-dist"></div>
-  </div>
+  <nav id="lab-nav" role="tablist" aria-label="Secciones del laboratorio">
+    <button id="lab-nav-wm" class="lab-nav-btn" role="tab" onclick="setLabVista('wm')">
+      <span class="ln-nombre">🎯 Patrones W/M</span>
+      <b class="ln-dato" id="ln-wm-dato">—</b>
+      <span class="ln-sub" id="ln-wm-sub">Calculando…</span>
+    </button>
+    <button id="lab-nav-macd" class="lab-nav-btn" role="tab" onclick="setLabVista('macd')">
+      <span class="ln-nombre">🧪 MACD</span>
+      <b class="ln-dato" id="ln-macd-dato">—</b>
+      <span class="ln-sub" id="ln-macd-sub">Calculando…</span>
+    </button>
+    <button id="lab-nav-senales" class="lab-nav-btn" role="tab" onclick="setLabVista('senales')">
+      <span class="ln-nombre">⚡ Señales ahora</span>
+      <b class="ln-dato" id="ln-senales-dato">—</b>
+      <span class="ln-sub" id="ln-senales-sub">Calculando…</span>
+    </button>
+    <button id="lab-nav-comparador" class="lab-nav-btn" role="tab" onclick="setLabVista('comparador')">
+      <span class="ln-nombre">📊 Comparador</span>
+      <b class="ln-dato" id="ln-comparador-dato">—</b>
+      <span class="ln-sub" id="ln-comparador-sub">Calculando…</span>
+    </button>
+  </nav>
 
-  <div id="lab-signals">
-    <div class="lab-conf-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>🎯 Señales accionables AHORA — confluencia + evidencia histórica + niveles</span>
-      <span style="font-size:9px;color:#9da6b5;margin-left:auto">solo se muestran señales con ≥2 estrategias de acuerdo · la evidencia sale del Comparador (WR real a 1h con IC de Wilson) · clic = gráfico</span>
-    </div>
-    <div id="lab-signals-grid"><span class="lr-empty">Calculando…</span></div>
-  </div>
-
-  <div id="lab-health">
-    <div class="lab-conf-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>💎 Salud — monedas en buen momento y seguras de operar</span>
-      <span id="lab-health-count" style="font-size:9px;color:#aab3c1"></span>
-      <span style="font-size:9px;color:#9da6b5;margin-left:auto">liquidez · tendencia · flujo · OI · funding · liqs · extensión · rango — nota A/B = saludable</span>
-    </div>
-    <div id="lab-health-cards"><span class="lr-empty">Calculando...</span></div>
-  </div>
-
-  <div id="lab-lxr">
-    <div class="lab-conf-title">⚡ LXR — reversión tras cascada de liquidaciones</div>
-    <div id="lxr-list"><span class="lr-empty">Esperando una cascada de liquidaciones grande para evaluar...</span></div>
-  </div>
-
-  <div id="lab-extra-row">
-    <div id="lab-strat-compare">
-      <div class="sc-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span>📊 Comparador — ¿cuál estrategia acierta más a 30min/1h?</span>
-        <select id="strat-regime-filter" class="lab-filter-sel" onchange="stratRegimeFilter = this.value; renderStrategyCompare()">
-          <option value="ALL">Todos los regímenes</option>
-          <option value="ALCISTA">Solo ALCISTA</option>
-          <option value="BAJISTA">Solo BAJISTA</option>
-          <option value="VOLÁTIL">Solo VOLÁTIL</option>
-          <option value="LATERAL">Solo LATERAL</option>
-        </select>
-        <button class="pt-btn pt-btn-danger" style="margin-left:auto" onclick="clearStratSignals()">Limpiar</button>
-      </div>
-      <div class="sc-grid" id="sc-grid"><span class="sc-empty">Acumulando señales...</span></div>
-    </div>
-
-    <div id="lab-hour-analysis">
-      <div class="sc-title">🕒 Mejor hora del día — win rate a 1h por franja horaria</div>
-      <div id="ha-grid"><span class="sc-empty">Acumulando señales evaluadas...</span></div>
-    </div>
-  </div>
-
-  <div id="lab-bots-row">
-    <div id="lab-paper">
+  <section id="lab-sec-wm" class="lab-sec" role="tabpanel">
+    <div class="lab-panel">
       <div class="pt-header">
-        <span class="pt-title">🤖 Paper trading — solo estrategias validadas</span>
-        <div class="pt-stats-bar">
-          <span>Abiertas <b id="pt-stat-open">0/5</b></span>
-          <span>Cerradas <b id="pt-stat-total">0</b></span>
-          <span>Win rate <b id="pt-stat-wr">—</b></span>
-          <span>PnL <b id="pt-stat-pnl">—</b></span>
-          <span>Mejor <b id="pt-stat-best">—</b></span>
-          <span>Peor <b id="pt-stat-worst">—</b></span>
-          <span>DD máx <b id="pt-stat-dd">—</b></span>
-          <span>Racha pérdidas <b id="pt-stat-streak">—</b></span>
-        </div>
-        <button class="pt-btn pt-btn-danger" onclick="clearPaperTrades()">Limpiar</button>
-      </div>
-      <div id="pt-validated-strats" style="padding:6px 10px;font-size:9px;color:#aab3c1;border-bottom:1px solid #141e2e">Calculando...</div>
-      <div class="pt-section">Posiciones abiertas</div>
-      <table class="pt-table">
-        <thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Actual</th><th>PnL%</th><th>PnL$</th><th>Score</th><th>Estrategia</th><th>Tiempo</th></tr></thead>
-        <tbody id="pt-open-body"><tr><td colspan="9" class="pt-empty">Calculando...</td></tr></tbody>
-      </table>
-      <div class="pt-section">Últimas cerradas</div>
-      <table class="pt-table">
-        <thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Salida</th><th>PnL%</th><th>PnL$</th><th>Motivo</th><th>Duración</th></tr></thead>
-        <tbody id="pt-closed-body"><tr><td colspan="8" class="pt-empty">Sin trades cerrados aún</td></tr></tbody>
-      </table>
-    </div>
-
-    <div id="lab-paper2">
-      <div class="pt-header">
-        <span class="pt-title">🎯 Patrones W/M — seguimiento hasta objetivo/stop</span>
-        <div class="pt-stats-bar">
-          <span>Abiertos <b id="patt-stat-open">0</b></span>
-          <span title="Órdenes límite puestas en el cuello, esperando el retroceso">Esperando <b id="patt-stat-pending">0</b></span>
-          <span>Completados <b id="patt-stat-total">0</b></span>
-          <span>Acierto <b id="patt-stat-wr">—</b></span>
-          <span title="Expectativa por operación en múltiplos de R, NETA de comisiones. Es el único número que dice si la estrategia gana: positivo = gana, negativo = pierde.">Expectativa <b id="patt-stat-r">—</b></span>
-          <span title="PnL medio por operación, NETO de comisiones y deslizamiento">PnL neto <b id="patt-stat-pnl">—</b></span>
-          <span title="Qué porcentaje del riesgo de cada operación se lleva la comisión. Por encima del 15% la fricción decide el resultado.">Fricción <b id="patt-stat-fee">—</b></span>
-          <span>Tiempo prom. <b id="patt-stat-time">—</b></span>
-        </div>
-        <button class="pt-btn" onclick="exportPatternTrack()" title="Descargar el seguimiento completo en JSON: este historial solo existe en este navegador">Exportar JSON</button>
+        <span class="pt-title">Patrones W/M: qué pasó con cada ruptura de cuello</span>
+        <button class="pt-btn lab-a-la-derecha" onclick="exportPatternTrack()" title="Descargar el seguimiento completo en JSON: este historial solo existe en este navegador">Exportar JSON</button>
         <button class="pt-btn pt-btn-danger" onclick="clearPatternTrack()">Limpiar</button>
       </div>
-      <div style="padding:6px 10px;font-size:9px;color:#aab3c1;border-bottom:1px solid #141e2e">
-        Resultados <b style="color:#eef2fa">NETOS</b> de comisión (taker 0,055% · maker 0,020%) y deslizamiento (0,010%) — en bruto este panel daba por buenas estrategias que pierden dinero.
-        Se resuelve con el <b style="color:#eef2fa">máximo y mínimo de cada vela</b>, no solo con el precio de cada ciclo, y si una vela contiene los dos niveles se supone que tocó el <b style="color:#eef2fa">stop</b>.
-        Cada ruptura genera <b style="color:#eef2fa">dos entradas</b>: una a mercado en la ruptura y una orden límite en el cuello (comisión maker). Y 3 estrategias de salida en paralelo sobre cada una:</div>
-      <div id="patt-variants" style="padding:6px 10px;border-bottom:1px solid #141e2e"><span class="lr-empty">Acumulando señales completadas…</span></div>
-      <div class="pt-section" title="La entrada en la ruptura solo se puede ejecutar a mercado (taker). Estas órdenes esperan a que el precio vuelva al cuello para entrar con comisión maker.">⏳ Órdenes límite esperando el retroceso al cuello</div>
-      <table class="pt-table">
-        <thead><tr><th>Símbolo</th><th>Patrón</th><th>Límite (cuello)</th><th>Actual</th><th>Falta</th><th>Objetivo</th><th>Stop</th><th>Caduca en</th></tr></thead>
-        <tbody id="patt-pending-body"><tr><td colspan="8" class="pt-empty">Sin órdenes esperando</td></tr></tbody>
-      </table>
-      <div class="pt-section">En seguimiento</div>
-      <table class="pt-table">
-        <thead><tr><th>Símbolo</th><th>Patrón</th><th>Entrada</th><th>Actual</th><th>Objetivo</th><th>Stop</th><th>Progreso</th><th>Tiempo</th></tr></thead>
-        <tbody id="patt-open-body"><tr><td colspan="8" class="pt-empty">Calculando...</td></tr></tbody>
-      </table>
-      <div class="pt-section">Completados</div>
-      <table class="pt-table">
-        <thead><tr><th>Símbolo</th><th>Patrón</th><th>Resultado</th><th>PnL neto</th><th>R</th><th>Duración</th></tr></thead>
-        <tbody id="patt-closed-body"><tr><td colspan="6" class="pt-empty">Sin patrones completados aún</td></tr></tbody>
-      </table>
+      <div class="lab-kpis">
+        <div class="lab-kpi" title="Cuánto gana o pierde de media cada operación, en múltiplos de lo que arriesga y ya con comisión. Es el número que dice si la estrategia gana: positivo gana, negativo pierde."><span>Expectativa</span><b id="patt-stat-r">—</b></div>
+        <div class="lab-kpi" title="Resultado medio por operación en % de precio, con comisión y deslizamiento"><span>Neto por operación</span><b id="patt-stat-pnl">—</b></div>
+        <div class="lab-kpi" title="Qué parte toca el objetivo. No es lo mismo que ganar: algunos objetivos están tan cerca que la comisión se come la ganancia."><span>Llegan al objetivo</span><b id="patt-stat-wr">—</b></div>
+        <div class="lab-kpi" title="Qué parte del riesgo de cada operación se lleva la comisión. Por encima del 15% la comisión decide el resultado."><span>Comisión sobre el riesgo</span><b id="patt-stat-fee">—</b></div>
+        <div class="lab-kpi"><span>Duración media</span><b id="patt-stat-time">—</b></div>
+        <div class="lab-kpi"><span>Terminadas</span><b id="patt-stat-total">0</b></div>
+        <div class="lab-kpi"><span>En seguimiento</span><b id="patt-stat-open">0</b></div>
+        <div class="lab-kpi" title="Órdenes límite puestas en el cuello, esperando el retroceso"><span>Esperando retroceso</span><b id="patt-stat-pending">0</b></div>
+      </div>
+      <div id="patt-variants" class="lab-cuadros"><span class="lr-empty">Acumulando operaciones terminadas…</span></div>
+      <div id="patt-notas" class="lab-nota"></div>
+      <div class="lab-listas">
+        <div class="lab-lista">
+          <div class="lab-lista-titulo">En seguimiento</div>
+          <div class="lab-lista-scroll"><table class="pt-table">
+            <thead><tr><th>Moneda</th><th>Patrón</th><th>Entrada</th><th>Actual</th><th>Objetivo</th><th>Stop</th><th>Progreso</th><th>Tiempo</th></tr></thead>
+            <tbody id="patt-open-body"><tr><td colspan="8" class="pt-empty">Calculando…</td></tr></tbody>
+          </table></div>
+        </div>
+        <div class="lab-lista">
+          <div class="lab-lista-titulo" title="La entrada en la ruptura solo se puede ejecutar a mercado. Estas órdenes esperan a que el precio vuelva al cuello para entrar con comisión maker.">Órdenes esperando el retroceso al cuello</div>
+          <div class="lab-lista-scroll"><table class="pt-table">
+            <thead><tr><th>Moneda</th><th>Patrón</th><th>Límite</th><th>Actual</th><th>Falta</th><th>Objetivo</th><th>Stop</th><th>Caduca en</th></tr></thead>
+            <tbody id="patt-pending-body"><tr><td colspan="8" class="pt-empty">Sin órdenes esperando</td></tr></tbody>
+          </table></div>
+        </div>
+        <div class="lab-lista">
+          <div class="lab-lista-titulo">Últimas terminadas</div>
+          <div class="lab-lista-scroll"><table class="pt-table">
+            <thead><tr><th>Moneda</th><th>Patrón</th><th>Resultado</th><th>Neto</th><th>R</th><th>Duración</th></tr></thead>
+            <tbody id="patt-closed-body"><tr><td colspan="6" class="pt-empty">Sin operaciones terminadas aún</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+      <details class="lab-plegable">
+        <summary>Cómo se mide</summary>
+        <p>Cada ruptura genera dos entradas: una a mercado en la ruptura y una orden límite en el cuello. Los resultados ya descuentan comisión (taker 0,055%, maker 0,020%) y deslizamiento (0,010%). Cada operación se resuelve con el máximo y el mínimo de cada vela; si una vela contiene los dos niveles, se supone que tocó el stop.</p>
+        <p>R es lo que se arriesga en la operación: +1 R es ganar lo mismo que se arriesgaba. Cada temporalidad tiene un plazo máximo: 24 h en 15m, 3 días en 1h y 7 días en 4h.</p>
+      </details>
     </div>
-  </div>
+    <details id="lab-backtest" class="lab-panel lab-plegable">
+      <summary>Probar en el histórico (replay)</summary>
+      <div class="lab-replay">
+        <select id="bt-window" class="lab-filter-sel">
+          <option value="1">Últimas 24h</option>
+          <option value="3">3 días</option>
+          <option value="7" selected>7 días</option>
+          <option value="14">14 días</option>
+        </select>
+        <select id="bt-scope" class="lab-filter-sel">
+          <option value="top" selected>Top 30 por liquidez</option>
+          <option value="favs">Favoritos + seguimiento</option>
+        </select>
+        <button class="pt-btn" onclick="runBacktest()">Ejecutar replay</button>
+        <span id="bt-status" class="lab-texto"></span>
+      </div>
+      <div id="bt-results"><span class="lr-empty">Compara el patrón W/M con una ruptura de canal simple, sobre el histórico que guarda el servidor. Elige la ventana y ejecuta.</span></div>
+    </details>
+  </section>
 
-  <div id="lab-macd">
-    <div class="pt-header">
-      <span class="pt-title">🧪 Paper trading MACD — prueba ajustes en paralelo</span>
-      <button class="pt-btn mp-nueva" onclick="paperAbrirForm()">＋ Nueva variante</button>
-      <button class="pt-btn" onclick="paperExportar()" title="Descargar variantes, totales y operaciones en JSON">Exportar JSON</button>
+  <section id="lab-sec-macd" class="lab-sec" role="tabpanel">
+    <div id="lab-macd" class="lab-panel">
+      <div class="pt-header">
+        <span class="pt-title">MACD: prueba ajustes en paralelo</span>
+        <button class="pt-btn mp-nueva" onclick="paperAbrirForm()">＋ Nueva variante</button>
+        <button class="pt-btn" onclick="paperExportar()" title="Descargar variantes, totales y operaciones en JSON">Exportar JSON</button>
+      </div>
+      <div id="mp-form" hidden></div>
+      <div id="mp-cuerpo"><span class="lr-empty">Calculando el MACD de las monedas…</span></div>
     </div>
-    <div id="mp-form" hidden></div>
-    <div id="mp-cuerpo"><span class="lr-empty">Calculando el MACD de las monedas…</span></div>
-  </div>
+  </section>
 
-  <div id="lab-backtest">
-    <div class="lab-conf-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>⏪ Replay — backtest sobre los snapshots del servidor (5 min)</span>
-      <select id="bt-window" class="lab-filter-sel">
-        <option value="1">Últimas 24h</option>
-        <option value="3">3 días</option>
-        <option value="7" selected>7 días</option>
-        <option value="14">14 días</option>
-      </select>
-      <select id="bt-scope" class="lab-filter-sel">
-        <option value="top" selected>Top 30 por liquidez</option>
-        <option value="favs">Favoritos + seguimiento</option>
-      </select>
-      <button class="pt-btn" onclick="runBacktest()">▶ Ejecutar replay</button>
-      <span id="bt-status" style="font-size:9px;color:#aab3c1"></span>
+  <section id="lab-sec-senales" class="lab-sec" role="tabpanel">
+    <div id="lab-regime" class="lab-panel">
+      <div id="lab-regime-badge">CALCULANDO</div>
+      <div id="lab-regime-stats">Esperando datos…</div>
+      <div id="lab-regime-dist"></div>
     </div>
-    <div id="bt-results"><span class="lr-empty">Evalúa el patrón W/M (ruptura de cuello) contra una línea base Donchian sobre el histórico que guarda el servidor — elige ventana y ejecuta.</span></div>
-  </div>
+    <div id="lab-signals" class="lab-panel">
+      <div class="pt-header">
+        <span class="pt-title">Monedas en las que coinciden 2 estrategias o más</span>
+        <span class="lab-texto lab-a-la-derecha">Haz clic en una para abrir su gráfico</span>
+      </div>
+      <div id="lab-signals-grid"><span class="lr-empty">Calculando…</span></div>
+      <div class="lab-nota">El acierto que se muestra sale del Comparador, medido a 1 h y sin comisión. Todavía son pocas horas de mercado: sirve para ordenar, no para confiar en él.</div>
+    </div>
+    <div id="lab-lxr" class="lab-panel">
+      <div class="pt-header"><span class="pt-title">Reversión tras una cascada de liquidaciones (LXR)</span></div>
+      <div id="lxr-list"></div>
+    </div>
+  </section>
 
+  <section id="lab-sec-comparador" class="lab-sec" role="tabpanel">
+    <div id="lab-strat-compare" class="lab-panel">
+      <div class="pt-header">
+        <span class="pt-title">Comparador: ¿alguna estrategia gana después de comisión?</span>
+        <select id="strat-regime-filter" class="lab-filter-sel lab-a-la-derecha" onchange="stratRegimeFilter = this.value; renderStrategyCompare(); renderLabResumen()" aria-label="Filtrar por régimen de mercado">
+          <option value="ALL">Todos los regímenes</option>
+          <option value="ALCISTA">Solo alcista</option>
+          <option value="BAJISTA">Solo bajista</option>
+          <option value="VOLÁTIL">Solo volátil</option>
+          <option value="LATERAL">Solo lateral</option>
+        </select>
+        <button class="pt-btn pt-btn-danger" onclick="clearStratSignals()">Limpiar</button>
+      </div>
+      <div class="lab-nota">Cada señal se mide 1 hora después. <b>Bruto</b> es lo que se movió el precio a favor; <b>neto</b> le resta 0,13% de comisión de ida y vuelta, sin apalancamiento. No hay veredicto hasta medir 48 horas de mercado distintas: con menos, el resultado solo dice si esas horas subieron o bajaron.</div>
+      <div class="lab-lista-scroll lab-sin-tope"><table class="pt-table">
+        <thead><tr><th>Estrategia</th><th>Veredicto</th><th>Neto a 1 h</th><th>Bruto a 1 h</th><th>Acierto a 1 h</th><th>Neto a 30 min</th><th>Horas medidas</th><th>Señales medidas</th></tr></thead>
+        <tbody id="sc-body"><tr><td colspan="8" class="pt-empty">Acumulando señales…</td></tr></tbody>
+      </table></div>
+      <div class="lab-nota lab-nota-final">Retiradas: Rotación sectorial, Ballenas, Beta rezagada, Saludable y Outlier real, porque perdían; Prometedoras y Squeeze, porque no daban señales.</div>
+    </div>
+  </section>
 </div>
 
 <div id="liq-bar">
@@ -359,18 +356,18 @@
 <!-- ── Módulos JS (el orden importa: main.js arranca la app y va al final) ── -->
 <script src="/lxr.js?v=8"></script>
 <script src="/radar.js?v=23"></script>
-<script src="/core.js?v=41"></script>
+<script src="/core.js?v=42"></script>
 <script src="/screener.js?v=30"></script>
 <script src="/map.js?v=15"></script>
 <script src="/patterns.js?v=21"></script>
 <script src="/detail.js?v=24"></script>
 <script src="/smc.js?v=6"></script>
-<script src="/btc.js?v=28"></script>
-<script src="/lab.js?v=24"></script>
-<script src="/track.js?v=18"></script>
+<script src="/btc.js?v=29"></script>
+<script src="/lab.js?v=27"></script>
+<script src="/track.js?v=19"></script>
 <script src="/backtest.js?v=9"></script>
-<script src="/macd.js?v=8"></script>
-<script src="/macdpaper.js?v=1"></script>
+<script src="/macd.js?v=9"></script>
+<script src="/macdpaper.js?v=2"></script>
 <script src="/olas.js?v=3"></script>
 <script src="/brief.js?v=6"></script>
 <script src="/main.js?v=19"></script>

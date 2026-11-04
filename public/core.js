@@ -796,12 +796,16 @@ function saveAutoTracked() {
 // Cada vez que un símbolo entra al Top-4 de una estrategia se registra como
 // "señal" con su precio de entrada; 30min/1h después se evalúa si el precio
 // se movió a favor, y así se mide qué estrategia acierta más en la práctica.
+// Estrategias retiradas: perdían después de comisión en los dos historiales del usuario,
+// o no llegaron a dar ninguna señal. Sus señales viejas se purgan para no gastar plazas
+// del buffer: cada una ocupada por una estrategia muerta expulsa una señal viva antes de
+// que llegue a evaluarse a 1h. Saludable sola llenaba el 30%.
+const STRAT_RETIRADAS = new Set(['indConf', 'sector', 'whale', 'beta', 'health', 'promising', 'squeeze', 'outlier']);
 let stratSignals    = JSON.parse(localStorage.getItem('scalp_stratsig') || '[]')
-  // 'indConf' (Confluencia de indicadores RSI/MACD/ADX/TSI) se retiró: no dio
-  // resultados. Sus señales viejas se purgan para no gastar slots del buffer
-  // FIFO — cada slot ocupado por una estrategia muerta es una señal viva que
-  // se desaloja antes de poder evaluarse a 1h.
-  .filter(s => s.strategy !== 'indConf');
+  .filter(s => !STRAT_RETIRADAS.has(s.strategy));
+// El bot de paper trading se retiró: el 95% de sus salidas eran por caída de score, a los
+// pocos minutos, así que solo medía comisión; y sus registros crecían sin límite (1,6 MB).
+try { localStorage.removeItem('scalp_pt'); localStorage.removeItem('scalp_pt2'); } catch (_) { /* nada que limpiar */ }
 let activeStratPick = new Map(); // 'estrategia|símbolo|lado' → true mientras siga en el Top
 let activePanelPick = new Map(); // igual pero para detecciones de paneles (confluencia/salud/potencial)
 // 3000 alcanzaba de sobra cuando el registro solo corría con el Lab abierto;
@@ -810,11 +814,8 @@ let activePanelPick = new Map(); // igual pero para detecciones de paneles (conf
 // su evaluación de 1h antes de ser desalojadas del buffer FIFO.
 const STRAT_SIG_MAX = 8000;
 const STRAT_NAMES   = { cur: 'Actual', pct: 'Percentil', reg: 'Régimen', z: 'Z-Score',
-  range: 'Ruptura rango', liq: 'Cascada liq.', sector: 'Rotación sectorial', whale: 'Ballenas',
-  beta: 'Beta rezagada', alpha: 'Alpha propio',
-  confluence: 'Confluencia', health: 'Saludable', promising: 'Prometedoras (heat)',
+  range: 'Ruptura rango', liq: 'Cascada liq.', alpha: 'Alpha propio', confluence: 'Confluencia',
   patternWM: 'Patrón W/M 15m', patternWM1h: 'Patrón W/M 1h', patternWM4h: 'Patrón W/M 4h',
-  squeeze: 'Squeeze/Acum. (potencial)', outlier: 'Outlier real',
   momentum: 'Momentum confirmado (5%/10%)' };
 let stratRegimeFilter = 'ALL'; // 'ALL' | 'ALCISTA' | 'BAJISTA' | 'VOLÁTIL' | 'LATERAL'
 let quadrantHistory  = new Map(); // symbol → [{q,ts}] últimas 8 entradas

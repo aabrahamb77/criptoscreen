@@ -14,8 +14,10 @@
  *   · Con entrada límite la orden se pone en el cierre de la señal y vale una vela.
  *     Si el precio no la cruza, esa señal no se opera. En la vela en que se llena solo
  *     cuenta lo malo (stop, liquidación), porque no se sabe qué pasó antes.
- *   · Si en una vela caben stop y objetivo se supone lo peor, el stop. Si el precio
- *     abre más allá del stop, se sale a esa apertura.
+ *   · Si en una vela caben stop y objetivo se supone lo peor, el stop. En 15m antes se
+ *     miran sus velas de 5m para ver cuál tocó primero: suponer siempre lo peor marcaba
+ *     −1,64 por operación donde las velas de 1m dan −1,17. Si el precio abre más allá
+ *     del stop, se sale a esa apertura.
  *   · Sin stop, la operación llega hasta el objetivo o la liquidación (se pierde todo
  *     el margen), con un plazo de 7 días.
  *   · Una operación por moneda y variante, como en una cuenta real: una señal con
@@ -24,10 +26,10 @@
  * Cada operación usa $100 de margen, así que +$5 equivale a +5% sobre margen. No
  * incluye funding, que pesa poco en operaciones cortas pero sí en las de varios días.
  *
- * Corre en el navegador: solo con el screener abierto. Al volver, recupera señales
- * de hasta 80 velas (6,7h en 5m, 20h en 15m) y sigue las operaciones abiertas con
- * las 200 descargadas (16,7h, 50h). Si faltan velas más antiguas no se puede saber qué
- * pasó: esas operaciones se anulan en lugar de inventar un resultado.
+ * Corre en el navegador: solo avanza con el screener abierto, pero al volver pide las
+ * velas que faltan, hasta 1000: recupera señales y resuelve las operaciones abiertas de
+ * hasta 3 días en 5m y 9 en 15m. Si faltan más no se puede saber qué pasó: esas
+ * operaciones se anulan en lugar de inventar un resultado.
  *
  * Se guardan totales, una serie por horas y las últimas operaciones, no la lista
  * entera: los seguimientos por lista se recortaban solos al llenarse el almacenamiento.
@@ -44,6 +46,7 @@ const PAPER_BASE = {
   tf: '5m', dir: 'ambas', lev: 10, tp: 5, sl: 0, cruce: true, entrada: 'mercado',
   taker: 0.055, maker: 0.02, fast: MACD_FAST, slow: MACD_SLOW, signal: MACD_SIGNAL, azar: false,
 };
+const PAPER_FORM = { ...PAPER_BASE, sl: 5, cruce: false };   // una variante nueva parte de la regla con su stop
 const PAPER_MOTIVO = { T: '🎯 objetivo', P: '🛑 stop', C: 'cruce', X: '💀 liquidada', H: 'plazo' };
 
 const _paperR = v => Math.round(v * 1e4) / 1e4;
@@ -62,16 +65,16 @@ function _paperNueva(nombre, cfg) {
   };
 }
 
-// De partida: la regla del usuario, dos stops de referencia y un control. El control
-// entra en las mismas señales con dirección al azar: si una variante no le gana, la
-// señal no está aportando nada.
+// De partida: la regla del usuario con su stop, otras salidas de referencia y un control.
+// El control entra en las mismas señales con dirección al azar: si una variante no le
+// gana, la señal no está aportando nada.
 const _paperIniciales = () => [
-  ['5m · 5% o cruce', { tf: '5m', cruce: true }],
   ['5m · 5% con stop 5%', { tf: '5m', sl: 5, cruce: false }],
+  ['5m · 5% o cruce', { tf: '5m', cruce: true }],
   ['5m · 5% sin stop', { tf: '5m', cruce: false }],
   ['5m · control al azar', { tf: '5m', cruce: true, azar: true }],
-  ['15m · 5% o cruce', { tf: '15m', cruce: true }],
   ['15m · 5% con stop 5%', { tf: '15m', sl: 5, cruce: false }],
+  ['15m · 5% o cruce', { tf: '15m', cruce: true }],
   ['15m · 5% sin stop', { tf: '15m', cruce: false }],
 ].map(([n, c]) => _paperNueva(n, c));
 
@@ -139,6 +142,22 @@ function _paperCerrar(v, t, ts, px, motivo) {
   _paperSerie(v, ts, neto);
 }
 
+// Stop y objetivo caben en la vela: ¿tocó antes el objetivo? Se mira en las velas de 5m de
+// esa moneda. Sin ellas, o si en una de 5m también caben los dos, se supone que no.
+function _paperObjetivoAntes(t, inicio, ms, stop, objetivo) {
+  const d5 = _macdData.get(t.s + '|5m');
+  if (!d5 || !d5.n) return false;
+  let a = 0, b = d5.n;
+  while (a < b) { const k = (a + b) >> 1; if (d5.t[k] < inicio) a = k + 1; else b = k; }
+  for (let k = a; k < d5.n && d5.t[k] < inicio + ms; k++) {
+    const fav = t.d > 0 ? (d5.h[k] / t.e - 1) * 100 : (1 - d5.l[k] / t.e) * 100;
+    const con = t.d > 0 ? (d5.l[k] / t.e - 1) * 100 : (1 - d5.h[k] / t.e) * 100;
+    if (con <= -stop) return false;
+    if (fav >= objetivo) return true;
+  }
+  return false;
+}
+
 // Qué le pasa a la operación en la vela i: { px, mo } si sale, o null.
 function _paperSalida(c, t, d, m, i, ms, recienLlenada) {
   const fav = t.d > 0 ? (d.h[i] / t.e - 1) * 100 : (1 - d.l[i] / t.e) * 100;
@@ -152,6 +171,9 @@ function _paperSalida(c, t, d, m, i, ms, recienLlenada) {
   const objetivo = c.tp > 0 ? c.tp / c.lev : 0;
 
   if (stop && stop < liq && con <= -stop) {
+    if (objetivo && !recienLlenada && fav >= objetivo && _paperObjetivoAntes(t, d.t[i], ms, stop, objetivo)) {
+      return { px: precio(objetivo), mo: 'T' };
+    }
     const px = precio(-stop);
     return { px: t.d > 0 ? Math.min(px, d.o[i]) : Math.max(px, d.o[i]), mo: 'P' };
   }
@@ -205,23 +227,19 @@ function _paperCorrer(v, sym, d, inicio) {
   for (let i = Math.max(1, inicio); i < d.n; i++) _paperVela(v, sym, d, m, i, ms, i >= d.desde);
 }
 
-function _paperAnular(v, sym) {
-  for (const t of v.abiertas.filter(x => x.s === sym)) {
-    if (!t.pend) v.tot.anuladas++;
-    v.abiertas.splice(v.abiertas.indexOf(t), 1);
-  }
-}
-
 // Desde macd.js con las velas nuevas de una moneda.
 function paperProcesar(sym, tf, d, marca) {
+  const ms = MACD_TF[tf].ms;
   let inicio = 1;
   while (inicio < d.n && d.t[inicio] <= marca) inicio++;
-  // Entre la marca y la vela más antigua disponible falta un trozo: lo que le pasó a
-  // la operación abierta en ese hueco no se puede saber.
-  const hueco = marca > 0 && d.t[0] > marca + MACD_TF[tf].ms;
   for (const v of _macdStore.variantes) {
     if (v.cfg.tf !== tf) continue;
-    if (hueco) _paperAnular(v, sym);
+    // Si entre lo último visto de la operación y la vela más antigua disponible falta un
+    // trozo, lo que le pasó en ese hueco no se puede saber.
+    for (const t of v.abiertas.filter(x => x.s === sym && d.t[0] > Math.max(marca, x.ts) + ms)) {
+      if (!t.pend) v.tot.anuladas++;
+      v.abiertas.splice(v.abiertas.indexOf(t), 1);
+    }
     _paperCorrer(v, sym, d, inicio);
   }
 }
@@ -417,7 +435,7 @@ function renderMacdPanel() {
   const precios = _paperPrecios();
   const sel = vs.find(v => v.id === _macdStore.sel) || vs[0];
   el.innerHTML = `
-    <div class="mp-nota">Cada operación usa <b>$${PAPER_MARGEN} de margen</b> (+$5 = +5%), con comisión descontada y sin funding. Para ajustar, pulsa <b>✏️</b>: cambias lo que quieras y se crea otra variante, con la original corriendo al lado. Arrancan con las últimas 80 velas (6,7h en 5m, 20h en 15m) y siguen en vivo, <b>solo con el screener abierto</b>. Haz clic en una fila para ver sus operaciones.</div>
+    <div class="mp-nota">Cada operación usa <b>$${PAPER_MARGEN} de margen</b> (+$5 = +5%), con comisión descontada y sin funding. Para ajustar, pulsa <b>✏️</b>: cambias lo que quieras y se crea otra variante, con la original corriendo al lado. Arrancan con las últimas 80 velas (6,7h en 5m, 20h en 15m) y siguen en vivo. Si cierras el screener, al volver recupera hasta <b>3 días en 5m y 9 en 15m</b>. Haz clic en una fila para ver sus operaciones.</div>
     <table class="pt-table mp-tabla">
       <thead><tr><th>Variante</th><th>Ops</th><th>Acierto</th><th>Hace falta</th><th>Neto por op.</th><th>Acumulado</th><th>Caída máx.</th><th>Abiertas</th><th>Flotante</th><th>Curva</th><th></th></tr></thead>
       <tbody>${vs.map(v => _paperFila(v, v === sel, precios)).join('')}</tbody>
@@ -458,7 +476,7 @@ function paperAbrirForm(id) {
   const el = document.getElementById('mp-form');
   if (!el) return;
   const origen = id ? _macdStore.variantes.find(x => x.id === id) : null;
-  const c = origen ? origen.cfg : PAPER_BASE;
+  const c = origen ? origen.cfg : PAPER_FORM;
   const opcion = (valor, actual, texto) => `<option value="${valor}"${valor === actual ? ' selected' : ''}>${texto}</option>`;
   const numero = (campo, valor, texto, extra = '') => `<label>${texto}<input id="mp-f-${campo}" type="number" value="${valor}" oninput="paperActualizarAyuda()" ${extra}></label>`;
   el.hidden = false;

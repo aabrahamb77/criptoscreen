@@ -153,6 +153,7 @@ function clearStratSignals() {
 // `topFn(key, side)` es la misma función `top()` de renderLab — recibe los
 // símbolos que están en el Top-4 de cada estrategia/lado en este ciclo.
 function logPanelDetections(strategy, entries) {
+  if (!STRAT_NAMES[strategy]) return;   // retirada del Comparador: no ocupa plazas del buffer
   const now = Date.now();
   const regime = detectRegime(allRows).regime;
   const stillActive = new Set();
@@ -336,103 +337,77 @@ function evalStrategySignals() {
   }
 }
 
-function renderStrategyCompare() {
-  const grid = document.getElementById('sc-grid');
-  if (!grid) return;
-  const agg = (evals) => {
-    if (!evals.length) return null;
-    const hits = evals.filter(e => e.hit).length;
+// Comisión de ida y vuelta a mercado, en % de precio y sin apalancamiento.
+const COMP_COMISION  = 0.13;
+// Horas de mercado distintas antes de dar un veredicto. Las señales de una misma hora se
+// mueven juntas: 300 señales en 3 horas solo dicen si esas 3 horas subieron o bajaron. El
+// mismo historial daba +0,75 a una estrategia en un navegador y −0,43 en otro.
+const COMP_MIN_HORAS = 48;
+
+function compararEstrategias() {
+  const media = (lista, f) => lista.reduce((a, s) => a + f(s), 0) / lista.length;
+  const grupos = new Map(Object.keys(STRAT_NAMES).map(k => [k, []]));
+  for (const s of stratSignals) {
+    if (stratRegimeFilter !== 'ALL' && s.regime !== stratRegimeFilter) continue;
+    const g = grupos.get(s.strategy);
+    if (g) g.push(s);
+  }
+  return [...grupos].map(([key, sigs]) => {
+    const e30 = sigs.filter(s => s.eval30), e60 = sigs.filter(s => s.eval60);
+    const fila = {
+      key, nombre: STRAT_NAMES[key], n: e60.length, horas: 0, veredicto: 'sin',
+      neto: null, bruto: null, error: null, winRate: null,
+      neto30: e30.length ? media(e30, s => s.eval30.movePct) - COMP_COMISION : null,
+    };
+    if (!e60.length) return fila;
+    const bruto = media(e60, s => s.eval60.movePct);
+    const porHora = new Map();
+    for (const s of e60) {
+      const h = Math.floor(s.ts / 36e5), a = porHora.get(h) || [0, 0];
+      a[0] += s.eval60.movePct; a[1]++;
+      porHora.set(h, a);
+    }
+    let suma = 0;
+    for (const [, a] of porHora) suma += (a[0] - bruto * a[1]) ** 2;
+    const error = 1.96 * Math.sqrt(suma) / e60.length, neto = bruto - COMP_COMISION;
     return {
-      n: evals.length,
-      hits,
-      winRate: Math.round(hits / evals.length * 100),
-      avgMove: evals.reduce((a, e) => a + e.movePct, 0) / evals.length,
+      ...fila, bruto, neto, error, horas: porHora.size,
+      winRate: Math.round(e60.filter(s => s.eval60.hit).length / e60.length * 100),
+      veredicto: porHora.size < COMP_MIN_HORAS ? 'faltan' : neto - error > 0 ? 'gana' : neto + error < 0 ? 'pierde' : 'empate',
     };
-  };
-  const cards = Object.entries(STRAT_NAMES).map(([key, name]) => {
-    const sigs  = stratSignals.filter(s => s.strategy === key
-      && (stratRegimeFilter === 'ALL' || s.regime === stratRegimeFilter));
-    const s30   = agg(sigs.map(s => s.eval30).filter(Boolean));
-    const s60   = agg(sigs.map(s => s.eval60).filter(Boolean));
-    return { key, name, total: sigs.length, s30, s60 };
-  });
-  // "Más peso" = mejor límite INFERIOR del IC de Wilson a 1h con n suficiente —
-  // premia consistencia con muestra, no un 100% con 3 señales de suerte.
-  const ranked = cards.filter(c => c.s60 && c.s60.n >= WR_MIN_N)
-    .sort((a, b) => wilsonCI(b.s60.hits, b.s60.n).lo - wilsonCI(a.s60.hits, a.s60.n).lo);
-  const bestKey = ranked.length ? ranked[0].key : null;
-
-  // El Comparador como juez: estrategia sostenida (n≥30) con WR<48% a 1h se
-  // marca "candidata a eliminar" — la evidencia manda, no la intuición de
-  // que "podría servir en otro régimen".
-  const ELIMINATE_MIN_N = 30, ELIMINATE_WR = 48;
-  const isEliminate = c => c.s60 && c.s60.n >= ELIMINATE_MIN_N && c.s60.winRate < ELIMINATE_WR;
-
-  grid.innerHTML = cards.map(c => {
-    const row = (label, agg) => {
-      if (!agg) return `<div class="sc-row"><span>${label}</span><b>${stratRegimeFilter === 'ALL' ? 'esperando…' : 'sin señales en ' + stratRegimeFilter}</b></div>`;
-      const cls = agg.avgMove > 0 ? 'pos' : agg.avgMove < 0 ? 'neg' : '';
-      return `<div class="sc-row"><span>${label} (n=${agg.n})</span>
-        <span><b title="IC 95% (Wilson): ${wilsonCI(agg.hits, agg.n).lo.toFixed(0)}–${wilsonCI(agg.hits, agg.n).hi.toFixed(0)}%">${wrChip(agg.winRate, agg.n)}</b> · <span class="${cls}">${agg.avgMove >= 0 ? '+' : ''}${agg.avgMove.toFixed(2)}%</span></span></div>`;
-    };
-    const eliminate = isEliminate(c);
-    return `<div class="sc-card${c.key === bestKey ? ' sc-best' : ''}${eliminate ? ' sc-eliminate' : ''}">
-      <div class="sc-name">${c.key === bestKey ? '<span class="sc-crown">👑</span>' : ''}${c.name}<span style="margin-left:auto;font-size:9px;color:#9da6b5;font-weight:400">${c.total} señales</span>${eliminate ? `<span class="sc-eliminate-pill" title="WR&lt;${ELIMINATE_WR}% sostenido con n≥${ELIMINATE_MIN_N} a 1h">🗑 candidata a eliminar</span>` : ''}</div>
-      ${row('30 min', c.s30)}
-      ${row('1 h', c.s60)}
-    </div>`;
-  }).join('');
+  }).sort((a, b) => (b.neto ?? -Infinity) - (a.neto ?? -Infinity));
 }
 
-const HOUR_BUCKETS = [
-  { label: '00–04h', from: 0,  to: 4  },
-  { label: '04–08h', from: 4,  to: 8  },
-  { label: '08–12h', from: 8,  to: 12 },
-  { label: '12–16h', from: 12, to: 16 },
-  { label: '16–20h', from: 16, to: 20 },
-  { label: '20–24h', from: 20, to: 24 },
-];
-const HOUR_MIN_SIGNALS = 3;
-
-// Agrupa las señales del Comparador (ya evaluadas a 1h) por la hora local en la
-// que se generó la señal, para detectar franjas horarias con mejor win rate.
-function renderHourAnalysis() {
-  const grid = document.getElementById('ha-grid');
-  if (!grid) return;
-  const evaluated = stratSignals
-    .filter(s => s.eval60 && (stratRegimeFilter === 'ALL' || s.regime === stratRegimeFilter))
-    .map(s => ({ hour: new Date(s.ts).getHours(), ...s.eval60 }));
-
-  const buckets = HOUR_BUCKETS.map(b => {
-    const evals = evaluated.filter(e => e.hour >= b.from && e.hour < b.to);
-    if (evals.length < HOUR_MIN_SIGNALS) return { ...b, n: evals.length, winRate: null, avgMove: null };
-    const hits = evals.filter(e => e.hit).length;
-    const winRate = Math.round(hits / evals.length * 100);
-    const avgMove = evals.reduce((a, e) => a + e.movePct, 0) / evals.length;
-    return { ...b, n: evals.length, hits, winRate, avgMove };
-  });
-
-  const withData = buckets.filter(b => b.winRate != null);
-  if (!withData.length) {
-    grid.innerHTML = `<span class="sc-empty">Necesitas al menos ${HOUR_MIN_SIGNALS} señales evaluadas a 1h por franja — sigue dejando la app abierta.</span>`;
-    return;
-  }
-  const bestHour = [...withData].sort((a, b) => b.winRate - a.winRate)[0];
-
-  grid.innerHTML = buckets.map(b => {
-    if (b.winRate == null) {
-      return `<div class="ha-row">
-        <span class="ha-label">${b.label}</span>
-        <div class="ha-track"></div>
-        <span class="ha-meta">${b.n}/${HOUR_MIN_SIGNALS} señales — esperando…</span>
-      </div>`;
-    }
-    const isBest = b.label === bestHour.label;
-    const cls = b.avgMove > 0 ? 'pos' : b.avgMove < 0 ? 'neg' : '';
-    return `<div class="ha-row">
-      <span class="ha-label">${b.label}${isBest ? '<span class="ha-crown">👑</span>' : ''}</span>
-      <div class="ha-track"><div class="ha-bar${isBest ? ' ha-best' : ''}" style="width:${b.winRate}%"></div></div>
-      <span class="ha-meta"><b title="IC 95% (Wilson): ${wilsonCI(b.hits, b.n).lo.toFixed(0)}–${wilsonCI(b.hits, b.n).hi.toFixed(0)}%">${wrChip(b.winRate, b.n)} acierto</b> · <span class="${cls}">${b.avgMove >= 0 ? '+' : ''}${b.avgMove.toFixed(2)}%</span> (n=${b.n})</span>
-    </div>`;
+function renderStrategyCompare() {
+  const filas = compararEstrategias();
+  _labComparador = {
+    total: filas.length,
+    gana: filas.filter(f => f.veredicto === 'gana').length,
+    pierde: filas.filter(f => f.veredicto === 'pierde').length,
+    faltan: filas.filter(f => f.veredicto === 'faltan' || f.veredicto === 'sin').length,
+  };
+  const tbody = document.getElementById('sc-body');
+  if (!tbody) return;
+  const pct = v => (v == null ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}%`);
+  const color = v => (v == null ? '#d7dde8' : v > 0 ? '#2fe08a' : v < 0 ? '#ff6680' : '#d7dde8');
+  const VEREDICTO = {
+    gana:   ['Gana', '#2fe08a'],
+    pierde: ['Pierde', '#ff6680'],
+    empate: ['Sin ventaja clara', '#eef2fa'],
+    faltan: ['Faltan datos', '#ffd76a'],
+    sin:    ['Sin señales aún', '#d7dde8'],
+  };
+  tbody.innerHTML = filas.map(f => {
+    const [txt, col] = VEREDICTO[f.veredicto];
+    return `<tr>
+      <td class="pt-sym">${f.nombre}</td>
+      <td style="color:${col};font-weight:700">${txt}</td>
+      <td style="color:${color(f.neto)};font-weight:700" title="Con su margen de error al 95%, agrupando las señales por hora">${pct(f.neto)}${f.error != null ? ` <span style="font-weight:400;opacity:.75">±${f.error.toFixed(2)}</span>` : ''}</td>
+      <td>${pct(f.bruto)}</td>
+      <td>${f.n ? wrChip(f.winRate, f.n) : '—'}</td>
+      <td style="color:${color(f.neto30)}">${pct(f.neto30)}</td>
+      <td style="color:${f.horas >= COMP_MIN_HORAS ? '#d7dde8' : '#ffd76a'}">${f.horas} de ${COMP_MIN_HORAS}</td>
+      <td>${f.n}</td>
+    </tr>`;
   }).join('');
 }

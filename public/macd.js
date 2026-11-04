@@ -13,13 +13,16 @@
  * Cada etiqueta es el paso de un "cuadrante" a otro (MACD sobre/bajo la señal y
  * sobre/bajo 0), así que la última etiqueta dice en qué estado está la moneda.
  *
- * Objetivo: cobrar 5% a 10x, o sea 0,5% de precio. El usuario no definió stop. Lo
- * que dio medido en 100 monedas y un mes (5m): con objetivo o cruce contrario llega
- * el 44% (haría falta el 56%) y pierde −1,18% de margen por operación; sin stop
- * llega el 94% y pierde −1,29%, porque cada liquidación borra 24 ganadoras. Una
- * entrada al azar con la misma salida da lo mismo: la pérdida es casi toda la
- * comisión, que a 10x son 0,85-1,30% del margen en cada vuelta. Para ir ajustando
- * la estrategia, las operaciones viven en el paper trading (macdpaper.js).
+ * Objetivo: cobrar 5% a 10x, o sea 0,5% de precio, con stop de 5% (0,5% de precio).
+ *
+ * Ningún stop hace rentable esta señal. Medido en 200 monedas y 9 meses (215.000 señales
+ * en 5m, con examen sobre datos no usados para elegir): a favor de la señal el precio se
+ * mueve ~0% con cualquier horizonte, frente a 0,13% de comisión. Por eso cualquier stop,
+ * de 3% a 30%, pierde lo mismo por operación (−1,2 a −1,3% de margen en 5m): el stop
+ * reparte la pérdida, no la crea ni la quita. Se elige 5% porque, perdiendo igual,
+ * arriesga menos en cada operación que uno ancho, queda fuera del ruido de una vela
+ * (~1,8 ATR en 5m) y evita la liquidación, que es lo que hunde a "sin stop".
+ * Las operaciones viven en el paper trading (macdpaper.js).
  *
  * Aviso: el usuario quiere enterarse del cruce confirmado lo antes posible, así
  * que cada cierre llega por el WebSocket (kline.5 y kline.15 con confirm=true) y se
@@ -44,7 +47,9 @@ const MACD_TF = {
 };
 const MACD_LEV        = 10;     // apalancamiento con el que opera el usuario
 const MACD_TP_PCT     = 0.5;    // objetivo en precio: 5% de margen a 10x
+const MACD_SL_PCT     = 0.5;    // stop en precio: 5% de margen a 10x (ver la cabecera)
 const MACD_VELAS      = 200;
+const MACD_MAX_DESCARGA = 1000;  // lo máximo que da Bybit de una vez
 const MACD_WARMUP     = 120;    // antes de esta vela el EMA aún arrastra su valor inicial
 const MACD_MIN_VELAS  = 70;     // moneda recién listada: menos que esto no da un MACD fiable
 const MACD_MARGEN_MS  = 6_000;  // tras el cierre, tiempo que tiene el WebSocket antes de descargar
@@ -55,7 +60,7 @@ const MACD_MAX_LOTE   = 120;    // peticiones como mucho por tanda
 const MACD_REVISAR_MS = 2_000;  // cada cuánto se mira si ha cerrado una vela (en 5m importa)
 const MACD_FRESCA     = 3;      // velas que una L/S sigue en la tira
 const MACD_STRIP_MAX  = 16;
-const MACD_MARCA_MAX_MS = 3 * 864e5; // más que la ventana de 15m (200 velas = 50h)
+const MACD_MARCA_MAX_MS = 10 * 864e5; // más que lo que se puede recuperar (1000 velas de 15m)
 const MACD_AVISO_MAX_MS = 3 * 60_000; // no avisar de una vela cerrada hace más de esto
 
 // Se opera lo que el usuario opera: L y S. Los PB y las flechas se ven, no se siguen.
@@ -199,11 +204,22 @@ function _macdVelaConfirmada(sym, tf, v) {
   if (!_macdRafaga) _macdRafaga = setTimeout(() => { _macdRafaga = null; _macdTrasLote(); }, MACD_RAFAGA_MS);
 }
 
+// Con la pestaña cerrada más de lo que cubren 200 velas se piden las que falten, para
+// recuperar las señales del hueco y resolver las operaciones abiertas con lo que pasó de
+// verdad. Anularlas sesgaría el resultado: las que quedan abiertas suelen ser las que
+// van perdiendo. La serie vuelve a su tamaño en el siguiente cierre.
+function _macdVelasAPedir(key, tf, now) {
+  const marca = _macdStore.marcas[key] || 0;
+  if (!marca) return MACD_VELAS;
+  const faltan = Math.ceil((now - marca) / MACD_TF[tf].ms) + MACD_WARMUP + 1;
+  return Math.min(MACD_MAX_DESCARGA, Math.max(MACD_VELAS, faltan));
+}
+
 async function _macdPedir(sym, tf) {
   const key = sym + '|' + tf, fetchedAt = Date.now();
   _macdEnVuelo.add(key);
   try {
-    const r = await bybitGet(`/v5/market/kline?category=linear&symbol=${sym}USDT&interval=${MACD_TF[tf].api}&limit=${MACD_VELAS}`);
+    const r = await bybitGet(`/v5/market/kline?category=linear&symbol=${sym}USDT&interval=${MACD_TF[tf].api}&limit=${_macdVelasAPedir(key, tf, fetchedAt)}`);
     const list = r && r.result && r.result.list;
     if (list && list.length) { _macdIngerir(sym, tf, list, fetchedAt); _macdFallo.delete(key); }
     else _macdFallo.set(key, Date.now() + 120_000);
@@ -309,6 +325,12 @@ function _macdProcesar(sym, tf, d) {
   _macdSucio = true;
 }
 
+// Precio, objetivo y stop de una señal, para el aviso, la tira y el detalle.
+function _macdNiveles(px, dir) {
+  const a = px * (1 + dir * MACD_TP_PCT / 100), b = px * (1 - dir * MACD_SL_PCT / 100);
+  return `entrada ${fmtPrice(px)} · objetivo ${fmtPrice(a)} · stop ${fmtPrice(b)} (±5% a ${MACD_LEV}x)`;
+}
+
 function _macdTrasLote() {
   const now = Date.now();
   for (const k of Object.keys(_macdStore.marcas)) {
@@ -332,7 +354,7 @@ function _macdTrasLote() {
     playAlertSound(MACD_TF[tf].cat, dir);
     const uno = L.length + S.length === 1 ? (L[0] || S[0]) : null;
     notifyDesktop(`📊 MACD ${tf}: cruce confirmado`,
-      uno ? `${txt} · precio ${fmtPrice(uno.px)} · objetivo ${fmtPrice(uno.px * (1 + (L.length ? 1 : -1) * MACD_TP_PCT / 100))} (5% a ${MACD_LEV}x)` : txt);
+      uno ? `${txt} · ${_macdNiveles(uno.px, L.length ? 1 : -1)}` : txt);
   }
 }
 
@@ -398,16 +420,18 @@ function _macdMargen(tipo, ref, precio) {
   return (MACD_ENTRADAS[tipo] || 1) * (precio / ref - 1) * 100 * MACD_LEV;
 }
 
-// Si la señal ya cobró ('T') o el MACD se dio la vuelta antes ('C'). Sale de las
-// velas: no depende de ninguna variante del paper trading, que se pueden borrar.
+// Si la señal ya cobró ('T') o saltó el stop ('P'), lo que antes ocurra. Si caben los dos
+// en una vela se supone el stop, igual que en el paper trading. Sale de las velas: no
+// depende de ninguna variante, que se pueden borrar.
 function _macdOperacion(sym, tf, ls) {
   const d = _macdData.get(sym + '|' + tf);
   if (!d || !d.m) return null;
-  const dir = MACD_ENTRADAS[ls.tipo], h = d.m.hist;
+  const dir = MACD_ENTRADAS[ls.tipo];
   for (let j = ls.i + 1; j < d.n; j++) {
     const fav = dir > 0 ? (d.h[j] / ls.ref - 1) * 100 : (1 - d.l[j] / ls.ref) * 100;
+    const con = dir > 0 ? (d.l[j] / ls.ref - 1) * 100 : (1 - d.h[j] / ls.ref) * 100;
+    if (con <= -MACD_SL_PCT) return 'P';
     if (fav >= MACD_TP_PCT) return 'T';
-    if (dir > 0 ? h[j - 1] >= 0 && h[j] < 0 : h[j - 1] <= 0 && h[j] > 0) return 'C';
   }
   return null;
 }
@@ -417,7 +441,7 @@ function _macdHace(ms) { return ms < 60_000 ? 'ahora' : patAgo(ms).replace('hace
 
 function _macdTextoMargen(tipo, ref, precio, resultado) {
   if (resultado === 'T') return `<b style="color:#2fe08a" title="Ya tocó el objetivo: entrar ahora sería llegar tarde">🎯 cobrada</b>`;
-  if (resultado === 'C') return `<span style="color:#c8d0dc" title="El MACD ya se dio la vuelta sin llegar al objetivo">cruce</span>`;
+  if (resultado === 'P') return `<b style="color:#ff6680" title="Ya tocó el stop antes que el objetivo">🛑 stop</b>`;
   const m = _macdMargen(tipo, ref, precio);
   return m == null ? '' : `<span style="color:${m >= 0 ? '#2fe08a' : '#ff6680'}">${m >= 0 ? '+' : ''}${m.toFixed(1)}%</span>`;
 }
@@ -451,7 +475,7 @@ function renderMacdStrip(rows) {
     const esL = ls.tipo === 'L';
     const op = _macdOperacion(r.symbol, tf, ls);
     const recien = ls.velas === 0;
-    return `<span class="pat-chip${recien ? ' pat-breaking' : ''}" onclick="openDetail('${r.symbol}','${tf}')" title="${r.symbol}: ${esL ? 'cruce al alza por ENCIMA de 0 (long)' : 'cruce a la baja por DEBAJO de 0 (short)'} en ${tf} · cerró ${patAgo(Date.now() - ls.cierre)} · entrada de referencia ${fmtPrice(ls.ref)} · objetivo ${fmtPrice(ls.ref * (1 + (esL ? 1 : -1) * MACD_TP_PCT / 100))} (5% a ${MACD_LEV}x). El % es sobre margen a ${MACD_LEV}x.">
+    return `<span class="pat-chip${recien ? ' pat-breaking' : ''}" onclick="openDetail('${r.symbol}','${tf}')" title="${r.symbol}: ${esL ? 'cruce al alza por ENCIMA de 0 (long)' : 'cruce a la baja por DEBAJO de 0 (short)'} en ${tf} · cerró ${patAgo(Date.now() - ls.cierre)} · ${_macdNiveles(ls.ref, esL ? 1 : -1)}. El % es sobre margen a ${MACD_LEV}x.">
       ${recien ? '🔴 ' : ''}${r.symbol} <b style="color:${esL ? '#2fe08a' : '#ff6680'}">${ls.tipo}</b>
       <span style="color:#c8d0dc">${_macdHace(Date.now() - ls.cierre)}</span>
       ${_macdTextoMargen(ls.tipo, ls.ref, r.price, op)}
@@ -476,7 +500,7 @@ function macdSeccionDetalle(row) {
     if (!r) return `<div class="dt-row"><span>${tf}</span><b style="color:#c8d0dc">cargando…</b></div>`;
     const ls = r.ultimaLS;
     const m = ls ? _macdMargen(ls.tipo, ls.ref, row.price) : null;
-    return `<div class="dt-row"><span>${tf}</span><b style="color:${MACD_ESTADO_COL[r.estado]}">${MACD_ESTADO_TXT[r.estado]}${ls ? ` · ${ls.tipo} ${patAgo(Date.now() - ls.cierre)}` : ''}${m == null ? '' : ` · ${m >= 0 ? '+' : ''}${m.toFixed(1)}% a ${MACD_LEV}x`}</b></div>`;
+    return `<div class="dt-row"><span>${tf}</span><b style="color:${MACD_ESTADO_COL[r.estado]}">${MACD_ESTADO_TXT[r.estado]}${ls ? ` · ${ls.tipo} ${patAgo(Date.now() - ls.cierre)}` : ''}${m == null ? '' : ` · ${m >= 0 ? '+' : ''}${m.toFixed(1)}% a ${MACD_LEV}x`}</b></div>${ls ? `<div class="dt-row"><span></span><b style="font-weight:400">${_macdNiveles(ls.ref, MACD_ENTRADAS[ls.tipo])}</b></div>` : ''}`;
   }).join('');
   return `<div class="dt-section"><div class="dt-sec-title">📊 MACD 15·26·34 (velas cerradas)</div>${filas}</div>`;
 }

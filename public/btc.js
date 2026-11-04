@@ -947,6 +947,7 @@ function btcFibLevels(k, s0, s1) {
 // dentro), igual que el patrón ya usado para el cambio de sesgo (btcBias).
 let _btcInGoldenZone = false;
 function btcCheckFibZone() {
+  const fp = fmtPrice;
   const row = allRows.find(r => r.symbol === 'BTC');
   const k = btcChartData();
   if (!row || !k || k.c.length < 10) { _btcInGoldenZone = false; return; }

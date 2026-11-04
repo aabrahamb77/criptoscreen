@@ -1,264 +1,75 @@
 /* public/lab.js
- * Laboratorio: bot de paper trading validado por el Comparador, estrategias
- * de scoring (percentil, régimen, z-score, ruptura, cascada, sector, ballenas,
- * beta, alpha), salud, señales accionables y renderLab().
+ * Laboratorio: navegación por secciones, seguimiento de patrones W/M, estrategias de
+ * scoring (percentil, régimen, z-score, ruptura, cascada, alpha), señales y renderLab().
  * Requiere core.js y screener.js cargados antes.
  */
 
-// ── Paper Trading Bot — SOLO estrategias validadas por el Comparador ───────
-// Antes había dos bots (confluencia genérica y alineado a régimen) que nunca
-// se conectaron con lo que el propio Comparador demostraba que funcionaba.
-// Este bot solo opera símbolos que salen en el Top de una estrategia que YA
-// probó WR≥BOT_MIN_WR% sostenido con n≥BOT_MIN_N señales evaluadas a 1h —
-// el mismo criterio (en positivo) que usa el Comparador para marcar
-// "candidata a eliminar". Sin evidencia suficiente, el bot simplemente no opera.
-const BOT_MIN_N  = 30;
-const BOT_MIN_WR = 55;
+// ── Navegación ──────────────────────────────────────────────────────────────
+// Una sección a la vez, y cada pestaña ya dice cómo va: se puede ver el estado de todo
+// sin moverse de donde se esté.
+const LAB_VISTAS = ['wm', 'macd', 'senales', 'comparador'];
+let labVista = (() => {
+  try { const v = localStorage.getItem('scalp_lab_vista'); return LAB_VISTAS.includes(v) ? v : 'wm'; } catch (_) { return 'wm'; }
+})();
+let _labWM = null, _labSenales = null, _labComparador = null;
 
-const PT = { maxPos: 5, timeout: 4 * 3600_000 };
+function _labAplicarVista() {
+  for (const v of LAB_VISTAS) {
+    const activa = v === labVista;
+    document.getElementById('lab-sec-' + v)?.classList.toggle('activa', activa);
+    const btn = document.getElementById('lab-nav-' + v);
+    if (btn) { btn.classList.toggle('activa', activa); btn.setAttribute('aria-selected', activa ? 'true' : 'false'); }
+  }
+}
+_labAplicarVista();
 
-let paperTrades = JSON.parse(localStorage.getItem('scalp_pt') || '[]');
+function setLabVista(v) {
+  if (!LAB_VISTAS.includes(v)) return;
+  labVista = v;
+  safeSetItem('scalp_lab_vista', v);
+  _labAplicarVista();
+  const caja = document.getElementById('lab-tab');
+  if (caja) caja.scrollTop = 0;
+}
 
-function savePT() { safeSetItem('scalp_pt', JSON.stringify(paperTrades)); }
-function ptOpen()   { return paperTrades.filter(t => t.status === 'open'); }
-function ptClosed() { return paperTrades.filter(t => t.status === 'closed'); }
+// Lo que cuenta cada pestaña.
+function renderLabResumen() {
+  const pon = (clave, dato, sub, col) => {
+    const d = document.getElementById(`ln-${clave}-dato`), s = document.getElementById(`ln-${clave}-sub`);
+    if (d) { d.textContent = dato; d.style.color = col || ''; }
+    if (s) s.textContent = sub;
+  };
+  const signo = (v, dec) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(dec)}`;
+  const colorDe = v => (v > 0 ? '#2fe08a' : v < 0 ? '#ff6680' : '');
+
+  if (_labWM) {
+    const { neto, n, abiertas } = _labWM;
+    pon('wm', neto == null ? 'Sin datos' : `${signo(neto, 2)}% por operación`, `de precio · ${n} terminadas · ${abiertas} abiertas`, neto == null ? '' : colorDe(neto));
+  }
+  if (typeof _macdStore !== 'undefined' && _macdStore.variantes) {
+    const vs = _macdStore.variantes;
+    const v = vs.find(x => x.id === _macdStore.sel) || vs[0];
+    if (!v) pon('macd', 'Sin variantes', 'Crea una para empezar');
+    else if (!v.tot.n) pon('macd', 'Sin datos', v.nombre);
+    else { const m = v.tot.neto / v.tot.n; pon('macd', `${signo(m, 2)}% por operación`, `de margen · ${v.nombre} · ${v.tot.n} terminadas`, colorDe(m)); }
+  }
+  if (_labSenales) {
+    const { n, l, s } = _labSenales;
+    pon('senales', n ? `${n} ${n === 1 ? 'moneda' : 'monedas'}` : 'Ninguna', n ? `${l} long · ${s} short` : 'Sin coincidencias ahora mismo');
+  }
+  if (_labComparador) {
+    const { total, gana, pierde, faltan } = _labComparador;
+    pon('comparador', `${gana} de ${total} ganan`, faltan ? `${faltan} aún sin datos suficientes` : `${pierde} pierden`, gana ? '#2fe08a' : '');
+  }
+}
 
 function fmtDur(ms) {
   const h = Math.floor(ms / 3600_000), m = Math.floor((ms % 3600_000) / 60_000);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-// Drawdown máximo (caída desde el pico de PnL acumulado) y racha de pérdidas
-// consecutivas más larga, recorriendo los trades cerrados en orden cronológico.
-function ptExtraStats(closed) {
-  if (!closed.length) return { maxDD: null, maxLossStreak: 0 };
-  let cum = 0, peak = 0, maxDD = 0;
-  let curStreak = 0, maxLossStreak = 0;
-  for (const t of closed) {
-    cum += (t.pnlUSD ?? 0);
-    if (cum > peak) peak = cum;
-    maxDD = Math.max(maxDD, peak - cum);
-    if ((t.pnlPct ?? 0) < 0) { curStreak++; maxLossStreak = Math.max(maxLossStreak, curStreak); }
-    else curStreak = 0;
-  }
-  return { maxDD, maxLossStreak };
-}
-
-function ptPnl(pos, currentPrice) {
-  const dir = pos.direction === 'L' ? 1 : -1;
-  return dir * (currentPrice - pos.entryPrice) / pos.entryPrice * 100;
-}
-
-function closePT(trade, reason, currentPrice) {
-  trade.exitPrice  = currentPrice;
-  trade.exitTime   = Date.now();
-  trade.exitReason = reason;
-  trade.pnlPct     = ptPnl(trade, currentPrice);
-  trade.pnlUSD     = trade.pnlPct / 100 * 100;
-  trade.status     = 'closed';
-  savePT();
-}
-
-// Las 10 estrategias core de scoring por símbolo, más 'confluence' y 'health'
-// — estas dos ERAN paneles agregados sin estructura por símbolo+lado, pero
-// resultaron ser las de MEJOR evidencia real (Confluencia ~62% WR, Saludable
-// ~56% WR a 1h) así que se les da la misma estructura {l,s} más abajo en
-// renderLab() para que el bot pueda operarlas igual que cualquier estrategia
-// core. 'promising'/'patternWM'/'squeeze' quedan fuera: su evidencia actual
-// no lo justifica (WR≈48% o menos) — no es limitación técnica, es la evidencia.
-const BOT_STRAT_KEYS = ['cur', 'pct', 'reg', 'z', 'range', 'liq', 'sector', 'whale', 'beta', 'alpha', 'confluence', 'health'];
-
-// Estrategias con evidencia real suficiente AHORA MISMO (Wilson, misma fuente
-// que el Comparador): n≥BOT_MIN_N señales evaluadas a 1h y WR≥BOT_MIN_WR%.
-// `strategyEvidence()` se define más abajo junto a renderActionableSignals().
-function getValidatedStrategies() {
-  return BOT_STRAT_KEYS.filter(key => {
-    const ev = strategyEvidence(key);
-    return ev.n >= BOT_MIN_N && ev.winRate >= BOT_MIN_WR;
-  });
-}
-
-function checkPTExits() {
-  const now = Date.now();
-  for (const pos of ptOpen()) {
-    const row = allRows.find(r => r.symbol === pos.symbol);
-    if (!row) continue;
-    const curr = row.price;
-    const isLong = pos.direction === 'L';
-    const hitTP = pos.tp   != null && (isLong ? curr >= pos.tp   : curr <= pos.tp);
-    const hitSL = pos.stop != null && (isLong ? curr <= pos.stop : curr >= pos.stop);
-    if (hitTP)                            { closePT(pos, 'TP',    curr); continue; }
-    if (hitSL)                            { closePT(pos, 'SL',    curr); continue; }
-    if (now - pos.entryTime > PT.timeout) { closePT(pos, 'TIME',  curr); continue; }
-    const sc = scoreSymbol(row);
-    const cs = isLong ? sc.longScore : sc.shortScore;
-    if (cs < 3)                           { closePT(pos, 'SCORE', curr); }
-  }
-}
-
-// Abre posiciones SOLO en símbolos que aparecen en el Top de una estrategia
-// ya validada por el Comparador (ver getValidatedStrategies). Niveles de
-// stop/TP por ATR — mismo cálculo que las tarjetas de "Señales accionables".
-function checkPTEntries(topFn, validatedKeys) {
-  if (!validatedKeys.length) return; // nada validado todavía: no operar
-  if (ptOpen().length >= PT.maxPos) return;
-
-  const candidates = new Map(); // symbol+side → { key, score }
-  for (const key of validatedKeys) {
-    for (const side of ['l', 's']) {
-      for (const r of topFn(key, side)) {
-        const k = r.symbol + side;
-        if (!candidates.has(k)) candidates.set(k, { key, score: r[key][side] });
-      }
-    }
-  }
-
-  for (const [k, info] of candidates) {
-    if (ptOpen().length >= PT.maxPos) break;
-    const sym = k.slice(0, -1), side = k.slice(-1);
-    const dir = side === 'l' ? 'L' : 'S';
-    if (ptOpen().some(p => p.symbol === sym && p.direction === dir)) continue;
-
-    const row = allRows.find(r => r.symbol === sym);
-    if (!row?.price) continue;
-    const atrPct = row.atr1h && row.price ? row.atr1h / row.price * 100 : null;
-    if (atrPct == null) continue; // sin ATR no hay niveles fiables
-
-    const isLong = dir === 'L';
-    const stop = row.price * (1 - (isLong ? 1 : -1) * atrPct * 1.2 / 100);
-    const tp   = row.price * (1 + (isLong ? 1 : -1) * atrPct * 1.8 / 100);
-
-    const trade = {
-      id: Date.now() + Math.random(),
-      symbol: sym, direction: dir,
-      entryPrice: row.price, entryTime: Date.now(),
-      stop, tp,
-      entryScore: { strategy: info.key, score: info.score },
-      status: 'open',
-    };
-    paperTrades.push(trade);
-    savePT();
-  }
-}
-
-function clearPaperTrades() {
-  if (!confirm('¿Borrar todo el historial de paper trading?')) return;
-  paperTrades = [];
-  savePT();
-  renderPaperTrading([]);
-}
-
-function renderPaperTrading(validatedKeys) {
-  const now    = Date.now();
-  const open   = ptOpen();
-  const closed = ptClosed();
-
-  // Stats bar
-  const winners  = closed.filter(t => t.pnlPct > 0);
-  const winRate  = closed.length ? (winners.length / closed.length * 100).toFixed(0) + '%' : '—';
-  const totalPnl = closed.reduce((a,t) => a + (t.pnlUSD ?? 0), 0);
-  const pnls     = closed.map(t => t.pnlPct ?? 0);
-  const best     = pnls.length ? Math.max(...pnls) : null;
-  const worst    = pnls.length ? Math.min(...pnls) : null;
-
-  const set = (id, html, color) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.innerHTML = html;
-    if (color) el.style.color = color;
-  };
-  set('pt-stat-open',  `${open.length}/${PT.maxPos}`);
-  set('pt-stat-total', closed.length);
-  set('pt-stat-wr',    winRate, closed.length ? (parseFloat(winRate) >= 50 ? '#00c878' : '#ee5555') : '');
-  set('pt-stat-pnl',   `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, totalPnl >= 0 ? '#00c878' : '#ee5555');
-  set('pt-stat-best',  best != null ? `+${best.toFixed(2)}%` : '—', '#00c878');
-  set('pt-stat-worst', worst != null ? `${worst.toFixed(2)}%` : '—', '#ee5555');
-  const ex = ptExtraStats(closed);
-  set('pt-stat-dd',     ex.maxDD != null ? `-$${ex.maxDD.toFixed(2)}` : '—', ex.maxDD ? '#ee5555' : '');
-  set('pt-stat-streak', closed.length ? `${ex.maxLossStreak}` : '—', ex.maxLossStreak >= 3 ? '#ee5555' : '');
-
-  // Qué estrategias están validadas AHORA (WR≥55%, n≥30 a 1h) — sin esto el bot no opera
-  const noteEl = document.getElementById('pt-validated-strats');
-  if (noteEl) {
-    noteEl.innerHTML = validatedKeys.length
-      ? `✅ Validadas ahora mismo: ${validatedKeys.map(k => STRAT_NAMES[k] || k).join(', ')} (WR≥${BOT_MIN_WR}%, n≥${BOT_MIN_N} a 1h)`
-      : `⏳ Ninguna estrategia tiene aún evidencia suficiente (WR≥${BOT_MIN_WR}%, n≥${BOT_MIN_N} a 1h) — el bot no abrirá posiciones hasta entonces.`;
-  }
-
-  // Open positions
-  const openBody = document.getElementById('pt-open-body');
-  if (openBody) {
-    if (!open.length) {
-      openBody.innerHTML = `<tr><td colspan="9" class="pt-empty">Sin posiciones abiertas · solo opera estrategias ya validadas por el Comparador</td></tr>`;
-    } else {
-      openBody.innerHTML = open.map(pos => {
-        const row    = allRows.find(r => r.symbol === pos.symbol);
-        const curr   = row?.price ?? pos.entryPrice;
-        const pnlPct = ptPnl(pos, curr);
-        const pnlUSD = pnlPct / 100 * 100;
-        const pnlC   = pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
-        const sc     = row ? scoreSymbol(row) : null;
-        const cs     = sc ? (pos.direction === 'L' ? sc.longScore : sc.shortScore) : '—';
-        const csC    = cs >= 6 ? '#00c878' : cs >= 3 ? '#e09030' : '#ee5555';
-        return `<tr>
-          <td class="pt-sym">${pos.symbol}</td>
-          <td class="pt-${pos.direction === 'L' ? 'long' : 'short'}">${pos.direction}</td>
-          <td style="color:#b3bcc9">$${fmtPrice(pos.entryPrice)}</td>
-          <td style="color:#8090b0">$${fmtPrice(curr)}</td>
-          <td class="${pnlC}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</td>
-          <td class="${pnlC}">${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(2)}</td>
-          <td style="color:${csC};font-weight:700">${cs}</td>
-          <td style="color:#b3bcc9">${STRAT_NAMES[pos.entryScore?.strategy] || '—'}</td>
-          <td style="color:#a5adb7">${fmtDur(now - pos.entryTime)}</td>
-        </tr>`;
-      }).join('');
-    }
-  }
-
-  // Closed trades (last 20, newest first)
-  const closedBody = document.getElementById('pt-closed-body');
-  if (closedBody) {
-    const recent = [...closed].reverse().slice(0, 20);
-    if (!recent.length) {
-      closedBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin trades cerrados aún</td></tr>`;
-    } else {
-      const reasonMap = { TP:'🎯 TP', SL:'🛑 SL', SCORE:'📉 Score', TIME:'⏱ Tiempo' };
-      const reasonClass = { TP:'pt-reason-tp', SL:'pt-reason-sl', SCORE:'pt-reason-score', TIME:'pt-reason-time' };
-      // Mismo criterio que la tabla de abiertas: separadas por temporalidad,
-      // porque el acierto de una no dice nada del de las otras.
-      const ordTf = { '15m': 0, '1h': 1, '4h': 2 };
-      const ordRec = [...recent].sort((x, y) =>
-        (ordTf[x.tf || '15m'] - ordTf[y.tf || '15m']) || (y.exitTime - x.exitTime));
-      let tfPrev = null;
-      closedBody.innerHTML = ordRec.map(t => {
-        const tfC = t.tf || '15m';
-        let cabC = '';
-        if (tfC !== tfPrev) {
-          tfPrev = tfC;
-          const grupo = ordRec.filter(x => (x.tf || '15m') === tfC);
-          const aciertos = grupo.filter(x => x.exitReason === 'TARGET').length;
-          cabC = `<tr class="patt-tf-row"><td colspan="5">◭ ${tfC} — ${aciertos}/${grupo.length} en objetivo</td></tr>`;
-        }
-        return cabC + (() => {
-        const pnlC = t.pnlPct >= 0 ? 'pt-pnl-pos' : 'pt-pnl-neg';
-        return `<tr>
-          <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${t.direction === 'L' ? 'long' : 'short'}">${t.direction}</td>
-          <td style="color:#b3bcc9">$${fmtPrice(t.entryPrice)}</td>
-          <td style="color:#b3bcc9">$${fmtPrice(t.exitPrice)}</td>
-          <td class="${pnlC}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct?.toFixed(2)}%</td>
-          <td class="${pnlC}">${t.pnlUSD >= 0 ? '+' : ''}$${t.pnlUSD?.toFixed(2)}</td>
-          <td class="${reasonClass[t.exitReason] ?? ''}">${reasonMap[t.exitReason] ?? t.exitReason}</td>
-          <td style="color:#a5adb7">${fmtDur(t.exitTime - t.entryTime)}</td>
-        </tr>`; })();
-      }).join('');
-    }
-  }
-}
-
 // ── 🎯 Patrones W/M — seguimiento hasta objetivo/stop (SIN límite de tiempo) ─
-// A diferencia del bot de arriba (ATR, timeout a 4h, exige estrategia ya
-// validada), esto es observación pura: ¿el objetivo medido del patrón
+// Es observación pura: ¿el objetivo medido del patrón
 // (cuello ± profundidad) realmente se cumple antes de que salte el stop
 // sugerido? No se cierra por tiempo — se queda abierto indefinidamente hasta
 // tocar uno de los dos niveles. patterns.js abre cada entrada al romper el
@@ -832,11 +643,20 @@ function clearPatternTrack() {
   renderPatternTrack();
 }
 
+// Las que duraron más de 10 días son de antes de que hubiera plazo máximo: quedaron abiertas
+// semanas con la pestaña cerrada y se resolvieron al volver. No miden las reglas actuales y
+// deciden el resultado: 103 de ellas aportaban casi todo el +0,41 R del titular, mientras
+// que las de menos de 24 h daban +0,03 R. Se muestran aparte, pero no cuentan.
+const PATT_ANTIGUA_MS = 10 * 864e5;
+const _pattDura = t => (t.exitTime || 0) - (t.entryTime || t.exitTime || 0);
+
 function renderPatternTrack() {
   const open    = patternTrackOpen();
   const pending = patternTrackPending();
-  const closed  = patternTrackClosed();
+  const todas   = patternTrackClosed();
   const canceladas = patternTrackCancelled();
+  const closed  = todas.filter(t => _pattDura(t) <= PATT_ANTIGUA_MS);
+  const nAntiguas = todas.length - closed.length;
 
   const wins    = closed.filter(t => t.exitReason === 'TARGET');
   const winRate = closed.length ? Math.round(wins.length / closed.length * 100) : null;
@@ -852,142 +672,97 @@ function renderPatternTrack() {
   const friccion = conCost.length
     ? conCost.reduce((a, t) => a + t.costPct / t.riskPct, 0) / conCost.length * 100 : null;
   const avgTimeMs = closed.length
-    ? closed.reduce((a, t) => a + ((t.exitTime || 0) - (t.entryTime || t.exitTime || 0)), 0) / closed.length : null;
+    ? closed.reduce((a, t) => a + _pattDura(t), 0) / closed.length : null;
+
+  _labWM = { neto: avgPnl, n: closed.length, abiertas: open.length };
 
   const set = (id, html, color) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.innerHTML = html;
-    if (color) el.style.color = color;
+    el.style.color = color || '';
   };
-  const col = v => (v == null ? '' : v >= 0 ? '#00c878' : '#ee5555');
+  const col = v => (v == null ? '' : v >= 0 ? '#2fe08a' : '#ff6680');
   set('patt-stat-open',    `${open.length}`);
   set('patt-stat-pending', `${pending.length}`, pending.length ? '#7fd4ff' : '');
   set('patt-stat-total',   `${closed.length}`);
-  set('patt-stat-wr',      closed.length ? wrChip(winRate, closed.length) : '—', closed.length ? (winRate >= 50 ? '#00c878' : '#ee5555') : '');
-  set('patt-stat-r',       avgR != null ? `${avgR >= 0 ? '+' : ''}${avgR.toFixed(3)} R <span style="font-weight:400;color:#8b9098">(n=${conR.length})</span>` : '—', col(avgR));
-  set('patt-stat-pnl',     avgPnl != null ? `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%` : '—', col(avgPnl));
-  set('patt-stat-fee',     friccion != null ? `${friccion.toFixed(1)}% del riesgo` : '—',
-      friccion == null ? '' : friccion > 15 ? '#ee5555' : friccion > 8 ? '#ffbe3c' : '#00c878');
+  set('patt-stat-wr',      closed.length ? wrChip(winRate, closed.length) : '—');
+  set('patt-stat-r',       avgR != null ? `${avgR >= 0 ? '+' : '−'}${Math.abs(avgR).toFixed(3)} R` : '—', avgR != null && Math.abs(avgR) >= 0.1 ? col(avgR) : '');
+  set('patt-stat-pnl',     avgPnl != null ? `${avgPnl >= 0 ? '+' : '−'}${Math.abs(avgPnl).toFixed(2)}%` : '—', col(avgPnl));
+  set('patt-stat-fee',     friccion != null ? `${friccion.toFixed(1)}%` : '—',
+      friccion == null ? '' : friccion > 15 ? '#ff6680' : friccion > 8 ? '#ffbe3c' : '#2fe08a');
   set('patt-stat-time',    avgTimeMs != null ? fmtDur(avgTimeMs) : '—');
 
   const vEl = document.getElementById('patt-variants');
   if (vEl) {
-    const agg = arr => {
-      if (!arr.length) return null;
-      const v = arr.filter(Number.isFinite);
-      if (!v.length) return null;
-      const w = v.filter(x => x > 0).length;
-      return { n: v.length, wr: Math.round(w / v.length * 100), avg: v.reduce((a, b) => a + b, 0) / v.length };
-    };
-
-    // -- Ruptura a mercado contra retroceso al cuello --------------------------
-    // Esta es la comparacion que decide el diseno del screener, no un detalle:
-    // el barrido de backtest/RESULTADOS-SCALP.md dio 0 de 1.728 configuraciones
-    // rentables a comision taker y 44 de 1.728 a comision maker. La pregunta no
-    // es si el patron W/M funciona, es si se puede ejecutar sin pagar taker.
-    // MISSED es la mitad incomoda de la respuesta: rupturas que funcionaron y a
-    // las que la orden limite se quedo mirando. Sin ese numero esto seria un
-    // argumento de vendedor, no una medicion.
-    const ENTRADAS = [
-      { kind: 'break',  label: '⚡ Ruptura a mercado', sub: 'taker 0,065%' },
-      { kind: 'retest', label: '⏳ Retroceso al cuello', sub: 'maker 0,020%' },
-    ];
-    const porEntrada = ENTRADAS.map(e => {
-      const c  = closed.filter(t => (t.entryKind || 'break') === e.kind);
-      const rs = c.filter(t => t.r != null).map(t => t.r);
-      const cc = canceladas.filter(t => (t.entryKind || 'break') === e.kind);
-      return {
-        ...e,
-        n: c.length,
-        nR: rs.length,   // cuantas aportaron un R: puede ser menos que n
-        wr: c.length ? Math.round(c.filter(t => t.exitReason === 'TARGET').length / c.length * 100) : null,
-        r: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
-        abiertas: open.filter(t => (t.entryKind || 'break') === e.kind).length,
-        pend: pending.filter(t => (t.entryKind || 'break') === e.kind).length,
-        missed:  cc.filter(t => t.cancelReason === 'MISSED').length,
-        failed:  cc.filter(t => t.cancelReason === 'FAILED').length,
-        expired: cc.filter(t => t.cancelReason === 'EXPIRED').length,
-      };
+    const netoTxt = v => (v == null ? '—' : `<b style="color:${col(v)}">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}%</b>`);
+    const rTxt = v => (v == null ? '—' : `<span style="color:${col(v)}">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(3)}</span>`);
+    const media = v => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null);
+    const resumir = lista => ({
+      n: lista.length,
+      wr: lista.length ? Math.round(lista.filter(t => t.exitReason === 'TARGET').length / lista.length * 100) : null,
+      neto: media(lista.filter(t => Number.isFinite(t.pnlPct)).map(t => t.pnlPct)),
+      r: media(lista.filter(t => t.r != null).map(t => t.r)),
     });
-    const mejorEntrada = porEntrada.filter(x => x.r != null && x.n >= 10).sort((a, b) => b.r - a.r)[0] || null;
-    const entradaHtml = porEntrada.map(x => {
-      const esMejor = mejorEntrada && x === mejorEntrada;
-      const noTomadas = x.missed + x.failed + x.expired;
-      const detalle = !x.n
-        ? '<span style="color:#aab3c1">sin cerradas aún</span>'
-        : x.r == null
-          ? `${wrChip(x.wr, x.n)} <span style="color:#aab3c1">(n=${x.n}, sin R medible)</span>`
-          : `${wrChip(x.wr, x.n)} · <b style="color:${col(x.r)}">${x.r >= 0 ? '+' : ''}${x.r.toFixed(3)} R</b> <span style="color:#aab3c1" title="Operaciones que aportaron un R medible${x.nR < x.n ? ` — las otras ${x.n - x.nR} son de una versión anterior y no guardaban el riesgo` : ''}">(n=${x.nR}${x.nR < x.n ? ` de ${x.n}` : ''})</span>`;
-      const espera = x.pend ? ` · <span style="color:#7fd4ff">${x.pend} esperando</span>` : '';
-      const perdidas = noTomadas
-        ? ` · <span style="color:#ffbe3c" title="No se tomaron: ${x.missed} se fueron sin retroceder (MISSED) · ${x.failed} perdieron el cuello antes de llenar (FAILED) · ${x.expired} caducaron">${noTomadas} no tomadas${x.missed ? ` (${x.missed} se fueron sin volver)` : ''}</span>`
-        : '';
-      return `<span class="patt-var patt-var-entry${esMejor ? ' patt-var-best' : ''}" title="${x.sub}">${esMejor ? '👑 ' : ''}<b>${x.label}</b>
-        <span style="color:#8b9098">${x.sub}</span>: ${detalle}${espera}${perdidas}</span>`;
-    }).join('');
+    const fila = (nombre, s, extra = '') => `<tr>
+      <td>${nombre}</td><td>${s.n}</td><td>${s.n ? wrChip(s.wr, s.n) : '—'}</td><td>${netoTxt(s.neto)}</td><td>${rTxt(s.r)}</td>${extra}</tr>`;
+    const cuadro = (titulo, cabecera, filas) => `<div class="lab-cuadro">
+      <div class="lab-lista-titulo">${titulo}</div>
+      <div class="lab-lista-scroll"><table class="pt-table"><thead><tr>${cabecera.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${filas.join('')}</tbody></table></div>
+    </div>`;
 
-    const sBase = agg(closed.filter(t => t.pnlPct != null).map(t => t.pnlPct));
-    const sBe   = agg(patternTrack.filter(t => t.v_be?.status === 'closed' && t.v_be.pnlPct != null).map(t => t.v_be.pnlPct));
-    const sTr   = agg(patternTrack.filter(t => t.v_tr?.status === 'closed' && t.v_tr.pnlPct != null).map(t => t.v_tr.pnlPct));
-    const rows2 = [
-      { name: '🅰 Objetivo fijo (base)', s: sBase },
-      { name: '🅱 Breakeven al 50%', s: sBe },
-      { name: '🅲 Trailing 1.5×ATR (armado a +5%)', s: sTr },
-    ];
+    // En qué temporalidad merece la pena operar el patrón.
+    const porTf = ['15m', '1h', '4h'].map(tf => fila(tf,
+      resumir(closed.filter(t => (t.tf || '15m') === tf)),
+      `<td>${open.filter(t => (t.tf || '15m') === tf).length}</td>`));
 
-    // -- Desglose por temporalidad --
-    // Mezclar 15m, 1h y 4h en un solo win-rate esconde lo unico que importa
-    // decidir: en que temporalidad merece la pena operar el patron.
-    const TFS = ['15m', '1h', '4h'];
-    const byTf = TFS.map(tf => {
-      const c = closed.filter(t => (t.tf || '15m') === tf);
-      const o = open.filter(t => (t.tf || '15m') === tf);
-      const rs = c.filter(t => t.r != null).map(t => t.r);
-      const w = c.filter(t => t.exitReason === 'TARGET').length;
-      return {
-        tf, abiertas: o.length, n: c.length, nR: rs.length,
-        wr: c.length ? Math.round(w / c.length * 100) : null,
-        r: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
-      };
-    }).filter(x => x.n || x.abiertas);
-    const tfHtml = byTf.length ? byTf.map(x => {
-      const det = !x.n
-        ? '<span style="color:#aab3c1">sin cerradas aún</span>'
-        : x.r == null
-          ? `${wrChip(x.wr, x.n)} <span style="color:#aab3c1">(n=${x.n}, sin R medible)</span>`
-          : `${wrChip(x.wr, x.n)} · <b style="color:${col(x.r)}">${x.r >= 0 ? '+' : ''}${x.r.toFixed(3)} R</b> <span style="color:#aab3c1" title="Operaciones que aportaron un R medible${x.nR < x.n ? ` — las otras ${x.n - x.nR} son de una versión anterior y no guardaban el riesgo` : ''}">(n=${x.nR}${x.nR < x.n ? ` de ${x.n}` : ''})</span>`;
-      return `<span class="patt-var">◭ <b>${x.tf}</b> · ${x.abiertas} abierta${x.abiertas === 1 ? '' : 's'} · ${det}</span>`;
-    }).join('') : '';
+    // Ruptura a mercado o retroceso al cuello: el barrido de backtest/RESULTADOS-SCALP.md dio 0
+    // de 1.728 configuraciones rentables a comisión taker y 44 a maker, así que esto decide
+    // si el patrón se puede ejecutar. "No tomadas" es la parte incómoda: rupturas que
+    // funcionaron y a las que la orden límite se quedó mirando.
+    const porEntrada = [['break', 'Ruptura a mercado'], ['retest', 'Retroceso al cuello']].map(([kind, nombre]) => {
+      const cc = canceladas.filter(t => (t.entryKind || 'break') === kind);
+      const motivo = m => cc.filter(t => t.cancelReason === m).length;
+      return fila(nombre, resumir(closed.filter(t => (t.entryKind || 'break') === kind)),
+        `<td title="${motivo('MISSED')} se fueron sin retroceder · ${motivo('FAILED')} perdieron el cuello antes de llenarse · ${motivo('EXPIRED')} caducaron">${cc.length}</td>`);
+    });
 
-    const best = rows2.filter(r => r.s && r.s.n >= 10).sort((a, b) => b.s.avg - a.s.avg)[0] || null;
-    const skipHtml = (_patSkipped.rr || _patSkipped.old)
-      ? `<span class="patt-var" title="Rupturas confirmadas que no se tomaron: por no pagar el riesgo (R:R) o por no ser recientes (la vela de ruptura ya había quedado atrás)">
-           🚫 descartadas: <b style="color:#ffbe3c">${_patSkipped.rr}</b> por R:R &lt; ${PATTERN_MIN_RR}:1 ·
-           <b style="color:#ffbe3c">${_patSkipped.old}</b> por no ser recientes <span style="color:#aab3c1">(esta sesión)</span></span>`
-      : '';
-    // Entradas cuya moneda salio del universo y que el servidor tampoco cubre.
-    // Se declara el hueco en vez de esconderlo: son las que antes se quedaban
-    // abiertas para siempre sin contar en nada.
+    // Tres salidas en paralelo sobre las mismas entradas.
+    const esAntigua = t => t.status === 'closed' && _pattDura(t) > PATT_ANTIGUA_MS;
+    const variante = campo => {
+      const v = patternTrack.filter(t => !esAntigua(t) && t[campo]?.status === 'closed' && Number.isFinite(t[campo].pnlPct)).map(t => t[campo].pnlPct);
+      return { n: v.length, wr: v.length ? Math.round(v.filter(x => x > 0).length / v.length * 100) : null, neto: media(v) };
+    };
+    const filaSalida = (nombre, s) => `<tr><td>${nombre}</td><td>${s.n}</td><td>${s.n ? wrChip(s.wr, s.n) : '—'}</td><td>${netoTxt(s.neto)}</td></tr>`;
+    const baseSalida = { n: conPnl.length, wr: conPnl.length ? Math.round(conPnl.filter(t => t.pnlPct > 0).length / conPnl.length * 100) : null, neto: avgPnl };
+    const porSalida = [filaSalida('Objetivo fijo', baseSalida), filaSalida('Breakeven al 50%', variante('v_be')), filaSalida('Trailing armado a +5%', variante('v_tr'))];
+
+    const porDuracion = [
+      ['Menos de 24 h', t => _pattDura(t) < 864e5],
+      ['De 1 a 10 días', t => _pattDura(t) >= 864e5 && _pattDura(t) <= PATT_ANTIGUA_MS],
+      ['Más de 10 días (no cuentan)', t => _pattDura(t) > PATT_ANTIGUA_MS],
+    ].map(([nombre, f]) => fila(nombre, resumir(todas.filter(f))));
+
+    vEl.innerHTML =
+      cuadro('Por temporalidad', ['Temporalidad', 'Ops', 'Objetivo', 'Neto', 'R', 'Abiertas'], porTf) +
+      cuadro('Por tipo de entrada', ['Entrada', 'Ops', 'Objetivo', 'Neto', 'R', 'No tomadas'], porEntrada) +
+      cuadro('Por tipo de salida', ['Salida', 'Ops', 'Ganan', 'Neto'], porSalida) +
+      cuadro('Por duración', ['Duró', 'Ops', 'Objetivo', 'Neto', 'R'], porDuracion);
+
+    const notas = [];
+    if (nAntiguas) notas.push(`<b>${nAntiguas} operaciones de más de 10 días no cuentan:</b> son de antes de que hubiera plazo máximo, y se resolvieron al volver a abrir la página.`);
+    if (_patSkipped.rr || _patSkipped.old) notas.push(`Descartadas en esta sesión: ${_patSkipped.rr} por pagar menos de ${PATTERN_MIN_RR}:1 y ${_patSkipped.old} por no ser recientes.`);
     const huerf = [...open, ...pending].filter(t => t.orphanSince).length;
-    const huerfHtml = huerf
-      ? `<span class="patt-var" title="Su moneda salió del universo del screener. Se intentan resolver contra el histórico de precios del servidor; las que el servidor tampoco cubre quedan aquí a la vista en vez de desaparecer de las estadísticas.">
-           🛰 <b style="color:#ffbe3c">${huerf}</b> sin precio en vivo (fuera del universo)</span>`
-      : '';
-
-    vEl.innerHTML = entradaHtml + tfHtml + skipHtml + huerfHtml + rows2.map(r => {
-      const isBest = best && r === best;
-      if (!r.s) return `<span class="patt-var">${r.name}: <b style="color:#aab3c1">sin datos aún</b></span>`;
-      return `<span class="patt-var${isBest ? ' patt-var-best' : ''}">${isBest ? '👑 ' : ''}${r.name}:
-        <b>${wrChip(r.s.wr, r.s.n)}</b> · <b style="color:${col(r.s.avg)}">${r.s.avg >= 0 ? '+' : ''}${r.s.avg.toFixed(2)}% neto</b> <span style="color:#aab3c1">(n=${r.s.n})</span></span>`;
-    }).join('');
+    if (huerf) notas.push(`${huerf} sin precio en vivo porque su moneda salió del screener; se intentan resolver con el histórico del servidor.`);
+    const nEl = document.getElementById('patt-notas');
+    if (nEl) { nEl.innerHTML = notas.join(' '); nEl.style.display = notas.length ? '' : 'none'; }
   }
 
   // -- Ordenes limite esperando el retroceso --------------------------------
   const pendBody = document.getElementById('patt-pending-body');
   if (pendBody) {
     if (!pending.length) {
-      pendBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin órdenes esperando — se ponen solas en el cuello al confirmarse una ruptura</td></tr>`;
+      pendBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin órdenes esperando: se ponen solas en el cuello al confirmarse una ruptura</td></tr>`;
     } else {
       const ordenTf = { '15m': 0, '1h': 1, '4h': 2 };
       const ord = [...pending].sort((a, b) =>
@@ -999,17 +774,17 @@ function renderPatternTrack() {
         const lim = t.limitPrice != null ? t.limitPrice : t.entryPrice;
         // Cuanto le falta al precio para llegar a la orden (positivo = aun no).
         const falta = curr ? (isLong ? (curr - lim) / curr * 100 : (lim - curr) / curr * 100) : null;
-        const faltaC = falta == null ? '#8b9098' : falta <= 0.3 ? '#2fe08a' : falta <= 1 ? '#ffbe3c' : '#8090b0';
+        const faltaC = falta == null ? '#d7dde8' : falta <= 0.3 ? '#2fe08a' : falta <= 1 ? '#ffbe3c' : '#d7dde8';
         const restan = t.expiresAfterBar ? t.expiresAfterBar - Date.now() : null;
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:8px;color:#7fd4ff" title="Beneficio/riesgo desde el precio límite">R${t.rr.toFixed(1)}</span>` : ''}</td>
-          <td style="color:#7fd4ff">$${fmtPrice(lim)}</td>
-          <td style="color:#8090b0">${curr ? '$' + fmtPrice(curr) : '<span title="La moneda salió del universo del screener">—</span>'}</td>
+          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:10px;opacity:.85">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:10px;color:#7fd4ff" title="Beneficio/riesgo desde el precio límite">R${t.rr.toFixed(1)}</span>` : ''}</td>
+          <td style="color:#7fd4ff">${fmtPrice(lim)}</td>
+          <td style="color:#d7dde8">${curr ? fmtPrice(curr) : '<span title="La moneda salió del universo del screener">—</span>'}</td>
           <td style="color:${faltaC}">${falta == null ? '—' : (falta >= 0 ? falta.toFixed(2) + '%' : '<b>en zona</b>')}</td>
-          <td style="color:#00c878">$${fmtPrice(t.target)}</td>
-          <td style="color:#ee5555">$${fmtPrice(t.stop)}</td>
-          <td style="color:#a5adb7">${restan == null ? '—' : restan <= 0 ? 'caducada' : fmtDur(restan)}</td>
+          <td style="color:#00c878">${fmtPrice(t.target)}</td>
+          <td style="color:#ee5555">${fmtPrice(t.stop)}</td>
+          <td style="color:#d7dde8">${restan == null ? '—' : restan <= 0 ? 'caducada' : fmtDur(restan)}</td>
         </tr>`;
       }).join('');
     }
@@ -1018,7 +793,7 @@ function renderPatternTrack() {
   const openBody = document.getElementById('patt-open-body');
   if (openBody) {
     if (!open.length) {
-      openBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin patrones en seguimiento — se registran solos al romper el cuello</td></tr>`;
+      openBody.innerHTML = `<tr><td colspan="8" class="pt-empty">Sin operaciones en seguimiento: se registran solas al romper el cuello</td></tr>`;
     } else {
       const patternOpenRow = t => {
         const row  = allRows.find(r => r.symbol === t.symbol);
@@ -1029,19 +804,19 @@ function renderPatternTrack() {
           : (t.entryPrice - curr) / (t.entryPrice - t.target) * 100;
         const progC = progress >= 0 ? '#00c878' : '#ee5555';
         const kind = (t.entryKind || 'break') === 'retest'
-          ? ' <span style="font-size:8px;color:#7fd4ff" title="Entró con orden límite en el cuello (comisión maker)">⏳LÍM</span>'
+          ? ' <span style="font-size:10px;color:#7fd4ff" title="Entró con orden límite en el cuello (comisión maker)">⏳LÍM</span>'
           : '';
         const huerfana = t.orphanSince
-          ? ' <span style="font-size:8px;color:#ffbe3c" title="Su moneda salió del universo: se resuelve contra el histórico del servidor">🛰</span>' : '';
+          ? ' <span style="font-size:10px;color:#ffbe3c" title="Su moneda salió del universo: se resuelve contra el histórico del servidor">🛰</span>' : '';
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:8px;color:#7fd4ff" title="Beneficio/riesgo al precio de entrada real">R${t.rr.toFixed(1)}</span>` : ''}${kind}${t.v_tr?.active ? ' <span style="font-size:8px;color:#ffbe3c" title="Trailing stop armado: la posición ya pasó de +5%">⇡TR</span>' : ''}${huerfana}</td>
-          <td style="color:#b3bcc9">$${fmtPrice(t.entryPrice)}</td>
-          <td style="color:#8090b0">$${fmtPrice(curr)}</td>
-          <td style="color:#00c878">$${fmtPrice(t.target)}</td>
-          <td style="color:#ee5555">$${fmtPrice(t.stop)}</td>
+          <td class="pt-${isLong ? 'long' : 'short'}">${t.type} ${isLong ? '▲' : '▼'} <span style="font-size:10px;opacity:.85">${t.tf || '15m'}</span>${t.rr != null ? ` <span style="font-size:10px;color:#7fd4ff" title="Beneficio/riesgo al precio de entrada real">R${t.rr.toFixed(1)}</span>` : ''}${kind}${t.v_tr?.active ? ' <span style="font-size:10px;color:#ffbe3c" title="Trailing stop armado: la posición ya pasó de +5%">⇡TR</span>' : ''}${huerfana}</td>
+          <td style="color:#d7dde8">${fmtPrice(t.entryPrice)}</td>
+          <td style="color:#d7dde8">${fmtPrice(curr)}</td>
+          <td style="color:#00c878">${fmtPrice(t.target)}</td>
+          <td style="color:#ee5555">${fmtPrice(t.stop)}</td>
           <td style="color:${progC}">${progress.toFixed(0)}%</td>
-          <td style="color:#a5adb7">${fmtDur(Date.now() - (t.entryTime || t.placedAt || Date.now()))}</td>
+          <td style="color:#d7dde8">${fmtDur(Date.now() - (t.entryTime || t.placedAt || Date.now()))}</td>
         </tr>`;
       };
       const ordenTf = { '15m': 0, '1h': 1, '4h': 2 };
@@ -1065,9 +840,9 @@ function renderPatternTrack() {
 
   const closedBody = document.getElementById('patt-closed-body');
   if (closedBody) {
-    const recent = [...closed].reverse().slice(0, 20);
+    const recent = [...todas].sort((x, y) => (y.exitTime || 0) - (x.exitTime || 0)).slice(0, 30);
     if (!recent.length) {
-      closedBody.innerHTML = `<tr><td colspan="6" class="pt-empty">Sin patrones completados aún</td></tr>`;
+      closedBody.innerHTML = `<tr><td colspan="6" class="pt-empty">Sin operaciones terminadas aún</td></tr>`;
     } else {
       // Mismo criterio que la tabla de abiertas: separadas por temporalidad,
       // porque el acierto de una no dice nada del de las otras.
@@ -1092,16 +867,16 @@ function renderPatternTrack() {
                      : '🛑 Stop';
         const clsMotivo = t.exitReason === 'TARGET' ? 'pt-reason-tp' : t.exitReason === 'TIME' ? '' : 'pt-reason-sl';
         const kind = (t.entryKind || 'break') === 'retest'
-          ? ' <span style="font-size:8px;color:#7fd4ff" title="Entró con orden límite en el cuello (comisión maker)">⏳LÍM</span>' : '';
+          ? ' <span style="font-size:10px;color:#7fd4ff" title="Entró con orden límite en el cuello (comisión maker)">⏳LÍM</span>' : '';
         const brutoTip = (Number.isFinite(t.pnlGrossPct) && Number.isFinite(t.costPct))
           ? ` title="Bruto ${t.pnlGrossPct >= 0 ? '+' : ''}${t.pnlGrossPct.toFixed(2)}% − comisión ${t.costPct.toFixed(3)}% = neto"` : '';
         return `<tr>
           <td class="pt-sym">${t.symbol}</td>
-          <td class="pt-${t.side === 'L' ? 'long' : 'short'}">${t.type} ${t.side === 'L' ? '▲' : '▼'} <span style="font-size:8px;opacity:.6">${t.tf || '15m'}</span>${kind}</td>
-          <td class="${clsMotivo}" style="${clsMotivo ? '' : 'color:#aab3c1'}">${motivo}</td>
+          <td class="pt-${t.side === 'L' ? 'long' : 'short'}">${t.type} ${t.side === 'L' ? '▲' : '▼'} <span style="font-size:10px;opacity:.85">${t.tf || '15m'}</span>${kind}</td>
+          <td class="${clsMotivo}" style="${clsMotivo ? '' : 'color:#d7dde8'}">${motivo}</td>
           <td class="${pnlC}"${brutoTip}>${tienePnl ? (t.pnlPct >= 0 ? '+' : '') + t.pnlPct.toFixed(2) + '%' : '—'}</td>
           <td style="color:${col(t.r)}">${t.r != null ? (t.r >= 0 ? '+' : '') + t.r.toFixed(2) : '—'}</td>
-          <td style="color:#a5adb7">${fmtDur((t.exitTime || 0) - (t.entryTime || t.exitTime || 0))}</td>
+          <td style="color:#d7dde8">${fmtDur((t.exitTime || 0) - (t.entryTime || t.exitTime || 0))}</td>
         </tr>`; })();
       }).join('');
     }
@@ -1310,112 +1085,6 @@ function scoreLiquidationCascade(row) {
   return bull ? { longScore: score, shortScore: 0 } : { longScore: 0, shortScore: score };
 }
 
-// ── Estrategia: Rotación sectorial ───────────────────────────────────────────
-// Mapa fijo símbolo → sector (Bybit no expone categorías). Premia a las
-// "rezagadas" de un sector que ya está en movimiento fuerte — la idea de que
-// el capital rota dentro del mismo grupo y las que faltan por moverse tienen
-// más recorrido potencial.
-const SECTOR_MAP = {
-  BTC:'L1', ETH:'L1', SOL:'L1', BNB:'L1', AVAX:'L1', ADA:'L1', DOT:'L1', NEAR:'L1',
-  APT:'L1', SUI:'L1', TON:'L1', TRX:'L1', ATOM:'L1', INJ:'L1', SEI:'L1', TIA:'L1', ICP:'L1',
-  HYPE:'L1', XPL:'L1',
-  DOGE:'MEME', SHIB:'MEME', PEPE:'MEME', WIF:'MEME', BONK:'MEME', FLOKI:'MEME', TRUMP:'MEME',
-  '1000PEPE':'MEME', '1000SHIB':'MEME', '1000BONK':'MEME', '1000FLOKI':'MEME', SHIB1000:'MEME',
-  FARTCOIN:'MEME', PENGU:'MEME', PUMPFUN:'MEME',
-  UNI:'DEFI', AAVE:'DEFI', LDO:'DEFI', CRV:'DEFI', MKR:'DEFI', SUSHI:'DEFI', COMP:'DEFI', SNX:'DEFI', GMX:'DEFI', DYDX:'DEFI', PENDLE:'DEFI',
-  ENA:'DEFI', ONDO:'DEFI', JUP:'DEFI',
-  ARB:'L2', OP:'L2', POL:'L2', STRK:'L2', ZK:'L2', MANTA:'L2', METIS:'L2',
-  LINK:'ORACLE', PYTH:'ORACLE', BAND:'ORACLE',
-  RENDER:'AI', RNDR:'AI', FET:'AI', TAO:'AI', WLD:'AI', AKT:'AI', ARKM:'AI', VIRTUAL:'AI',
-  XRP:'PAYMENTS', XLM:'PAYMENTS', ALGO:'PAYMENTS', HBAR:'PAYMENTS', LTC:'PAYMENTS', BCH:'PAYMENTS',
-};
-function scoreSectorRotation(row, allRowsRef) {
-  const sector = SECTOR_MAP[row.symbol];
-  if (!sector) return { longScore: 0, shortScore: 0 };
-  const peers = allRowsRef.filter(r => r.symbol !== row.symbol && SECTOR_MAP[r.symbol] === sector);
-  if (peers.length < 2) return { longScore: 0, shortScore: 0 };
-  const avg = key => peers.reduce((a, r) => a + (r[key] ?? 0), 0) / peers.length;
-  const peer1h = avg('price1hPct'), peer4h = avg('price4hPct');
-  const own1h  = row.price1hPct ?? 0;
-  let L = 0, S = 0;
-  if (peer1h > 0.5 && peer4h > 0) {
-    L += peer1h > 1.5 ? 4 : peer1h > 0.8 ? 3 : 2;
-    L += own1h > 0 ? 1 : 2; // rezagada en sector caliente = más recorrido potencial
-  }
-  if (peer1h < -0.5 && peer4h < 0) {
-    S += peer1h < -1.5 ? 4 : peer1h < -0.8 ? 3 : 2;
-    S += own1h < 0 ? 1 : 2;
-  }
-  // Piso de liquidez sobre la PROPIA moneda: que el sector se mueva no sirve
-  // si la rezagada es tan ilíquida que no se puede entrar/salir limpio.
-  if ((row.vol1hUSD ?? 0) < 300_000) { L = Math.min(L, 4); S = Math.min(S, 4); }
-  return { longScore: Math.min(10, L), shortScore: Math.min(10, S) };
-}
-
-// ── Estrategia: Actividad de ballenas ────────────────────────────────────────
-// Aproxima "tamaño grande entrando" sin nuevas llamadas a la API: un salto de
-// volumen muy por encima de lo normal junto con OI creciendo pero precio casi
-// plano sugiere absorción (acumulación o distribución silenciosa de gran tamaño).
-function scoreWhaleActivity(row) {
-  const n = v => v ?? 0;
-  const volSpike = n(row.vol1hPct);
-  if (volSpike < 40) return { longScore: 0, shortScore: 0 };
-  // Piso de liquidez ABSOLUTO: un spike del 400% es ruido si viene de $10k/h
-  // a $50k/h. Sin este piso, "ballenas" terminaba detectando microcaps ilíquidas.
-  if (n(row.vol1hUSD) < 300_000) return { longScore: 0, shortScore: 0 };
-  const oi5 = n(row.oi5m), price5 = n(row.price5mPct);
-  const big = volSpike > 80;
-  let L = 0, S = 0;
-  const absorbing = oi5 > 0.15 && Math.abs(price5) < 0.15;
-  if (absorbing) {
-    // Dirección por CVD real (flujo agresor 5m): comprador = acumulación,
-    // vendedor = distribución. Fallback a funding si el CVD no es significativo.
-    const vol5mUSD = n(row.vol1hUSD) / 12;
-    const cvd = row.cvd5m;
-    if (cvd != null && vol5mUSD > 0 && Math.abs(cvd) > vol5mUSD * 0.08) {
-      if (cvd > 0) L += big ? 5 : 3; else S += big ? 5 : 3;
-    } else if (n(row.fundingRate) <= 0) {
-      L += big ? 4 : 2; // sin CVD claro: señal más débil
-    } else {
-      S += big ? 4 : 2;
-    }
-  } else if (oi5 > 0.2 && price5 > 0.1) {
-    L += big ? 3 : 1;
-  } else if (oi5 > 0.2 && price5 < -0.1) {
-    S += big ? 3 : 1;
-  }
-  return { longScore: Math.min(10, L), shortScore: Math.min(10, S) };
-}
-
-// ── Estrategia: Beta rezagada (lead-lag con BTC) ─────────────────────────────
-// BTC se mueve con impulso claro (≥0.6×ATR en 15m) y las seguidoras confirmadas
-// (ρ≥0.6) tienden a converger. Señal: seguidora que AÚN no se movió (gap) y
-// cuyo flujo no va en contra → operar en la dirección de BTC antes de converger.
-function scoreBetaLag(row, btcRow) {
-  const zero = { longScore: 0, shortScore: 0 };
-  if (!btcRow || row.symbol === 'BTC') return zero;
-  const corr = row.btcCorr;
-  if (corr == null || corr < 0.6) return zero;
-  const btcAtr15 = btcRow.atr1h && btcRow.price ? (btcRow.atr1h / btcRow.price * 100) * 0.5 : null; // ATR escalado a 15m (√0.25)
-  const ownAtr15 = row.atr1h && row.price ? (row.atr1h / row.price * 100) * 0.5 : null;
-  if (!btcAtr15 || !ownAtr15) return zero;
-  const btcMove = (btcRow.price15mPct ?? 0) / btcAtr15;   // impulso de BTC en ×ATR15
-  const ownMove = (row.price15mPct ?? 0) / ownAtr15;
-  if (Math.abs(btcMove) < 0.6) return zero;               // BTC sin impulso claro
-  const dirUp = btcMove > 0;
-  const followed = dirUp ? ownMove : -ownMove;            // cuánto siguió ya (en su propio ATR)
-  if (followed > Math.abs(btcMove) * 0.4) return zero;    // ya convergió: el trade pasó
-  if (followed < -0.5) return zero;                       // va fuerte en contra: divergencia, no lag
-  let sc = 3;
-  sc += corr >= 0.8 ? 2 : 1;                              // seguidora muy confirmada
-  sc += Math.min(3, Math.abs(btcMove));                   // magnitud del impulso de BTC
-  if (Math.abs(btcMove) - Math.max(followed, 0) > 1) sc += 1; // gap grande = más recorrido
-  const cvd = row.cvd5m ?? 0;
-  if ((dirUp && cvd < 0) || (!dirUp && cvd > 0)) sc -= 1; // flujo propio en contra
-  sc = Math.max(0, Math.min(10, Math.round(sc)));
-  return dirUp ? { longScore: sc, shortScore: 0 } : { longScore: 0, shortScore: sc };
-}
-
 // ── Estrategia: Alpha propio (descorrelacionadas con flujo) ──────────────────
 // Monedas con ρ≈0 (movimiento por narrativa propia, inmunes al chop de BTC)
 // con momentum real (≥1×ATR) Y confirmación: CVD significativo o racha de OI
@@ -1520,47 +1189,11 @@ function healthScore(row) {
   return { symbol: row.symbol, score, grade, side: dirUp ? 'long' : 'short', ok, bad };
 }
 
-const HEALTH_GRADE_STYLE = {
-  A: ['#06291a', '#2fe08a'], B: ['#0a2518', '#55bb88'],
-  C: ['#2a2410', '#e0a830'], D: ['#240808', '#aa6060'],
-};
-
-function renderHealthPanel() {
-  const el = document.getElementById('lab-health-cards');
-  const cnt = document.getElementById('lab-health-count');
-  if (!el) return;
-  const healths = allRows.map(healthScore).sort((a, b) => b.score - a.score);
-  const good = healths.filter(h => h.score >= 60);
-  if (cnt) cnt.textContent = good.length
-    ? `${good.filter(h => h.grade === 'A').length} nota A · ${good.filter(h => h.grade === 'B').length} nota B`
-    : '';
-  if (!good.length) {
-    el.innerHTML = '<span class="lr-empty">Ninguna moneda cumple los criterios de salud ahora mismo — a veces la mejor operación es esperar.</span>';
-    return;
-  }
-  el.innerHTML = good.slice(0, 8).map(h => {
-    const [bg, fg] = HEALTH_GRADE_STYLE[h.grade];
-    const row = allRows.find(r => r.symbol === h.symbol);
-    return `<div class="health-card">
-      <div class="hc-head">
-        <span class="hc-sym">${h.symbol}</span>
-        <span class="cc-side ${h.side}">${h.side.toUpperCase()}</span>
-        <span class="hc-grade" style="background:${bg};color:${fg}">${h.grade}</span>
-        <span class="hc-score" style="color:${fg}">${h.score}</span>
-        <span class="row-radar" style="margin-left:auto" title="Abrir en el radar de confluencia" onclick="openInRadar('${h.symbol}')">🎯</span>
-        <span class="star${favorites.has(h.symbol) ? ' on' : ''}" title="Añadir al seguimiento" onclick="toggleFav('${h.symbol}')">★</span>
-      </div>
-      <div class="hc-rows">
-        ${h.ok.slice(0, 3).map(t => `<div class="hc-row" style="color:#4a8a68">✓ ${t}</div>`).join('')}
-        ${h.bad.slice(0, 2).map(t => `<div class="hc-row" style="color:#a05555">✗ ${t}</div>`).join('')}
-      </div>
-      <div class="hc-foot">${row ? fmtPrice(row.price) : ''} · ρBTC ${row && row.btcCorr != null ? row.btcCorr.toFixed(2) : '—'}</div>
-    </div>`;
-  }).join('');
-
-  // Las nota A entran solas al seguimiento automático (si no son ya favoritas)
+// Las nota A entran solas al seguimiento automático si no son ya favoritas.
+function _autoSeguirNotaA() {
   const now = Date.now();
-  for (const h of good.filter(x => x.grade === 'A').slice(0, 5)) {
+  const notaA = allRows.map(healthScore).filter(h => h.grade === 'A').sort((a, b) => b.score - a.score).slice(0, 5);
+  for (const h of notaA) {
     if (favorites.has(h.symbol)) continue;
     autoTracked.set(h.symbol, {
       addedAt: autoTracked.get(h.symbol)?.addedAt ?? now,
@@ -1570,10 +1203,6 @@ function renderHealthPanel() {
     });
   }
   saveAutoTracked();
-
-  logPanelDetections('health', good.map(h => ({
-    symbol: h.symbol, side: h.side === 'long' ? 'l' : 's', score: h.score,
-  })));
 }
 
 // Heat score 0-10: combina cuántas estrategias coinciden en el mismo lado
@@ -1637,14 +1266,8 @@ function strategyEvidence(key) {
   return { n, hits, winRate, lo: ci ? ci.lo : 0 };
 }
 
-const AS_GRADE_STYLE = {
-  A: ['#06291a', '#2fe08a'], B: ['#0a2518', '#55bb88'],
-  C: ['#2a2410', '#e0a830'], D: ['#240808', '#aa6060'],
-};
-
 // Sintetiza, por símbolo+lado con ≥2 estrategias de acuerdo: cuántas coinciden,
-// la nota de Salud, el mejor win-rate histórico REAL (Wilson) entre las
-// estrategias que dispararon, y niveles de entrada/stop/TP por ATR. Ordenadas
+// el mejor win-rate histórico REAL (Wilson) entre las estrategias que dispararon, y niveles de entrada/stop/TP por ATR. Ordenadas
 // por evidencia (el límite inferior de Wilson), no por score — una señal con
 // mucho "score" pero cuya estrategia nunca ha demostrado acertar vale menos
 // que una con score moderado pero WR real probado.
@@ -1664,20 +1287,11 @@ function renderActionableSignals(confMap, confStrats, totalStrats) {
       const row = allRows.find(r => r.symbol === symbol);
       if (!row) return null;
       const isLong = side === 'l';
-      const health = healthScore(row);
-
-      // Mejor evidencia disponible para esta señal: además de las estrategias
-      // core que dispararon (confStrats), se compite también con 'confluence'
-      // (siempre aplica aquí) y 'health' (si esta moneda ya califica como
-      // saludable) — ambas resultaron tener de la MEJOR evidencia real medida
-      // (~62% y ~56% WR), así que merecen competir por el puesto de "mejor".
+      // Mejor evidencia disponible: compite cada estrategia que disparó, además de
+      // 'confluence', que siempre aplica aquí.
       const strats = confStrats.get(k) || [];
       let best = null;
       if (confluenceEv.n >= WR_MIN_N) best = { key: 'confluence', ...confluenceEv };
-      if (health.score >= 60) {
-        const healthEv = strategyEvidence('health');
-        if (healthEv.n >= WR_MIN_N && (!best || healthEv.lo > best.lo)) best = { key: 'health', ...healthEv };
-      }
       for (const key of strats) {
         const ev = strategyEvidence(key);
         if (ev.n < WR_MIN_N) continue;
@@ -1688,7 +1302,7 @@ function renderActionableSignals(confMap, confStrats, totalStrats) {
       const stop  = atrPct != null ? entry * (1 - (isLong ? 1 : -1) * atrPct * 1.2 / 100) : null;
       const tp    = atrPct != null ? entry * (1 + (isLong ? 1 : -1) * atrPct * 1.8 / 100) : null;
 
-      return { symbol, side, isLong, cnt, strats, best, health, entry, stop, tp };
+      return { symbol, side, isLong, cnt, strats, best, entry, stop, tp };
     })
     .filter(Boolean)
     // Evidencia primero (mejor límite inferior de Wilson), luego confluencia;
@@ -1699,13 +1313,13 @@ function renderActionableSignals(confMap, confStrats, totalStrats) {
     })
     .slice(0, 12);
 
+  _labSenales = { n: candidates.length, l: candidates.filter(c => c.isLong).length, s: candidates.filter(c => !c.isLong).length };
   if (!candidates.length) {
-    grid.innerHTML = '<span class="lr-empty">Sin señales con ≥2 estrategias de acuerdo por ahora…</span>';
+    grid.innerHTML = '<span class="lr-empty">Ahora mismo no coinciden 2 estrategias en ninguna moneda.</span>';
     return;
   }
 
   grid.innerHTML = candidates.map(c => {
-    const [bg, fg] = AS_GRADE_STYLE[c.health.grade];
     const sideTxt = c.isLong ? '▲ LONG' : '▼ SHORT';
     const evidenceRow = c.best
       ? `<div class="as-row"><span>Evidencia (${STRAT_NAMES[c.best.key] || c.best.key})</span>
@@ -1715,15 +1329,14 @@ function renderActionableSignals(confMap, confStrats, totalStrats) {
       ? `<div class="as-note">⚠ sin evidencia aún — no operar (ninguna estrategia coincidente tiene n≥${WR_MIN_N} evaluado a 1h)</div>`
       : '';
     const levelsRow = c.stop != null
-      ? `<div class="as-row"><span>Niveles (ATR)</span>
+      ? `<div class="as-row"><span>Niveles</span>
           <span>entra <b>${fmtPrice(c.entry)}</b> · stop <b class="neg">${fmtPrice(c.stop)}</b> · TP <b class="pos">${fmtPrice(c.tp)}</b></span></div>`
       : '';
     return `<div class="as-card ${c.isLong ? 'as-long' : 'as-short'}${c.best ? '' : ' as-no-evidence'}" onclick="openDetail('${c.symbol}')">
       <div class="as-head">
         <span class="as-sym">${c.symbol}</span>
         <span class="as-side">${sideTxt}</span>
-        <span class="as-conf">${c.cnt}/${totalStrats} estrategias</span>
-        <span class="as-grade" style="background:${bg};color:${fg}" title="Nota de Salud">${c.health.grade} ${c.health.score}</span>
+        <span class="as-conf">${c.cnt} de ${totalStrats} estrategias</span>
       </div>
       ${evidenceRow}
       ${levelsRow}
@@ -1758,7 +1371,6 @@ function renderLab() {
   }
 
   const pFns = buildPercentileFns(allRows);
-  const btcRow = allRows.find(r => r.symbol === 'BTC');
 
   const scored = allRows.map(r => {
     const cur    = scoreSymbol(r);
@@ -1767,9 +1379,6 @@ function renderLab() {
     const z      = zScoreSymbol(r);
     const range  = scoreOwnRangeBreakout(r);
     const liq    = scoreLiquidationCascade(r);
-    const sector = scoreSectorRotation(r, allRows);
-    const whale  = scoreWhaleActivity(r);
-    const beta   = scoreBetaLag(r, btcRow);
     const alpha  = scoreDecorrAlpha(r);
     return { symbol: r.symbol,
       cur:    { l: cur.longScore,    s: cur.shortScore },
@@ -1778,9 +1387,6 @@ function renderLab() {
       z:      z ? { l: z.longScore, s: z.shortScore, zStr: z.zStr, zVal: z.z } : null,
       range:  { l: range.longScore,  s: range.shortScore },
       liq:    { l: liq.longScore,    s: liq.shortScore },
-      sector: { l: sector.longScore, s: sector.shortScore },
-      whale:  { l: whale.longScore,  s: whale.shortScore },
-      beta:   { l: beta.longScore,   s: beta.shortScore },
       alpha:  { l: alpha.longScore,  s: alpha.shortScore },
     };
   });
@@ -1796,9 +1402,9 @@ function renderLab() {
   // columnas — ver renderActionableSignals() más abajo.
   const cols = [
     { key: 'cur' }, { key: 'pct' }, { key: 'reg' }, { key: 'z' }, { key: 'range' },
-    { key: 'liq' }, { key: 'sector' }, { key: 'whale' }, { key: 'beta' }, { key: 'alpha' },
+    { key: 'liq' }, { key: 'alpha' },
   ];
-  renderHealthPanel(); // 💎 monedas saludables (y auto-seguimiento de las nota A)
+  _autoSeguirNotaA();
 
   // Confluencia: símbolo aparece en ≥2 estrategias — ya no se renderiza como
   // panel propio ("Alta confluencia" quedaba redundante con Seguimiento y con
@@ -1820,21 +1426,6 @@ function renderLab() {
   logPanelDetections('confluence', [...confMap.entries()].filter(([,cnt]) => cnt >= 2)
     .map(([k, cnt]) => ({ symbol: k.slice(0,-1), side: k.slice(-1), score: cnt })));
 
-  // Adjuntar 'confluence' y 'health' a `scored` con la misma forma {l,s} que
-  // las 10 estrategias core — mismo umbral (score≥60 = nota B+) que usa
-  // renderHealthPanel()/logPanelDetections('health',...) para loguear evidencia,
-  // así lo que cuenta aquí como "señal de salud" es exactamente lo mismo que
-  // lo que el Comparador está midiendo (56% WR real).
-  const healthBySymbol = new Map(allRows.map(r => [r.symbol, healthScore(r)]));
-  for (const r of scored) {
-    r.confluence = { l: confMap.get(r.symbol + 'l') || 0, s: confMap.get(r.symbol + 's') || 0 };
-    const h = healthBySymbol.get(r.symbol);
-    r.health = {
-      l: (h && h.side === 'long'  && h.score >= 60) ? h.score : 0,
-      s: (h && h.side === 'short' && h.score >= 60) ? h.score : 0,
-    };
-  }
-
   // Radar automático: sigue temporalmente las monedas "on fire" del momento
   // sin depender de marcarlas con ★ (alimenta Seguimiento); el panel "Radar"
   // standalone se retiró por ser redundante con Seguimiento/Señales accionables.
@@ -1844,25 +1435,20 @@ function renderLab() {
   // histórica real (Comparador, Wilson) + niveles por ATR en una sola tarjeta.
   renderActionableSignals(confMap, confStrats, cols.length);
 
-  // Comparador de estrategias: registra señales nuevas (entradas al Top-4),
-  // evalúa las que ya tienen 30min/1h de antigüedad y refresca el panel
+  // Comparador de estrategias: registra señales nuevas (entradas al Top-4) y evalúa las
+  // que ya tienen 30min/1h de antigüedad. Corre siempre; pintar, solo con el Lab a la vista.
   logStrategySignals(top);
   evalStrategySignals();
-  renderStrategyCompare();
-  renderHourAnalysis();
-
-  // 🤖 Paper trading — solo opera estrategias que el Comparador YA validó
-  // (WR≥55%, n≥30 a 1h). Los bots anteriores (confluencia genérica / alineado
-  // a régimen) se retiraron por no estar conectados a ninguna evidencia real.
-  const validatedKeys = getValidatedStrategies();
-  checkPTExits();
-  checkPTEntries(top, validatedKeys);
-  renderPaperTrading(validatedKeys);
 
   // 🎯 Patrones W/M — el registro y la resolución corren siempre (en
   // patterns.js, cada ciclo, sin depender de esta pestaña); aquí solo se
-  // refresca la tabla cuando el Lab está visible.
+  // refresca la tabla.
   renderPatternTrack();
+
+  if (activeTab === 'lab') {
+    renderStrategyCompare();
+    renderLabResumen();
+  }
 }
 
 function toggleFav(sym) {
