@@ -1479,3 +1479,10 @@ details.lab-plegable > div.lab-replay { display: flex; align-items: center; flex
 .quad-flt-btn[data-quad="SQUEEZE"].active{ color: #88ccff; border-color: #2080c0; background: #001020; }
 .quad-flt-btn[data-quad="LIQ"].active    { color: #cc8888; border-color: #882020; background: #100000; }
 .btc-wall.weak { opacity: .62; }
+
+/* ₿ 📊 ¿Acierta el panel? */
+.btc-trk-sum { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 10.5px; color: #c8d8ff; padding: 2px 0 4px; }
+.btc-trk-fac { display: grid; grid-template-columns: 170px 1fr 40px 110px; gap: 8px; align-items: center; font-size: 10px; color: #c8d8ff; padding: 1px 0; }
+.btc-trk-fac b { text-align: right; }
+.btc-trk-n { font-size: 9px; color: #8d95a1; }
+@media (max-width: 520px) { .btc-trk-fac { grid-template-columns: 130px 1fr 36px; } .btc-trk-n { display: none; } }

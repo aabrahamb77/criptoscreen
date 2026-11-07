@@ -825,6 +825,7 @@ function renderBTC() {
     </div>
     <div class="dt-sec-title" style="margin-top:4px">Factores de confluencia — sesgo total ${BTC.bias >= 0 ? '+' : ''}${BTC.bias}/100</div>
     <div class="btc-factors">${cards}</div>
+    ${btcTrackCard()}
     <div class="dt-sec-title" style="margin-top:4px">📅 Snapshots por sesión — ¿acertó el sesgo?</div>
     <div class="btc-sessions">${sessRows}</div>
     <div class="cc-note">${(() => {
@@ -1613,6 +1614,123 @@ async function btcShotSend(file) {
   }
 }
 
+// ── 📊 ¿Acierta el panel? Seguimiento horario del sesgo y de cada factor ─────
+// Una foto por hora (la primera de cada hora con la pestaña visible y los datos
+// ya cargados): precio, sesgo y el voto de cada factor. Se corrige con las velas
+// de 15m a +1 h y +4 h. Así se ve si el sesgo acierta más que tirar una moneda
+// y, sobre todo, QUÉ factores aciertan y cuáles son ruido.
+const BTC_TRACK_KEY = 'scalp_btc_biaslog';
+const BTC_TRACK_MAX = 24 * 21;     // 3 semanas de fotos
+const BTC_TRACK_FLAT = 0.0005;     // movimientos de menos de ±0,05 % no cuentan (plano)
+const _btcStartTs = Date.now();
+const BTC_FACTOR_CODES = [
+  ['Flujo', 'flujo', '💰 Flujo de dinero'], ['Long/Short', 'ls', '⚖️ Long/Short (retail)'], ['Top traders', 'top', '🐋 Top traders'],
+  ['Barrido', 'barrido', '🧹 Barrido de liquidez'], ['Estructura SMC', 'smc', '🧠 Estructura SMC'], ['Setup SMC', 'setup', '🎯 Setup SMC'],
+  ['Imanes', 'imanes', '🧲 Imanes de liquidación'], ['Muros', 'muros', '🧱 Muros del libro'], ['Max pain', 'maxpain', '🎯 Max pain'],
+  ['Basis', 'basis', '📐 Basis perp-spot'], ['Coinbase', 'cbp', '🇺🇸 Coinbase Premium'], ['ETF', 'etf', '🏦 Flujos ETF'], ['Spot vs Perp', 'spotperp', '🔀 Spot vs Perp'],
+];
+const _btcFactorCode = name => BTC_FACTOR_CODES.find(([k]) => name.includes(k))?.[1] || null;
+
+function btcTrackLoad() {
+  try { return JSON.parse(localStorage.getItem(BTC_TRACK_KEY) || '[]'); } catch (_) { return []; }
+}
+function btcTrackRecord() {
+  const row = allRows.find(r => r.symbol === 'BTC');
+  // Esperar a que lleguen libros, OI, top traders, etc.: una foto a medio
+  // cargar mediría factores que todavía no votaban.
+  if (!row?.price || !BTC.factors.length || !BTC.ob?.mid || Date.now() - _btcStartTs < 90_000) return;
+  const h = Math.floor(Date.now() / 3600_000) * 3600_000;
+  let log = btcTrackLoad();
+  if (log.length && log[log.length - 1].h === h) return;
+  const f = {};
+  for (const x of BTC.factors) {
+    const c = _btcFactorCode(x.name);
+    if (c) f[c] = Math.round(x.score * 100);
+  }
+  log.push({ h, ts: Date.now(), p: row.price, b: BTC.bias, d: BTC.dir[0], f });
+  if (log.length > BTC_TRACK_MAX) log = log.slice(-BTC_TRACK_MAX);
+  // Directo (sin safeSetItem): si no cabe, se recorta ESTE historial, nunca el de otras secciones
+  try { localStorage.setItem(BTC_TRACK_KEY, JSON.stringify(log)); }
+  catch (_) { try { localStorage.setItem(BTC_TRACK_KEY, JSON.stringify(log.slice(-Math.floor(log.length / 2)))); } catch (_) { /* sin espacio */ } }
+}
+
+// Precio a ts+horizonte: apertura de la vela de 15m que contiene ese instante
+function _btcTrackPriceAt(k, ts) {
+  const t = Math.floor(ts / 900_000) * 900_000;
+  if (!k?.t?.length || t > k.t[k.t.length - 1]) return null;
+  let lo = 0, hi = k.t.length - 1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (k.t[m] === t) return k.o[m]; if (k.t[m] < t) lo = m + 1; else hi = m - 1; }
+  return null;
+}
+
+function btcTrackStats() {
+  const k = btcChartData();
+  const log = btcTrackLoad();
+  const rows = log.map(s => {
+    const p1 = _btcTrackPriceAt(k, s.ts + 3600_000), p4 = _btcTrackPriceAt(k, s.ts + 4 * 3600_000);
+    return { ...s, m1: p1 ? p1 / s.p - 1 : null, m4: p4 ? p4 / s.p - 1 : null };
+  });
+  const hitOf = (dir, m) => m == null || Math.abs(m) < BTC_TRACK_FLAT || dir === 'N' ? null : (dir === 'A') === (m > 0);
+  const agg = (list, key) => {
+    const r = list.map(x => hitOf(x.d, x[key])).filter(v => v != null);
+    return { n: r.length, ok: r.filter(Boolean).length };
+  };
+  const dirRows = rows.filter(r => r.d !== 'N');
+  const strong = dirRows.filter(r => Math.abs(r.b) >= 25);
+  const ups = rows.filter(r => r.m4 != null && Math.abs(r.m4) >= BTC_TRACK_FLAT);
+  // Por factor: ¿el signo de su voto acierta la dirección a +4 h? (solo votos de peso, |score| ≥ 0,15)
+  const fac = {};
+  for (const r of rows) {
+    if (r.m4 == null || Math.abs(r.m4) < BTC_TRACK_FLAT) continue;
+    for (const [c, v] of Object.entries(r.f || {})) {
+      if (Math.abs(v) < 15) continue;
+      fac[c] = fac[c] || { n: 0, ok: 0 };
+      fac[c].n++;
+      if ((v > 0) === (r.m4 > 0)) fac[c].ok++;
+    }
+  }
+  return {
+    rows, total: log.length,
+    h1: agg(dirRows, 'm1'), h4: agg(dirRows, 'm4'), s4: agg(strong, 'm4'),
+    upPct: ups.length ? ups.filter(r => r.m4 > 0).length / ups.length : null, nUp: ups.length,
+    neutral: rows.filter(r => r.d === 'N').length, fac,
+  };
+}
+
+function btcTrackCard() {
+  const S = btcTrackStats();
+  const pct = a => a.n ? `${a.ok}/${a.n} <b style="color:${a.ok / a.n >= 0.55 ? '#2fe08a' : a.ok / a.n <= 0.45 ? '#ff6666' : '#e8edf8'}">${Math.round(a.ok / a.n * 100)}%</b>` : '<span style="color:#8d95a1">sin datos aún</span>';
+  const facRows = Object.entries(S.fac).sort((a, b) => b[1].n - a[1].n).map(([c, v]) => {
+    const name = BTC_FACTOR_CODES.find(x => x[1] === c)?.[2] || c;
+    const r = v.ok / v.n;
+    const col = v.n < 20 ? '#8d95a1' : r >= 0.55 ? '#2fe08a' : r <= 0.45 ? '#ff6666' : '#e8edf8';
+    return `<div class="btc-trk-fac"><span>${name}</span>
+      <span class="btc-wall-bar"><i style="width:${Math.round(r * 100)}%;background:${col}"></i></span>
+      <b style="color:${col}">${Math.round(r * 100)}%</b><span class="btc-trk-n">${v.n} votos${v.n < 20 ? ' · pocos' : ''}</span></div>`;
+  }).join('') || '<div class="btc-card-empty">Aún no hay fotos con 4 h de recorrido.</div>';
+  const fmtM = m => m == null ? '<span style="color:#8d95a1">…</span>' : `<span class="${m >= 0 ? 'pos' : 'neg'}">${m >= 0 ? '+' : ''}${(m * 100).toFixed(2)}%</span>`;
+  const last = [...S.rows].slice(-8).reverse().map(r => {
+    const hit = r.d === 'N' || r.m4 == null || Math.abs(r.m4) < BTC_TRACK_FLAT ? '—' : ((r.d === 'A') === (r.m4 > 0) ? '✅' : '❌');
+    const d = new Date(r.h);
+    return `<div class="btc-sess-row"><span>${d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</span>
+      <span style="color:${r.d === 'A' ? '#2fe08a' : r.d === 'B' ? '#ff5555' : '#8aa0c8'}">${r.d === 'A' ? 'ALCISTA' : r.d === 'B' ? 'BAJISTA' : 'NEUTRAL'} ${r.b >= 0 ? '+' : ''}${r.b}</span>
+      <span>@ ${fmtPrice(r.p)}</span><span>+1h ${fmtM(r.m1)}</span><span>+4h ${fmtM(r.m4)}</span><span>${hit}</span></div>`;
+  }).join('');
+  return `<div class="btc-card btc-trk">
+    <div class="dt-sec-title">📊 ¿Acierta el panel? · foto del sesgo cada hora vs lo que hizo el precio</div>
+    <div class="btc-trk-sum">
+      <span>Sesgo ALCISTA/BAJISTA → acierto a +1h: ${pct(S.h1)}</span>
+      <span>a +4h: ${pct(S.h4)}</span>
+      <span>solo sesgos fuertes (|sesgo| ≥ 25) a +4h: ${pct(S.s4)}</span>
+      <span>referencia: el precio subió a +4h en ${S.upPct == null ? '—' : Math.round(S.upPct * 100) + '%'} de las horas</span>
+    </div>
+    <div class="btc-card-sub">Acierto de cada factor a +4h (cuando vota con fuerza)</div>
+    ${facRows}
+    ${last ? `<div class="btc-card-sub">Últimas fotos</div><div class="btc-sessions">${last}</div>` : ''}
+    <div class="btc-card-note">${S.total} fotos guardadas en este navegador (una por hora con la pestaña visible; hasta 3 semanas). Con menos de ~30 por casilla los porcentajes son casi ruido: un factor merece peso si se mantiene por encima del 55% con muchos votos, y uno que se queda por debajo del 45% acierta al revés. Los movimientos de menos de ±0,05% no cuentan.</div>
+  </div>`;
+}
+
 // ── Hook por ciclo (lo llama load() en main.js) ─────────────────────────────
 // btcFetchOB/btcFetchCG proxean Binance+OKX+CoinGlass A TRAVÉS del server
 // (/api/exch/depth, /api/cg/*) — a diferencia del resto del screener, que va
@@ -1639,6 +1757,7 @@ function btcOnCycle() {
   if (now - (BTC.k15x?.ts || 0) > 5 * 60_000)  btcFetchK15x(); // velas extendidas (~10 días) para el zoom
   btcAccumLiqs(); // acumula liquidaciones de BTC (WS Bybit) por vela 15m — banda del gráfico
   btcComputeFactors();
+  btcTrackRecord(); // 📊 foto horaria del sesgo para medir si acierta
   btcCheckFibZone(); // 🟡 alerta al entrar a la zona dorada del Fibonacci (50%–61.8%)
   btcSnapshotSessions();
   if (activeTab === 'btc') renderBTC();
