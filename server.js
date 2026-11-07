@@ -306,5 +306,25 @@ app.post('/api/explain', rateLimit(10, 60_000), async (req, res) => {
   }
 });
 
+// Lee una captura del Liquidation Heatmap / Liquidation Map de CoinGlass (panel
+// ₿ BTC) y devuelve sus niveles de liquidez. La imagen llega ya reducida a
+// ≤1568 px en JPEG (~150-400 KB) y solo cuando el usuario pega una captura, así
+// que apenas pesa en el ancho de banda de Render.
+app.post('/api/vision/cg', rateLimit(6, 60_000), async (req, res) => {
+  if (!ai.enabled()) return res.status(503).json({ error: 'falta ANTHROPIC_API_KEY en el servidor (.env o variables de Render)' });
+  const { image, mediaType, price } = req.body || {};
+  if (typeof image !== 'string' || image.length < 1000 || image.length > 8_000_000 || !/^[A-Za-z0-9+/=]+$/.test(image.slice(0, 200))) {
+    return res.status(400).json({ error: 'imagen inválida' });
+  }
+  const mt = ['image/jpeg', 'image/png', 'image/webp'].includes(mediaType) ? mediaType : 'image/jpeg';
+  try {
+    const out = await ai.readLiquidityShot(image, mt, Number.isFinite(+price) && +price > 0 ? +price : null);
+    res.json(out);
+  } catch (err) {
+    console.error('POST /api/vision/cg error:', err.message);
+    res.status(502).json({ error: String(err.message || 'no se pudo leer la captura').slice(0, 200) });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Screener → http://localhost:${PORT}`));

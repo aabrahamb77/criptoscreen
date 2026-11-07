@@ -440,6 +440,7 @@ const ALERT_DEFAULTS = {
   btcBias:     true,   // ₿ el sesgo de BTC cambió de dirección
   marketBias:  true,   // ⚖️ el sesgo general del mercado cambió (ALCISTA/BAJISTA/NEUTRAL)
   btcFib:      true,   // ₿ BTC entró en la zona dorada del Fibonacci (50%–61.8%)
+  btcSmc:      true,   // 🧠 setup SMC de BTC: barrido + CHoCH armado / precio en la zona de entrada (smc.js)
   qalHot:      true,   // 🔥 moneda entra resaltada al cuadrante alineado (>5% en 1h)
   briefTop:    true,   // 🧠 una moneda del brief alcanza nota >= 85 (BRIEF_ALERT_MIN)
   volWave:     true,   // 🌊 ola de volumen alcista: arranque de una explosión (olas.js)
@@ -458,6 +459,7 @@ const ALERT_LABELS = {
   btcBias:     '₿ Cambio de sesgo de BTC',
   marketBias:  '⚖️ Cambio de sesgo general del mercado',
   btcFib:      '🟡 BTC en zona dorada del Fibonacci (50%–61.8%)',
+  btcSmc:      '🧠 Setup SMC de BTC (barrido + CHoCH → retroceso al OB)',
   qalHot:      '🔥 Moneda resaltada en cuadrante alineado (>5% en 1h)',
   briefTop:    '🧠 Brief: moneda con nota ≥85 (fiable para operar)',
   volWave:     '🌊 Ola de volumen alcista (arranque de explosión)',
@@ -519,6 +521,8 @@ const ALERT_SOUNDS = {
   patternDone: dir => dir === 'short' ? [[520,'sine',150],[340,'sine',260]]       : [[860,'sine',110],[1160,'sine',110],[1460,'sine',170]],
   btcBias:     dir => dir === 'short' ? [[620,'sawtooth',150],[340,'sawtooth',230]] : [[620,'sawtooth',150],[1000,'sawtooth',230]],
   btcFib:      ()  => [[740,'sine',150],[980,'sine',280]],
+  // Setup SMC: tres notas "de campana" (sine) que suben en L y bajan en S.
+  btcSmc:      dir => dir === 'short' ? [[880,'sine',110],[660,'sine',110],[520,'sine',240]] : [[520,'sine',110],[660,'sine',110],[880,'sine',240]],
   marketBias:  dir => dir === 'short' ? [[700,'triangle',130],[400,'triangle',180]] : dir === 'long' ? [[700,'triangle',130],[900,'triangle',180]] : [[650,'triangle',280]],
   qalHot:      dir => dir === 'short' ? [[520,'sawtooth',90],[520,'sawtooth',90]] : [[1020,'sawtooth',90],[1020,'sawtooth',90]],
   // Brief: acorde ascendente de 3 notas (el aviso más "importante" del sistema,
@@ -558,6 +562,7 @@ const ALERT_PRIORITY = {
   // prisa de la que no.
   patternRetest: 2,
   patternDone: 2,  // 🎯 el patrón ya tocó objetivo o stop
+  btcSmc:      2,  // 🧠 precio en la zona del setup SMC: dura minutos, no caduca en una vela
   // La ola caduca aún más rápido que una ruptura: en la medición, la mitad del
   // recorrido de la hora siguiente se hacía en los primeros 15 minutos.
   volWave:     3,

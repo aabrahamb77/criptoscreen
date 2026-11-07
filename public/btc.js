@@ -4,14 +4,20 @@
  * Cada factor vota entre −1 y +1 y tiene un peso; la suma ponderada da un
  * sesgo −100..+100 → probabilidad direccional, SIEMPRE con el porqué en texto.
  *
- * Factores (todos con datos gratuitos de Bybit):
+ * Factores (datos gratuitos, casi todo pedido directo desde el navegador):
  *  1. Flujo de dinero (25): OI multi-ventana + precio + CVD + funding
  *  2. Long/Short ratio (15): cuentas long vs short (lectura contrarian del retail)
- *  3. Barridos de liquidez (15): mecha que caza stops bajo un mínimo y recupera
- *  4. Liquidez pendiente / imanes (15): equal highs/lows sin barrer = pools de stops
- *  5. Muros de order book (10): clusters de bids/asks ≥12× la mediana en ±3%
+ *  3. Barridos de liquidez (15): mecha que caza stops (pivote o PDH/PDL/Asia/Londres) y recupera
+ *  3b. Estructura SMC (12) con contexto 4h · 3c. Setup SMC activo (10) — smc.js
+ *  4. Imanes (15): clusters del mapa de liquidaciones estimado (btcliq.js); si no, pools
+ *  5. Muros de order book (10): 5 libros combinados, tramos ≥2,5× el típico (btcbook.js)
  *  6. Max pain de opciones (10): strike que minimiza el pago del vencimiento cercano
  *  7. Basis perp-spot (10): premium = sobrecalentado, descuento = miedo
+ *  + Top traders, Coinbase Premium y Spot vs Perp (fuentes públicas)
+ *
+ * CoinGlass: la API key del .env responde "Upgrade plan" a TODO (nov 2026), así
+ * que nada depende de ella; si algún día el plan cambia, los módulos CG vuelven solos.
+ * Para cruzar con su heatmap: 📸 pegar una captura (Claude la lee en /api/vision/cg).
  *
  * Sesiones: Asia 00:00 · Londres 08:00 · Nueva York 13:30 (UTC). Al abrir cada
  * sesión se guarda un snapshot del sesgo para comparar contra lo que pasó.
@@ -38,74 +44,8 @@ const BTC = {
 
 // ── Fetchers (cadencias propias, solo BTC = coste mínimo) ───────────────────
 
-// Order book COMBINADO de los 3 exchanges más grandes (Bybit directo desde el
-// navegador + Binance/OKX vía /api/exch/depth, proxeado por el server para
-// evitar CORS). Los muros se buscan sobre la profundidad SUMADA, no solo la
-// de Bybit — un muro que solo existe en un exchange pequeño ya no cuela.
-async function btcFetchOB() {
-  BTC.ob = { ...(BTC.ob || {}), ts: Date.now() }; // marca throttle aunque falle
-  try {
-    // Multi-exchange SOLO en localhost: en Render (5GB/mes) cada libro de
-    // Binance+OKX vía proxy son ~50KB/30s ≈ 1.4GB/mes — en remoto usamos
-    // únicamente Bybit directo desde el navegador (cero tráfico del server).
-    const multi = typeof IS_LOCAL_SRV !== 'undefined' ? IS_LOCAL_SRV : true;
-    const [byRes, bnRes, okRes] = await Promise.all([
-      bybitGet('/v5/market/orderbook?category=linear&symbol=BTCUSDT&limit=500').catch(() => null),
-      multi ? fetch('/api/exch/depth?exchange=binance&symbol=BTCUSDT&limit=500').then(r => r.json()).catch(() => null) : Promise.resolve(null),
-      multi ? fetch('/api/exch/depth?exchange=okx&symbol=BTC-USDT-SWAP&limit=400').then(r => r.json()).catch(() => null) : Promise.resolve(null),
-    ]);
-
-    const byBids = (byRes?.result?.b || []).map(([p, s]) => [+p, +s]);
-    const byAsks = (byRes?.result?.a || []).map(([p, s]) => [+p, +s]);
-    const bnBids = (bnRes?.bids || []).map(([p, s]) => [+p, +s]);
-    const bnAsks = (bnRes?.asks || []).map(([p, s]) => [+p, +s]);
-    const okBids = (okRes?.bids || okRes?.data?.[0]?.bids || []).map(([p, s]) => [+p, +s]);
-    const okAsks = (okRes?.asks || okRes?.data?.[0]?.asks || []).map(([p, s]) => [+p, +s]);
-    const exch = { bybit: !!byBids.length, binance: !!bnBids.length, okx: !!okBids.length };
-
-    const allBids = [...byBids, ...bnBids, ...okBids];
-    const allAsks = [...byAsks, ...bnAsks, ...okAsks];
-    if (!allBids.length || !allAsks.length) return;
-    const mid = (allBids[0][0] + allAsks[0][0]) / 2; // aprox: mejor bid/ask combinado
-
-    // Agrupa niveles casi idénticos ENTRE exchanges (cada uno cotiza a un tick
-    // ligeramente distinto) antes de buscar muros, para que el tamaño se sume de verdad.
-    const bucketed = levels => {
-      const bucket = mid * 0.0004; // ~0.04%
-      const map = new Map();
-      for (const [p, s] of levels) {
-        const b = Math.round(p / bucket) * bucket;
-        map.set(b, (map.get(b) || 0) + s);
-      }
-      return [...map.entries()];
-    };
-    const inRange = lv => Math.abs(lv[0] - mid) / mid <= 0.03; // ±3%
-    const detect = side => {
-      const lvls = bucketed(side).filter(inRange);
-      if (lvls.length < 5) return { walls: [], usd: 0 };
-      const totalUSD = lvls.reduce((a, l) => a + l[0] * l[1], 0);
-      // Muro = nivel con ≥2.5% de la profundidad del lado (±3%) y mínimo $400K.
-      // Y SIEMPRE se muestran los 2 clusters más grandes aunque no lleguen al
-      // umbral — en libros tranquilos antes desaparecían todos los muros.
-      const TH = Math.max(totalUSD * 0.025, 400_000);
-      const ranked = lvls.map(l => ({ price: l[0], usd: l[0] * l[1] })).sort((a, b) => b.usd - a.usd);
-      let walls = ranked.filter(w => w.usd >= TH);
-      if (walls.length < 2) walls = ranked.slice(0, 2);
-      // agrupar muros a <0.1% de distancia
-      walls.sort((a, b) => a.price - b.price);
-      const merged = [];
-      for (const w of walls) {
-        const last = merged[merged.length - 1];
-        if (last && Math.abs(w.price - last.price) / mid < 0.001) { last.usd += w.usd; }
-        else merged.push({ ...w });
-      }
-      merged.sort((a, b) => b.usd - a.usd);
-      return { walls: merged.slice(0, 4), usd: totalUSD };
-    };
-    const B = detect(allBids), A = detect(allAsks);
-    BTC.ob = { bidWalls: B.walls, askWalls: A.walls, bidUSD: B.usd, askUSD: A.usd, mid, exch, ts: Date.now() };
-  } catch (err) { console.error('btcFetchOB falló:', err); }
-}
+// Order book: ver btcbook.js (btcBookFetch) — 5 libros combinados directo
+// desde el navegador. Deja BTC.ob con la misma forma de siempre.
 
 async function btcFetchLS() {
   BTC.ls = { ...(BTC.ls || {}), ts: Date.now() };
@@ -287,6 +227,7 @@ async function btcFetchCG() {
     BTC.cg.err.liqHist = null;
   } else { BTC.cg.liqHist = null; BTC.cg.err.liqHist = lh.err || 'sin datos'; }
 
+  BTC.cg.allFail = ['top', 'mp', 'hm', 'cbp', 'etf', 'taker', 'liqHist'].every(kk => BTC.cg.err[kk]);
   btcComputeFactors();
   if (activeTab === 'btc') renderBTC();
 }
@@ -298,8 +239,10 @@ async function btcFetchFree() {
   BTC.free = { ...(BTC.free || {}), ts: Date.now() };
 
   // 🐋 Top traders de Binance (endpoint público de Binance Futures, sin key)
+  // Directo desde el navegador (Binance permite CORS). Antes iba por el server
+  // y en Render fallaba siempre: Binance bloquea las IPs de EE. UU. (HTTP 451).
   try {
-    const r = await fetch('/api/exch/top-ls').then(x => x.json());
+    const r = await fetch('https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=BTCUSDT&period=1h&limit=8').then(x => x.json());
     if (Array.isArray(r) && r.length) {
       const last = r[r.length - 1];
       const prev = r.length > 2 ? r[r.length - 3] : last;
@@ -310,8 +253,12 @@ async function btcFetchFree() {
 
   // 🇺🇸 Premium Coinbase vs Binance calculado en vivo con precios spot públicos
   try {
-    const r = await fetch('/api/exch/premium').then(x => x.json());
-    if (Number.isFinite(r?.coinbase) && Number.isFinite(r?.binance) && r.binance > 0) {
+    const [cb, bn] = await Promise.all([
+      fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot').then(x => x.json()),
+      fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT').then(x => x.json()),
+    ]);
+    const r = { coinbase: parseFloat(cb?.data?.amount), binance: parseFloat(bn?.price) };
+    if (Number.isFinite(r.coinbase) && Number.isFinite(r.binance) && r.binance > 0) {
       const prevRate = BTC.free.prem?.rate ?? null;
       BTC.free.prem = { rate: (r.coinbase - r.binance) / r.binance * 100, prevRate };
     }
@@ -407,6 +354,24 @@ function btcLiquidity(row) {
       if (ph.i < i - 2 && k.h[i] > ph.price + 0.05 * atr && k.c[i] < ph.price) sweptHigh = { level: ph.price, barsAgo: n - 1 - i };
     }
   }
+
+  // Barridos de liquidez CON NOMBRE (PDH/PDL, Asia, Londres, semana): pesan más
+  // que un pivote cualquiera porque ahí está la mayor bolsa de stops. Cuenta si
+  // la vela que lo atravesó cerró de vuelta dentro, o si el precio ya volvió.
+  const kc = btcChartData();
+  const kl = BTC.smc?.keyLevels || [];
+  if (kc && kl.length) {
+    const nn = kc.c.length;
+    for (const Lv of kl) {
+      if (Lv.sweptI == null || nn - 1 - Lv.sweptI > 7) continue;
+      const i = Lv.sweptI;
+      const back = Lv.above ? (kc.c[i] < Lv.price || kc.c[nn - 1] < Lv.price) : (kc.c[i] > Lv.price || kc.c[nn - 1] > Lv.price);
+      if (!back) continue;
+      const ev = { level: Lv.price, barsAgo: nn - 1 - i, key: Lv.key };
+      if (Lv.above) { if (!sweptHigh || ev.barsAgo <= sweptHigh.barsAgo + 2) sweptHigh = ev; }
+      else          { if (!sweptLow  || ev.barsAgo <= sweptLow.barsAgo + 2)  sweptLow  = ev; }
+    }
+  }
   return { poolsAbove, poolsBelow, sweptLow, sweptHigh, atr };
 }
 
@@ -414,8 +379,11 @@ function btcLiquidity(row) {
 function btcComputeFactors() {
   const row = allRows.find(r => r.symbol === 'BTC');
   if (!row) return;
-  BTC.liq = btcLiquidity(row);
+  // Orden: SMC (estructura + liquidez con nombre) → pools/barridos (usan esos
+  // niveles) → setups (usan pools, clusters de liquidaciones y muros como objetivos)
   if (typeof btcComputeSMC === 'function') btcComputeSMC();
+  BTC.liq = btcLiquidity(row);
+  if (typeof btcSmcSetups === 'function') btcSmcSetups();
   const F = [];
   const add = (name, score, weight, reason) =>
     F.push({ name, score: Math.max(-1, Math.min(1, score)), weight, reason });
@@ -469,10 +437,12 @@ function btcComputeFactors() {
   // 3) Barridos de liquidez (15)
   {
     const L = BTC.liq;
+    const lowTxt  = s => s.key ? `el ${s.key} (${fp(s.level)})` : `el mínimo de ${fp(s.level)}`;
+    const highTxt = s => s.key ? `el ${s.key} (${fp(s.level)})` : `el máximo de ${fp(s.level)}`;
     if (L?.sweptLow && (!L.sweptHigh || L.sweptLow.barsAgo <= L.sweptHigh.barsAgo)) {
-      add('🧹 Barrido de liquidez', 0.9, 15, `se barrió el mínimo de ${fp(L.sweptLow.level)} hace ${L.sweptLow.barsAgo * 15} min y RECUPERÓ — stop hunt bajista completado, típico giro ALCISTA`);
+      add('🧹 Barrido de liquidez', L.sweptLow.key ? 1 : 0.9, 15, `se barrió ${lowTxt(L.sweptLow)} hace ${L.sweptLow.barsAgo * 15} min y RECUPERÓ — stop hunt bajista completado, típico giro ALCISTA`);
     } else if (L?.sweptHigh) {
-      add('🧹 Barrido de liquidez', -0.9, 15, `se barrió el máximo de ${fp(L.sweptHigh.level)} hace ${L.sweptHigh.barsAgo * 15} min y RECHAZÓ — stop hunt alcista completado, típico giro BAJISTA`);
+      add('🧹 Barrido de liquidez', L.sweptHigh.key ? -1 : -0.9, 15, `se barrió ${highTxt(L.sweptHigh)} hace ${L.sweptHigh.barsAgo * 15} min y RECHAZÓ — stop hunt alcista completado, típico giro BAJISTA`);
     } else {
       add('🧹 Barrido de liquidez', 0, 15, 'sin barridos recientes (últimas 2h) — la liquidez sigue intacta');
     }
@@ -522,13 +492,51 @@ function btcComputeFactors() {
         else if (up && eq.posPct > 75) { s *= 0.8; txt += ' — ojo: perseguir largos en zona cara'; }
         else if (!up && eq.posPct < 25) { s *= 0.8; txt += ' — ojo: perseguir cortos en zona barata'; }
       }
+
+      // Contexto 4h (de arriba hacia abajo): a favor refuerza, en contra recorta
+      const htf = BTC.htf;
+      if (htf?.trend && htf.trend !== 'NEUTRAL') {
+        const htfUp = htf.trend === 'up';
+        if (htfUp === up) { s *= 1.2; txt += ` · 4h ${htfUp ? 'alcista' : 'bajista'} a favor ✓`; }
+        else { s *= 0.6; txt += ` · ⚠ contra la 4h (${htfUp ? 'alcista' : 'bajista'}${htf.last ? ` desde ${htf.last.type} en ${fp(htf.last.price)}` : ''}) — probable retroceso dentro de la tendencia mayor`; }
+        if (htf.eq) txt += ` · 4h en ${htf.eq.posPct >= 50 ? 'premium' : 'discount'} ${htf.eq.posPct.toFixed(0)}%`;
+      }
       add('🧠 Estructura SMC', Math.max(-1, Math.min(1, s)), 12, txt);
     } else add('🧠 Estructura SMC', 0, 12, 'sin rupturas de estructura mayor (BOS/CHoCH) claras en el historial analizado');
   }
 
-  // 4) Liquidez pendiente / imanes (15) — heatmap REAL de CoinGlass si el plan
-  //    lo incluye; si no, inferencia estructural (equal highs/lows sin barrer)
+  // 3c) Setup SMC activo (10): barrido + CHoCH + zona de entrada. Solo cuenta
+  //     mientras está armado o con el precio en la zona; la nota escala el voto.
   {
+    const act = BTC.smc?.setups?.active?.filter(s => s.state === 'armado' || s.state === 'en zona') || [];
+    const s0 = act.sort((a, b) => b.pts - a.pts)[0];
+    if (s0) {
+      const sign = s0.dir === 'long' ? 1 : -1;
+      add('🎯 Setup SMC', sign * (0.35 + 0.15 * s0.pts), 10,
+        `${s0.dir === 'long' ? 'LARGO' : 'CORTO'} ${s0.grade} ${s0.state === 'en zona' ? 'con el precio EN LA ZONA' : 'armado, esperando retroceso'}: ` +
+        `barrió ${s0.level?.key || (s0.level?.kind === 'eq' ? 'iguales' : 'swing')} ${fp(s0.level.price)} + ${s0.chochType} · zona ${fp(s0.zBot)}–${fp(s0.zTop)} · stop ${fp(s0.stop)} · T1 ${fp(s0.t1)} · R:R ${s0.rr.toFixed(1)}`);
+    }
+  }
+
+  // 4) Liquidez pendiente / imanes (15). Por orden de preferencia:
+  //    a) mapa de liquidaciones propio (btcliq.js, OI de Bybit+Binance)
+  //    b) heatmap de CoinGlass (si algún día el plan lo incluye)
+  //    c) inferencia estructural (equal highs/lows sin barrer)
+  //    En los tres, el imán es el cluster gordo y CERCANO: tamaño / distancia.
+  const LM = BTC.liqm;
+  const pullOf = c => c ? c.usd / Math.max(Math.abs(c.level - row.price) / row.price, 0.002) : 0;
+  const near = arr => (arr || []).filter(c => Math.abs(c.level - row.price) / row.price <= 0.04);
+  if (LM && (near(LM.above).length || near(LM.below).length)) {
+    const up = near(LM.above), dn = near(LM.below);
+    const pUp = up.reduce((a, c) => a + pullOf(c), 0), pDn = dn.reduce((a, c) => a + pullOf(c), 0);
+    const s = (pUp - pDn) / Math.max(pUp + pDn, 1) * 0.9;
+    const d = c => `${fmtUSD(c.usd)} en ${fp(c.level)} (${c.level > row.price ? '+' : '−'}${(Math.abs(c.level - row.price) / row.price * 100).toFixed(2)}%)`;
+    const parts = [];
+    if (up[0]) parts.push(`cortos por liquidar arriba: ${d(up.sort((a, b) => pullOf(b) - pullOf(a))[0])}`);
+    if (dn[0]) parts.push(`largos por liquidar abajo: ${d(dn.sort((a, b) => pullOf(b) - pullOf(a))[0])}`);
+    add('🧲 Imanes de liquidación', s, 15,
+      `${parts.join(' · ')} — el imán dominante está ${pUp >= pDn ? 'ARRIBA' : 'ABAJO'} · en ±3%: ${fmtUSD(LM.shortUSD3)} cortos / ${fmtUSD(LM.longUSD3)} largos · modelo propio (OI Bybit${LM.srcs.binance ? '+Binance' : ''})`);
+  } else {
     const cl = BTC.cg?.clusters;
     if (cl && (cl.above || cl.below)) {
       // atracción = tamaño del cluster / distancia (el imán gordo y cercano manda)
@@ -538,7 +546,7 @@ function btcComputeFactors() {
       const parts = [];
       if (cl.above) parts.push(`${fmtUSD(cl.above.usd)} pendientes en ${fp(cl.above.level)} (+${((cl.above.level - row.price) / row.price * 100).toFixed(2)}%)`);
       if (cl.below) parts.push(`${fmtUSD(cl.below.usd)} en ${fp(cl.below.level)} (−${((row.price - cl.below.level) / row.price * 100).toFixed(2)}%)`);
-      add('🧲 Imanes de liquidación', s, 15, `heatmap CoinGlass (24h, DATO REAL): ${parts.join(' · ')} — el imán dominante está ${pUp >= pDn ? 'ARRIBA' : 'ABAJO'}`);
+      add('🧲 Imanes de liquidación', s, 15, `heatmap CoinGlass (24h, modelo de CoinGlass): ${parts.join(' · ')} — el imán dominante está ${pUp >= pDn ? 'ARRIBA' : 'ABAJO'}`);
     } else {
       const L = BTC.liq;
       const up = L?.poolsAbove?.[0], dn = L?.poolsBelow?.[0];
@@ -559,16 +567,30 @@ function btcComputeFactors() {
     }
   }
 
-  // 5) Muros de order book (10)
+  // 5) Muros de order book (10) — 5 libros combinados (btcbook.js). Vota el
+  //    desequilibrio bids/asks en ±1 % y, sobre todo, los muros CERCANOS (≤0,8 %):
+  //    un muro de compra justo debajo es soporte; uno de venta justo encima, techo.
   if (BTC.ob?.mid) {
-    const bw = BTC.ob.bidWalls?.[0], aw = BTC.ob.askWalls?.[0];
-    const imb = (BTC.ob.bidUSD - BTC.ob.askUSD) / Math.max(BTC.ob.bidUSD + BTC.ob.askUSD, 1);
+    const ob = BTC.ob;
+    const dist = w => Math.abs(w.price - row.price) / row.price;
+    const nearW = arr => (arr || []).filter(w => dist(w) <= 0.008).sort((a, b) => dist(a) - dist(b))[0];
+    const bw = nearW(ob.bidWalls), aw = nearW(ob.askWalls);
+    const imb = (ob.bidUSD - ob.askUSD) / Math.max(ob.bidUSD + ob.askUSD, 1);
+    let s = imb * 1.5;
+    if (bw) s += 0.35 * Math.min(1, bw.str / 5);
+    if (aw) s -= 0.35 * Math.min(1, aw.str / 5);
+    const age = w => w.first ? `, lleva ${Math.max(1, Math.round((Date.now() - w.first) / 60_000))} min` : '';
+    const wTxt = (w, kind) => `${kind} ${fmtUSD(w.usd)} en ${fp(w.lo)}–${fp(w.hi)} (${w.price >= row.price ? '+' : '−'}${(dist(w) * 100).toFixed(2)}% · ${btcBookSrcTxt(w.src)}${age(w)})`;
     const parts = [];
-    if (bw) parts.push(`muro de compra ${fmtUSD(bw.usd)} en ${fp(bw.price)} (soporte)`);
-    if (aw) parts.push(`muro de venta ${fmtUSD(aw.usd)} en ${fp(aw.price)} (barrera)`);
-    parts.push(`profundidad ±3%: ${imb >= 0 ? '+' : ''}${(imb * 100).toFixed(0)}% hacia ${imb >= 0 ? 'bids' : 'asks'}`);
-    add('🧱 Muros order book', imb * 2, 10, parts.join(' · '));
-  } else add('🧱 Muros order book', 0, 10, 'cargando order book…');
+    if (bw) parts.push(wTxt(bw, bw.weak ? 'zona densa de compra cerca' : 'muro de COMPRA cerca'));
+    else if (ob.bidWalls?.[0]) parts.push(wTxt(ob.bidWalls[0], ob.bidWalls[0].weak ? 'zona densa de compra' : 'mayor muro de compra'));
+    if (aw) parts.push(wTxt(aw, aw.weak ? 'zona densa de venta cerca' : 'muro de VENTA cerca'));
+    else if (ob.askWalls?.[0]) parts.push(wTxt(ob.askWalls[0], ob.askWalls[0].weak ? 'zona densa de venta' : 'mayor muro de venta'));
+    parts.push(`±1%: bids ${fmtUSD(ob.bidUSD)} vs asks ${fmtUSD(ob.askUSD)} (${imb >= 0 ? '+' : ''}${(imb * 100).toFixed(0)}% hacia ${imb >= 0 ? 'compras' : 'ventas'})`);
+    const nEx = Object.values(ob.exch || {}).filter(Boolean).length;
+    parts.push(`${nEx}/5 libros`);
+    add('🧱 Muros order book', s, 10, parts.join(' · '));
+  } else add('🧱 Muros order book', 0, 10, 'cargando order book de Bybit, Binance, OKX e Hyperliquid…');
 
   // 6) Max pain de opciones (10) — Deribit vía CoinGlass si está disponible
   //    (mercado dominante de opciones); si no, calculado de la cadena de Bybit
@@ -700,20 +722,28 @@ function renderBTC() {
     .map(f => `<div class="btc-reason"><span style="color:${f.score > 0 ? '#2fe08a' : f.score < 0 ? '#ff6666' : '#8aa0c8'}">${f.score > 0 ? '▲' : f.score < 0 ? '▼' : '·'}</span> ${f.reason}</div>`)
     .join('') || '<div class="btc-reason">Sin factores con señal clara ahora mismo — mejor esperar.</div>';
 
-  // Escalera de niveles clave (de mayor a menor precio)
+  // Escalera de niveles clave (de mayor a menor precio). Solo lo que está a
+  // ±4 % (salvo el max pain): lo lejano no sirve para un scalp y ensucia la lista.
   const L = BTC.liq || {};
   const lvls = [];
+  const srcTag = w => typeof btcBookSrcTxt === 'function' ? ` · ${btcBookSrcTxt(w.src)}` : '';
   for (const p of (L.poolsAbove || [])) lvls.push({ price: p.level, label: '🧲 pool de liquidez (equal highs sin barrer)', col: '#4aa8d8' });
-  for (const w of (BTC.ob?.askWalls || []).slice(0, 3)) lvls.push({ price: w.price, label: `🧱 muro de VENTA ${fmtUSD(w.usd)} (3 exch.)`, col: '#ff8866' });
+  for (const w of (BTC.ob?.askWalls || []).slice(0, 3)) lvls.push({ price: w.price, label: `🧱 ${w.weak ? 'zona densa de venta' : 'muro de VENTA'} ${fmtUSD(w.usd)}${srcTag(w)}`, col: '#ff8866' });
+  for (const w of (BTC.ob?.bidWalls || []).slice(0, 3)) lvls.push({ price: w.price, label: `🧱 ${w.weak ? 'zona densa de compra' : 'muro de COMPRA'} ${fmtUSD(w.usd)}${srcTag(w)}`, col: '#55dd99' });
+  for (const p of (L.poolsBelow || [])) lvls.push({ price: p.level, label: '🧲 pool de liquidez (equal lows sin barrer)', col: '#4aa8d8' });
+  for (const c of (BTC.liqm?.above || []).slice(0, 2)) lvls.push({ price: c.level, label: `🔥 cortos por liquidar ${fmtUSD(c.usd)} (modelo)`, col: '#f5d76e' });
+  for (const c of (BTC.liqm?.below || []).slice(0, 2)) lvls.push({ price: c.level, label: `🔥 largos por liquidar ${fmtUSD(c.usd)} (modelo)`, col: '#f5d76e' });
+  for (const kl of (BTC.smc?.keyLevels || [])) if (!kl.swept) lvls.push({ price: kl.price, label: `💧 ${kl.key} (liquidez sin barrer)`, col: '#c9a7ff' });
+  for (const sl of (typeof btcSmcSetupLevels === 'function' ? btcSmcSetupLevels() : [])) lvls.push({ price: sl.v, label: sl.label, col: sl.col });
+  for (const sh of btcShotLevels()) lvls.push({ price: sh.price, label: `📸 CoinGlass: ${sh.label}`, col: '#ff7ad9' });
   const mpL = BTC.cg?.mp?.price ? { ...BTC.cg.mp, src: ' · Deribit' } : BTC.mp?.price ? { ...BTC.mp, src: '' } : null;
-  if (mpL) lvls.push({ price: mpL.price, label: `🎯 max pain opciones (${mpL.expiry})${mpL.src}`, col: '#ffd76a' });
   if (BTC.cg?.clusters?.above) lvls.push({ price: BTC.cg.clusters.above.level, label: `🔥 cluster de liquidaciones ${fmtUSD(BTC.cg.clusters.above.usd)} (heatmap CG)`, col: '#ff9a3c' });
   if (BTC.cg?.clusters?.below) lvls.push({ price: BTC.cg.clusters.below.level, label: `🔥 cluster de liquidaciones ${fmtUSD(BTC.cg.clusters.below.usd)} (heatmap CG)`, col: '#ff9a3c' });
-  lvls.push({ price: row.price, label: '● PRECIO ACTUAL', col: '#e8edf8', now: true });
-  for (const w of (BTC.ob?.bidWalls || []).slice(0, 3)) lvls.push({ price: w.price, label: `🧱 muro de COMPRA ${fmtUSD(w.usd)} (3 exch.)`, col: '#55dd99' });
-  for (const p of (L.poolsBelow || [])) lvls.push({ price: p.level, label: '🧲 pool de liquidez (equal lows sin barrer)', col: '#4aa8d8' });
-  lvls.sort((a, b) => b.price - a.price);
-  const ladder = lvls.map(l => {
+  const inRange = lvls.filter(l => Math.abs(l.price - row.price) / row.price <= 0.04);
+  if (mpL) inRange.push({ price: mpL.price, label: `🎯 max pain opciones (${mpL.expiry})${mpL.src}`, col: '#ffd76a' });
+  inRange.push({ price: row.price, label: '● PRECIO ACTUAL', col: '#e8edf8', now: true });
+  inRange.sort((a, b) => b.price - a.price);
+  const ladder = inRange.map(l => {
     const d = (l.price - row.price) / row.price * 100;
     return `<div class="btc-lvl${l.now ? ' btc-lvl-now' : ''}">
       <b style="color:${l.col}">${fp(l.price)}</b>
@@ -774,12 +804,24 @@ function renderBTC() {
       <canvas id="btc-chart"></canvas>
       <div class="dt-chart-hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <button class="chart-tf-btn" id="btc-expand-btn" onclick="btcToggleExpand()">${localStorage.getItem('scalp_btc_big') === '1' ? '⛶ Compactar' : '⛶ Expandir'}</button>
-        <button class="chart-tf-btn${typeof _btcSmcOn !== 'undefined' && _btcSmcOn ? ' active' : ''}" id="btc-smc-btn" onclick="btcToggleSMC()" title="Smart Money Concepts: estructura mayor (chips BOS/CHoCH) e interna (triángulos), order blocks vigentes, FVG operables y equilibrium 50% con zonas premium/discount">🧠 SMC</button>
+        <button class="chart-tf-btn${typeof _btcSmcOn !== 'undefined' && _btcSmcOn ? ' active' : ''}" id="btc-smc-btn" onclick="btcToggleSMC()" title="Smart Money Concepts: estructura mayor (chips BOS/CHoCH) e interna (triángulos), order blocks (★ = desplazamiento, ★★ = además barrió liquidez), breakers (BRK), FVG, equilibrium 50% y el setup activo">🧠 SMC</button>
         <button class="chart-tf-btn${typeof _btcSmcTf !== 'undefined' && _btcSmcTf === '1h' ? ' active' : ''}" id="btc-smc-tf-btn" onclick="btcToggleSMCTf()" title="Temporalidad del análisis SMC: 15m (rápida) o 1h (estructura más fiable, proyectada sobre las velas 15m)">⏱ ${typeof _btcSmcTf !== 'undefined' ? _btcSmcTf : '15m'}</button>
-        <span><b style="color:#afb6c0">rueda: zoom · arrastrar: mover · doble clic: hoy</b> · velas 15m (hasta ~10 días)</span>
-        <span><span style="color:#4aa8d8">— 🧲 pools</span> · <span style="color:#55dd99">— 🧱 compra</span> · <span style="color:#ff8866">— 🧱 venta</span> · <span style="color:#ffd76a">— 🎯 max pain</span> · <span style="color:#ff9a3c">— 🔥 clusters liq</span> · ⚡ barrido · verticales = sesiones</span>
-        <span><span style="color:#2fe08a">— OB/FVG alcista</span> · <span style="color:#ff6666">— OB/FVG bajista</span> · <span style="color:#eef4ff;background:#0b0e14;padding:0 3px;border-radius:2px">texto BOS/CHoCH/OB</span> siempre en blanco: el borde del chip indica la dirección</span>
+        <button class="chart-tf-btn${_btcHeat !== 'off' ? ' active' : ''}" id="btc-heat-btn" onclick="btcCycleHeat()" title="Mapa de calor de fondo: 🔥 liquidaciones pendientes estimadas (amarillo = mucha liquidez) · 🧱 historial del order book (verde azulado = compras, naranja = ventas; se graba mientras la app está abierta) · apagado">${BTC_HEAT_LBL[_btcHeat]}</button>
+        <button class="chart-tf-btn" onclick="btcYZoom(1)" title="Ver más rango de precio arriba y abajo (también: Shift+rueda, o rueda sobre la columna de precios)">↕ +</button>
+        <button class="chart-tf-btn" onclick="btcYZoom(-1)" title="Ver menos rango de precio (acercar en vertical)">↕ −</button>
+        <span id="btc-yz-lbl" style="color:#afb6c0;font-weight:700">${!_btcView.yFix && _btcView.yZoom > 1.01 ? '×' + _btcView.yZoom.toFixed(1) : ''}</span>
+        <button class="chart-tf-btn${_btcView.yFix ? ' active' : ''}" id="btc-yfix-btn" onclick="btcYFix()" title="Encuadrar el precio ±4 %: donde se buscan los muros y los clusters de liquidaciones más cercanos. Otro clic: rango automático">${_btcView.yFix ? `🎯 precio ±${(_btcView.yFix * 100).toFixed(1)}%` : '🎯 ver ±4%'}</button>
+        <button class="chart-tf-btn" onclick="btcShotPick()" title="Leer una captura del Liquidation Heatmap (o Liquidation Map) de CoinGlass: sus niveles se dibujan en rosa durante 12 h. También puedes pegarla con Ctrl+V o arrastrarla a esta pestaña.">📸 Captura CoinGlass</button>
+        <span><b style="color:#afb6c0">rueda: zoom · Shift+rueda o rueda sobre los precios: zoom vertical · arrastrar: mover (también arriba/abajo) · doble clic: reiniciar</b> · velas 15m (hasta ~10 días)</span>
+        <span><span style="color:#4aa8d8">— 🧲 pools</span> · <span style="color:#55dd99">— 🧱 compra</span> · <span style="color:#ff8866">— 🧱 venta</span> · <span style="color:#f5d76e">— 🔥 liquidaciones</span> · <span style="color:#c9a7ff">— 💧 PDH/PDL/Asia/Londres</span> · <span style="color:#ffd76a">— 🎯 max pain</span> · <span style="color:#ff7ad9">— 📸 CoinGlass</span> · ⚡ barrido · verticales = sesiones</span>
+        <span><span style="color:#2fe08a">— OB/FVG alcista</span> · <span style="color:#ff6666">— OB/FVG bajista</span> · BRK = breaker · <span style="color:#eef4ff;background:#0b0e14;padding:0 3px;border-radius:2px">texto BOS/CHoCH/OB</span> siempre en blanco: el borde del chip indica la dirección</span>
       </div>
+      ${_btcShotMsg ? `<div class="btc-shot-msg">${_btcShotMsg}</div>` : ''}
+    </div>
+    <div class="btc-cards">
+      ${btcSetupCard(row)}
+      ${btcBookCard(row)}
+      ${btcLiqCard(row)}
     </div>
     <div class="dt-sec-title" style="margin-top:4px">Factores de confluencia — sesgo total ${BTC.bias >= 0 ? '+' : ''}${BTC.bias}/100</div>
     <div class="btc-factors">${cards}</div>
@@ -789,17 +831,18 @@ function renderBTC() {
       const cg = [];
       if (BTC.ob?.exch) {
         const e = BTC.ob.exch;
-        cg.push(`🧱 muros: Bybit${e.bybit ? '✓' : '✗'} · Binance${e.binance ? '✓' : '✗'} · OKX${e.okx ? '✓' : '✗'}`);
+        cg.push(`🧱 muros: ${(typeof BOOK_SRC !== 'undefined' ? BOOK_SRC : []).map(x => x.lbl + (e[x.key] ? '✓' : '✗')).join(' · ')}`);
       }
+      if (BTC.liqm) cg.push(`🔥 liquidaciones: modelo propio (OI Bybit${BTC.liqm.srcs.binance ? '+Binance' : ''}${BTC.liqm.srcs.taker ? ', taker Binance' : ''})`);
       const st = (cgOk, freeOk, name) => cgOk ? `${name} CG✓` : freeOk ? `${name} gratis✓` : `${name} ✗`;
       cg.push(st(BTC.cg?.top, BTC.free?.topLS, '🐋 top traders'));
       cg.push(BTC.cg?.mp ? '🎯 max pain Deribit✓' : BTC.mp?.price ? '🎯 max pain Bybit✓' : '🎯 max pain ✗');
-      cg.push(BTC.cg?.clusters ? '🔥 heatmap CG✓' : '🔥 heatmap ✗ (Professional) → estructura propia');
+      cg.push(BTC.cg?.clusters ? '🔥 heatmap CG✓' : '🔥 heatmap CG ✗ (tu plan no lo incluye)');
       cg.push(st(BTC.cg?.cbp, BTC.free?.prem, '🇺🇸 premium'));
       cg.push(BTC.cg?.etf ? '🏦 ETF CG✓' : '🏦 ETF ✗ (solo CoinGlass)');
       cg.push(st(BTC.cg?.taker, BTC.free?.taker, '🔀 spot/perp'));
       cg.push(BTC.cg?.liqHist?.length ? '▮ liqs CG✓' : '▮ liqs Bybit en vivo✓');
-      return `Pesos normalizados sobre los factores activos — lo que no tiene datos NO aparece ni diluye el sesgo. Muros: profundidad combinada Bybit+Binance+OKX. Fuentes: ${cg.join(' · ')}. "gratis✓" = respaldo público (Binance/Coinbase/Bybit) cuando tu plan de CoinGlass no cubre el módulo.`;
+      return `Pesos normalizados sobre los factores activos — lo que no tiene datos NO aparece ni diluye el sesgo. Muros: order book combinado de 5 libros pedido directo desde el navegador. Fuentes: ${cg.join(' · ')}. "gratis✓" = respaldo público (Binance/Coinbase/Bybit) cuando tu plan de CoinGlass no cubre el módulo.`;
     })()}</div>`;
 
   requestAnimationFrame(() => {
@@ -811,7 +854,37 @@ function renderBTC() {
 // ── Gráfico de velas 15m con TODOS los niveles analizados dibujados ─────────
 // Historial extendido (~10 días) + zoom con la rueda, arrastre para moverse,
 // doble clic para volver a "hoy" y botón ⛶ para expandir la altura.
-let _btcView = { span: parseInt(localStorage.getItem('scalp_btc_span') || '96', 10), offset: 0 };
+let _btcView = {
+  span: parseInt(localStorage.getItem('scalp_btc_span') || '96', 10), offset: 0,
+  // vertical: yZoom ×rango automático · yOff desplazamiento · yFix rango fijo ±% del precio
+  yZoom: Math.max(1, Math.min(10, parseFloat(localStorage.getItem('scalp_btc_yzoom') || '1') || 1)), yOff: 0, yFix: null,
+};
+
+// ── Zoom vertical: ver más (o menos) precio por arriba y por abajo ───────────
+function _btcRedraw() { const row = allRows.find(r => r.symbol === 'BTC'); if (row) drawBTCChart(row); btcYBtnRefresh(); }
+function btcYZoom(dir) { // dir > 0 = más rango (alejar), < 0 = menos (acercar)
+  const f = dir > 0 ? 1.4 : 1 / 1.4;
+  if (_btcView.yFix) _btcView.yFix = Math.max(0.003, Math.min(0.15, _btcView.yFix * f));
+  else _btcView.yZoom = Math.max(1, Math.min(10, (_btcView.yZoom || 1) * f));
+  safeSetItem('scalp_btc_yzoom', String(_btcView.yZoom));
+  _btcRedraw();
+}
+// Encuadra precio ±4 %: la zona donde se buscan los muros (±3 %) y los clusters
+// de liquidaciones más cercanos. Segundo clic: vuelve al rango automático.
+function btcYFix() {
+  _btcView.yFix = _btcView.yFix ? null : 0.04;
+  _btcView.yOff = 0;
+  _btcRedraw();
+}
+function btcYBtnRefresh() {
+  const b = document.getElementById('btc-yfix-btn');
+  if (b) {
+    b.classList.toggle('active', !!_btcView.yFix);
+    b.textContent = _btcView.yFix ? `🎯 precio ±${(_btcView.yFix * 100).toFixed(1)}%` : '🎯 ver ±4%';
+  }
+  const z = document.getElementById('btc-yz-lbl');
+  if (z) z.textContent = _btcView.yFix ? '' : (_btcView.yZoom > 1.01 ? `×${_btcView.yZoom.toFixed(1)}` : '');
+}
 let _btcDrag = null;
 
 function btcChartData() {
@@ -837,6 +910,7 @@ async function btcFetchK15x() {
         v: list.map(x => parseFloat(x[5])).reverse(),
       },
     };
+    if (typeof btcLiqCompute === 'function') btcLiqCompute(); // el modelo va indexado a estas velas
     if (activeTab === 'btc') { const row = allRows.find(r2 => r2.symbol === 'BTC'); if (row) drawBTCChart(row); }
   } catch (_) {}
 }
@@ -869,6 +943,14 @@ function btcBindChart(canvas) {
   canvas.onwheel = e => {
     e.preventDefault();
     const k = btcChartData(); if (!k) return;
+    // Vertical: con Shift, o con el ratón sobre la columna de precios/etiquetas.
+    // (En Windows, Shift+rueda llega como deltaX: se acepta cualquiera de los dos.)
+    const rectV = canvas.getBoundingClientRect();
+    if (e.shiftKey || e.clientX - rectV.left > rectV.width - 210) {
+      const d = e.deltaY || e.deltaX;
+      if (d) btcYZoom(d > 0 ? 1 : -1);
+      return;
+    }
     const n = k.c.length;
     const factor = e.deltaY < 0 ? 0.8 : 1.25;
     const newSpan = Math.round(Math.max(40, Math.min(n, _btcView.span * factor)));
@@ -882,12 +964,14 @@ function btcBindChart(canvas) {
   };
   canvas.onmousedown = e => {
     e.preventDefault();
-    _btcDrag = { x: e.clientX, offset: _btcView.offset };
+    _btcDrag = { x: e.clientX, y: e.clientY, offset: _btcView.offset, yOff: _btcView.yOff || 0, vert: false };
     canvas.style.cursor = 'grabbing';
   };
   canvas.ondblclick = () => {
-    _btcView = { span: 96, offset: 0 };
+    _btcView = { span: 96, offset: 0, yZoom: 1, yOff: 0, yFix: null };
     safeSetItem('scalp_btc_span', '96');
+    safeSetItem('scalp_btc_yzoom', '1');
+    btcYBtnRefresh();
     const row = allRows.find(r => r.symbol === 'BTC'); if (row) drawBTCChart(row);
   };
 
@@ -901,6 +985,15 @@ function btcBindChart(canvas) {
       const pxPerBar = pw / _btcView.span;
       const dBars = Math.round((e.clientX - _btcDrag.x) / pxPerBar);
       _btcView.offset = Math.max(0, Math.min(k.c.length - _btcView.span, _btcDrag.offset + dBars));
+      // Arrastre vertical (con zona muerta de 6 px para no moverlo sin querer
+      // al arrastrar en horizontal): el contenido sigue al ratón.
+      const dy = e.clientY - _btcDrag.y;
+      if (!_btcDrag.vert && Math.abs(dy) > 6) _btcDrag.vert = true;
+      if (_btcDrag.vert) {
+        const plotH = Math.max(50, cv.getBoundingClientRect().height - 34);
+        const z = _btcView.yFix ? 1 : Math.max(1, _btcView.yZoom || 1);
+        _btcView.yOff = _btcDrag.yOff + dy * z / plotH;
+      }
       cv.style.cursor = 'grabbing';
       const row = allRows.find(r => r.symbol === 'BTC'); if (row) drawBTCChart(row);
     });
@@ -990,11 +1083,22 @@ function drawBTCChart(row) {
   // ── Recolectar niveles analizados ──
   const L = BTC.liq || {};
   const levels = [];
-  levels.push(...btcFibLevels(k, s0, s1)); // 🟡 Fibonacci automático (máximo↔mínimo del rango visible)
+  // (El Fibonacci automático ya no se dibuja: lo pidió el usuario el 2026-11-06.
+  //  btcFibLevels sigue existiendo para la alerta de zona dorada, btcCheckFibZone.)
   for (const p of (L.poolsAbove || [])) levels.push({ v: p.level, col: '#4aa8d8', dash: [5, 4], label: '🧲 pool liquidez' });
   for (const p of (L.poolsBelow || [])) levels.push({ v: p.level, col: '#4aa8d8', dash: [5, 4], label: '🧲 pool liquidez' });
-  for (const w of (BTC.ob?.askWalls || []).slice(0, 3)) levels.push({ v: w.price, col: '#ff8866', dash: [], label: `🧱 venta ${fmtUSD(w.usd)}` });
-  for (const w of (BTC.ob?.bidWalls || []).slice(0, 3)) levels.push({ v: w.price, col: '#55dd99', dash: [], label: `🧱 compra ${fmtUSD(w.usd)}` });
+  const wSrc = w => typeof btcBookSrcTxt === 'function' ? ` ${btcBookSrcTxt(w.src).split(' · ')[0] || ''}` : '';
+  for (const w of (BTC.ob?.askWalls || []).slice(0, 3)) levels.push({ v: w.price, col: '#ff8866', dash: w.weak ? [3, 3] : [], label: `🧱 ${w.weak ? 'densa' : 'venta'} ${fmtUSD(w.usd)}${wSrc(w)}` });
+  for (const w of (BTC.ob?.bidWalls || []).slice(0, 3)) levels.push({ v: w.price, col: '#55dd99', dash: w.weak ? [3, 3] : [], label: `🧱 ${w.weak ? 'densa' : 'compra'} ${fmtUSD(w.usd)}${wSrc(w)}` });
+  // 🔥 clusters del modelo de liquidaciones (los 2 mayores por lado)
+  for (const c of (BTC.liqm?.above || []).slice(0, 2)) levels.push({ v: c.level, col: '#f5d76e', dash: [2, 3], label: `🔥 cortos ${fmtUSD(c.usd)}` });
+  for (const c of (BTC.liqm?.below || []).slice(0, 2)) levels.push({ v: c.level, col: '#f5d76e', dash: [2, 3], label: `🔥 largos ${fmtUSD(c.usd)}` });
+  // 💧 liquidez con nombre aún sin barrer (PDH/PDL, PWH/PWL, Asia, Londres)
+  for (const kl of (BTC.smc?.keyLevels || [])) if (!kl.swept) levels.push({ v: kl.price, col: '#c9a7ff', dash: [2, 4], label: `💧 ${kl.key}` });
+  // 🎯 entrada/stop/objetivos del setup SMC activo (solo con el overlay SMC encendido)
+  if (typeof _btcSmcOn !== 'undefined' && _btcSmcOn && typeof btcSmcSetupLevels === 'function') levels.push(...btcSmcSetupLevels());
+  // 📸 niveles leídos de una captura de CoinGlass
+  for (const sh of btcShotLevels()) levels.push({ v: sh.price, col: '#ff7ad9', dash: [6, 3], label: `📸 CG ${Math.round((sh.intensity || 0) * 100)}%` });
   const mpL = BTC.cg?.mp?.price ? BTC.cg.mp : BTC.mp;
   if (mpL?.price) levels.push({ v: mpL.price, col: '#ffd76a', dash: [8, 4], label: `🎯 max pain ${mpL.expiry}` });
   if (BTC.cg?.clusters?.above) levels.push({ v: BTC.cg.clusters.above.level, col: '#ff9a3c', dash: [2, 3], label: `🔥 liqs ${fmtUSD(BTC.cg.clusters.above.usd)}` });
@@ -1009,6 +1113,27 @@ function drawBTCChart(row) {
   for (const l of nearby) { min = Math.min(min, l.v); max = Math.max(max, l.v); }
   const pad = (max - min) * 0.04 || max * 0.001;
   min -= pad; max += pad;
+
+  // ── Zoom/desplazamiento VERTICAL (Shift+rueda, rueda sobre los precios,
+  //    arrastrar arriba/abajo, botones ↕). yZoom amplía el rango automático
+  //    alrededor de su centro; yOff lo desplaza (en fracciones del rango base).
+  //    Con yFix (botón ±4%) el rango se ancla al precio actual: price ±yFix.
+  {
+    const lp0 = row.price || k.c[n - 1];
+    const base = max - min, mid0 = (min + max) / 2;
+    _btcView.yBase = base; // lo usa el arrastre vertical para convertir px → precio
+    if (_btcView.yFix) {
+      const half = lp0 * _btcView.yFix;
+      const c = lp0 + (_btcView.yOff || 0) * half * 2;
+      min = c - half; max = c + half;
+    } else {
+      const z = Math.max(1, _btcView.yZoom || 1);
+      const c = mid0 + (_btcView.yOff || 0) * base;
+      min = c - base * z / 2; max = c + base * z / 2;
+    }
+  }
+  // Con más rango entran niveles que antes quedaban fuera: se dibujan todos los del rango final
+  const shown = levels.filter(l => l.v >= min && l.v <= max);
 
   // Deja ~3 velas de espacio vacío a la derecha antes de la franja de
   // etiquetas, para que la última vela no quede pegada al texto (barrido, muro, etc.)
@@ -1025,6 +1150,15 @@ function drawBTCChart(row) {
     // eje de precios pegado al borde derecho, fuera de la zona de etiquetas
     ctx.fillStyle = '#26334a'; ctx.textAlign = 'right';
     ctx.fillText(fmtPrice(v).replace('$', ''), W - 4, y(v) + 3);
+  }
+
+  // ── Mapa de calor de fondo (recortado al área de velas) ──
+  if (_btcHeat !== 'off') {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(PADL, PADT, W - PADL - PADR, H - PADT - PADB); ctx.clip();
+    if (_btcHeat === 'liq' && typeof btcDrawLiqHeat === 'function') btcDrawLiqHeat(ctx, x, y, s0, s1, k, min, max);
+    else if (_btcHeat === 'book' && typeof btcDrawBookHeat === 'function') btcDrawBookHeat(ctx, x, y, s0, s1, k);
+    ctx.restore();
   }
 
   // ── Aperturas de sesión (líneas verticales, todos los días visibles) ──
@@ -1108,12 +1242,32 @@ function drawBTCChart(row) {
   }
 
   // ── Niveles analizados: línea + etiqueta con FONDO (chip) apilada sin taparse ──
-  const sorted = [...nearby].sort((a, b) => b.v - a.v);
-  let lastLy = PADT - 16;
+  // Si no caben todas las etiquetas (rango muy abierto), se rotulan las más
+  // cercanas al precio y las demás quedan solo como línea.
+  const lpLbl = row.price || k.c[n - 1];
+  const slots = Math.max(4, Math.floor((H - PADT - PADB) / 15));
+  const keepLbl = new Set([...shown].sort((a, b) => Math.abs(a.v - lpLbl) - Math.abs(b.v - lpLbl)).slice(0, slots));
+  for (const l of shown) {
+    if (keepLbl.has(l)) continue;
+    const ly0 = y(l.v);
+    ctx.save();
+    ctx.strokeStyle = l.col; ctx.lineWidth = 1; ctx.globalAlpha = 0.45;
+    if (l.dash.length) ctx.setLineDash(l.dash);
+    ctx.beginPath(); ctx.moveTo(PADL, ly0); ctx.lineTo(W - PADR, ly0); ctx.stroke();
+    ctx.restore();
+  }
+  const sorted = [...keepLbl].sort((a, b) => b.v - a.v);
   ctx.font = '700 9.5px Inter,system-ui';
   const labelX = W - PADR + 8;
   const labelMaxW = PADR - 66; // deja libre el eje de precios del borde derecho
-  for (const l of sorted) {
+  // Posiciones de las etiquetas en dos pasadas: de arriba abajo (nunca a <15 px
+  // de la anterior) y, si la pila se sale por abajo, de abajo arriba empujándola
+  // hacia arriba — antes las últimas se amontonaban encima unas de otras.
+  const lyPos = [];
+  for (let i = 0; i < sorted.length; i++) lyPos[i] = Math.max(y(sorted[i].v), i ? lyPos[i - 1] + 15 : PADT - 1);
+  for (let i = sorted.length - 1; i >= 0; i--) lyPos[i] = Math.min(lyPos[i], i < sorted.length - 1 ? lyPos[i + 1] - 15 : H - PADB - 4);
+  for (let li = 0; li < sorted.length; li++) {
+    const l = sorted[li];
     const ly0 = y(l.v);
     // línea del nivel
     ctx.save();
@@ -1123,10 +1277,7 @@ function drawBTCChart(row) {
     ctx.beginPath(); ctx.moveTo(PADL, ly0); ctx.lineTo(W - PADR, ly0); ctx.stroke();
     ctx.restore();
 
-    // posición apilada (nunca a menos de 15px de la etiqueta anterior)
-    let ly = Math.max(ly0, lastLy + 15);
-    ly = Math.min(ly, H - PADB - 4);
-    lastLy = ly;
+    const ly = lyPos[li];
 
     // si no cabe, se acorta la DESCRIPCIÓN pero el precio siempre queda completo
     const priceTxt = fmtPrice(l.v).replace('$', '');
@@ -1210,6 +1361,258 @@ function drawBTCChart(row) {
   ctx.fillText(`${hrs < 48 ? hrs.toFixed(0) + 'h' : (hrs / 24).toFixed(1) + 'd'} visibles${_btcView.offset ? ' · ←' + (_btcView.offset * 0.25).toFixed(0) + 'h del presente' : ''}`, PADL + 4, PADT + 8);
 }
 
+// ── Mapa de calor de fondo: liquidaciones (modelo) · libro (historial) · off ─
+const BTC_HEAT_LBL = { liq: '🔥 Mapa: liquidaciones', book: '🧱 Mapa: libro', off: '◻ Mapa: apagado' };
+let _btcHeat = (() => {
+  try { const v = localStorage.getItem('scalp_btc_heat'); return BTC_HEAT_LBL[v] ? v : 'liq'; } catch (_) { return 'liq'; }
+})();
+function btcCycleHeat() {
+  _btcHeat = _btcHeat === 'liq' ? 'book' : _btcHeat === 'book' ? 'off' : 'liq';
+  safeSetItem('scalp_btc_heat', _btcHeat);
+  const btn = document.getElementById('btc-heat-btn');
+  if (btn) { btn.textContent = BTC_HEAT_LBL[_btcHeat]; btn.classList.toggle('active', _btcHeat !== 'off'); }
+  const row = allRows.find(r => r.symbol === 'BTC');
+  if (row) drawBTCChart(row);
+}
+
+const _btcEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ── Tarjeta: setup SMC activo + historial ───────────────────────────────────
+function btcSetupCard(row) {
+  const fp = fmtPrice;
+  const S = BTC.smc?.setups;
+  const act = S?.active || [];
+  const pctFrom = (a, b) => (Math.abs(a - b) / b * 100).toFixed(2) + '%';
+  const ck = (ok, txt) => `<span class="btc-ck ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'} ${txt}</span>`;
+  const lvlName = s => s.level?.key || (s.level?.kind === 'eq' ? 'máx/mín iguales' : 'swing');
+
+  const items = act.map(s => {
+    const col = s.dir === 'long' ? '#2fe08a' : '#ff6666';
+    const lado = s.dir === 'long' ? 'LARGO' : 'CORTO';
+    const ago = Math.max(0, Math.round((S.nBars - 1 - s.sweepI) * 15));
+    if (s.state === 'barrido' || s.zTop == null) {
+      return `<div class="btc-setup" style="border-color:${col}33">
+        <div class="btc-setup-head"><b style="color:${col}">${lado}</b><span class="btc-setup-state">👀 fase 1 de 3: barrido hecho, falta el CHoCH</span></div>
+        <div class="btc-setup-steps">💧 barrió ${lvlName(s)} ${fp(s.level.price)} hace ${ago} min (extremo ${fp(s.sweepExt)}). Se arma si llega un CHoCH interno ${s.dir === 'long' ? 'alcista' : 'bajista'} sin perder ${fp(s.sweepExt)}.</div>
+      </div>`;
+    }
+    // Confluencias del libro y del mapa de liquidaciones alrededor del setup
+    const extra = [];
+    const inZone = w => w.price >= Math.min(s.stop, s.zBot) * 0.999 && w.price <= Math.max(s.stop, s.zTop) * 1.001;
+    const wall = (s.dir === 'long' ? BTC.ob?.bidWalls : BTC.ob?.askWalls)?.find(inZone);
+    if (wall) extra.push(`🧱 muro de ${s.dir === 'long' ? 'compra' : 'venta'} de ${fmtUSD(wall.usd)} en ${fp(wall.price)} defendiendo la zona`);
+    const risk = (s.dir === 'long' ? BTC.liqm?.below : BTC.liqm?.above)?.find(c => Math.abs(c.level - s.stop) / s.stop < 0.005 && (s.dir === 'long' ? c.level < s.stop : c.level > s.stop));
+    if (risk) extra.push(`⚠ ${fmtUSD(risk.usd)} de ${s.dir === 'long' ? 'largos' : 'cortos'} por liquidar en ${fp(risk.level)}, justo detrás del stop: el precio puede ir a buscarlos`);
+    const tgt = (s.dir === 'long' ? BTC.liqm?.above : BTC.liqm?.below)?.find(c => Math.abs(c.level - s.t1) / s.t1 < 0.004 || (s.t2 && Math.abs(c.level - s.t2) / s.t2 < 0.004));
+    if (tgt) extra.push(`🔥 objetivo con ${fmtUSD(tgt.usd)} de ${s.dir === 'long' ? 'cortos' : 'largos'} por liquidar en ${fp(tgt.level)}`);
+    return `<div class="btc-setup${s.state === 'en zona' ? ' hot' : ''}" style="border-color:${col}66">
+      <div class="btc-setup-head">
+        <b style="color:${col}">${lado} ${s.grade}</b>
+        <span class="btc-setup-state">${s.state === 'en zona' ? '🟢 PRECIO EN LA ZONA' : '⏳ armado · esperando retroceso'}</span>
+        <span class="btc-setup-rr">R:R ${s.rr.toFixed(1)}</span>
+      </div>
+      <div class="btc-setup-steps">✓ barrió ${lvlName(s)} ${fp(s.level.price)} (hace ${ago} min) → ✓ ${s.chochType} interno en ${fp(s.chochPrice)} → ${s.state === 'en zona' ? '✓' : '⏳'} retroceso al OB</div>
+      <div class="btc-setup-grid">
+        <span>Zona</span><b>${fp(s.zBot)} – ${fp(s.zTop)}</b>
+        <span>Entrada (50%)</span><b>${fp(s.entry)} <i>${row.price >= s.entry ? '−' : '+'}${pctFrom(s.entry, row.price)} desde aquí</i></b>
+        <span>Stop</span><b style="color:#ff4d6d">${fp(s.stop)} <i>${pctFrom(s.stop, s.entry)} de la entrada</i></b>
+        <span>T1</span><b style="color:#2fe08a">${fp(s.t1)} <i>${pctFrom(s.t1, s.entry)}</i></b>
+        ${s.t2 != null ? `<span>T2</span><b style="color:#2fe08a">${fp(s.t2)} <i>${pctFrom(s.t2, s.entry)}</i></b>` : ''}
+      </div>
+      <div class="btc-setup-checks">${ck(s.checks.htf, '4h a favor')}${ck(s.checks.discount, s.dir === 'long' ? 'zona en discount' : 'zona en premium')}${ck(s.checks.liq, 'liquidez con nombre o iguales')}${ck(s.checks.disp, 'desplazamiento (FVG)')}</div>
+      ${extra.length ? `<div class="btc-setup-extra">${extra.join('<br>')}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  const hist = (typeof btcSmcSetupHistory === 'function' ? btcSmcSetupHistory() : [])
+    .filter(h => !['armado', 'en zona'].includes(h.state)).slice(-6).reverse();
+  const stTxt = h => h.state === 'objetivo' ? `✅ T1 (+${(h.rr || 0).toFixed(1)}R)` : h.state === 'stop' ? '❌ stop (−1R)'
+    : h.state === 'sin retroceso' ? '↗ se fue sin retroceso' : h.state === 'caducado' ? '⌛ caducó sin entrar' : '✗ invalidado';
+  const histHtml = hist.map(h => {
+    const d = new Date(h.ts);
+    return `<div class="btc-setup-hist"><span>${d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</span>
+      <b style="color:${h.dir === 'long' ? '#2fe08a' : '#ff6666'}">${h.dir === 'long' ? 'L' : 'S'} ${h.grade}</b><span>${_btcEsc(h.key)}</span><span>${stTxt(h)}</span></div>`;
+  }).join('');
+
+  return `<div class="btc-card">
+    <div class="dt-sec-title">🎯 Setup SMC · 15m · barrido → CHoCH → OB</div>
+    ${items || `<div class="btc-card-empty">Sin setup activo. Se busca: <b>1)</b> barrido de liquidez (PDH/PDL, Asia, Londres, semana, máximos/mínimos iguales o swings) con cierre de vuelta · <b>2)</b> CHoCH interno a favor · <b>3)</b> retroceso al order block del impulso. Avisa al armarse y suena al entrar el precio en la zona (nota B o mejor).</div>`}
+    ${histHtml ? `<div class="btc-card-sub">Últimos setups</div>${histHtml}` : ''}
+  </div>`;
+}
+
+// ── Tarjeta: muros del order book ───────────────────────────────────────────
+function btcBookCard(row) {
+  const ob = BTC.book;
+  if (!ob?.mid) return `<div class="btc-card"><div class="dt-sec-title">🧱 Muros del order book</div><div class="btc-card-empty">Cargando los libros de Bybit, Binance, OKX e Hyperliquid…</div></div>`;
+  const all = [...(ob.askWalls || []), ...(ob.bidWalls || [])];
+  const maxU = Math.max(...all.map(w => w.usd), 1);
+  const line = (w, side) => {
+    const d = (w.price - row.price) / row.price * 100;
+    const age = w.first ? Math.max(1, Math.round((Date.now() - w.first) / 60_000)) : null;
+    return `<div class="btc-wall ${side}${w.weak ? ' weak' : ''}">
+      <span class="btc-wall-p">${fmtPrice(w.lo)}–${fmtPrice(w.hi).replace('$', '')}</span>
+      <span class="btc-wall-bar"><i style="width:${Math.max(4, w.usd / maxU * 100).toFixed(0)}%"></i></span>
+      <b>${fmtUSD(w.usd)}</b>
+      <span class="btc-wall-d">${d >= 0 ? '+' : ''}${d.toFixed(2)}%</span>
+      <span class="btc-wall-src" title="Reparto por exchange · minutos que lleva puesto (desde que abriste la app) · fuerza: veces más gordo que un tramo típico">${w.weak ? 'zona densa · ' : ''}${btcBookSrcTxt(w.src)}${age ? ` · ${age} min` : ''} · ×${w.str.toFixed(1)}</span>
+    </div>`;
+  };
+  const asks = [...(ob.askWalls || [])].sort((a, b) => b.price - a.price).map(w => line(w, 'ask')).join('')
+    || '<div class="btc-card-empty">sin muros de venta destacados hasta +3%</div>';
+  const bids = [...(ob.bidWalls || [])].sort((a, b) => b.price - a.price).map(w => line(w, 'bid')).join('')
+    || '<div class="btc-card-empty">sin muros de compra destacados hasta −3%</div>';
+  const imb = (ob.bidUSD - ob.askUSD) / Math.max(ob.bidUSD + ob.askUSD, 1);
+  const ev = (ob.events || []).filter(e => Date.now() - e.ts < 60 * 60_000).slice(0, 3).map(e =>
+    `<div class="btc-wall-ev">🫥 ${new Date(e.ts).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} · retiraron el muro de ${e.side === 'a' ? 'venta' : 'compra'} de ${fmtUSD(e.usd)} en ${fmtPrice(e.price)} con el precio cerca (llevaba ${Math.round(e.age / 60_000)} min) — típico de spoofing</div>`).join('');
+  const books = (typeof BOOK_SRC !== 'undefined' ? BOOK_SRC : []).map(s => `${s.short}${ob.exch?.[s.key] ? '✓' : '✗'}`).join(' ');
+  return `<div class="btc-card">
+    <div class="dt-sec-title">🧱 Muros del order book · 5 libros · ±3%</div>
+    ${asks}
+    <div class="btc-wall-now">● ${fmtPrice(row.price)} · ±1%: compras ${fmtUSD(ob.bidUSD)} vs ventas ${fmtUSD(ob.askUSD)} <b style="color:${imb >= 0 ? '#2fe08a' : '#ff6666'}">${imb >= 0 ? '+' : ''}${(imb * 100).toFixed(0)}%</b></div>
+    ${bids}
+    ${ev}
+    <div class="btc-card-note">Tramos de $${ob.B} sumando los libros de ${books}. Muro = tramo ≥2,5× más gordo que uno típico y ≥$2M. Los muros que aguantan minutos pesan más que los que aparecen y se van.</div>
+  </div>`;
+}
+
+// ── Tarjeta: liquidaciones pendientes (modelo) + captura de CoinGlass ───────
+function btcLiqCard(row) {
+  const M = BTC.liqm;
+  const shot = btcShotGet();
+  let body;
+  if (!M) body = '<div class="btc-card-empty">Calculando con el open interest de Bybit y Binance…</div>';
+  else {
+    const all = [...M.above, ...M.below];
+    const maxU = Math.max(...all.map(c => c.usd), 1);
+    const line = (c, side) => {
+      const d = (c.level - row.price) / row.price * 100;
+      return `<div class="btc-wall ${side}">
+        <span class="btc-wall-p">${fmtPrice(c.level)}</span>
+        <span class="btc-wall-bar liq"><i style="width:${Math.max(4, c.usd / maxU * 100).toFixed(0)}%"></i></span>
+        <b>${fmtUSD(c.usd)}</b>
+        <span class="btc-wall-d">${d >= 0 ? '+' : ''}${d.toFixed(2)}%</span>
+        <span class="btc-wall-src">${side === 'ask' ? 'cortos' : 'largos'}</span>
+      </div>`;
+    };
+    body = `${[...M.above].sort((a, b) => b.level - a.level).map(c => line(c, 'ask')).join('') || '<div class="btc-card-empty">sin clusters de cortos hasta +6%</div>'}
+      <div class="btc-wall-now">● ${fmtPrice(row.price)} · en ±3%: ${fmtUSD(M.shortUSD3)} de cortos arriba / ${fmtUSD(M.longUSD3)} de largos abajo</div>
+      ${[...M.below].sort((a, b) => b.level - a.level).map(c => line(c, 'bid')).join('') || '<div class="btc-card-empty">sin clusters de largos hasta −6%</div>'}`;
+  }
+  const shotHtml = shot ? `<div class="btc-card-sub">📸 Captura de CoinGlass · hace ${Math.round((Date.now() - shot.ts) / 60_000)} min · ${_btcEsc(shot.type)} <a href="#" onclick="btcShotClear();return false" class="btc-link">quitar</a></div>
+      <div class="btc-shot-lvls">${shot.levels.map(l => `<span style="opacity:${(0.45 + 0.55 * (l.intensity || 0.5)).toFixed(2)}">${fmtPrice(l.price)}</span>`).join(' · ')}</div>
+      ${shot.notes ? `<div class="btc-card-note">${_btcEsc(shot.notes)}</div>` : ''}`
+    : `<div class="btc-card-note">📸 ¿Quieres cruzarlo con el de CoinGlass? Pega aquí (Ctrl+V) o arrastra una captura de su Liquidation Heatmap: Claude lee los niveles y se dibujan en rosa.</div>`;
+  return `<div class="btc-card">
+    <div class="dt-sec-title">🔥 Liquidaciones pendientes · modelo propio</div>
+    ${body}
+    <div class="btc-card-note">Estimado con el OI de Bybit${M?.srcs?.binance ? ' + Binance' : ''} cada 15m y apalancamientos 10/25/50/100x; un nivel se borra al tocarlo. El heatmap de CoinGlass es también un modelo: fíjate en dónde se amontona, no en la cifra exacta.</div>
+    ${shotHtml}
+  </div>`;
+}
+
+// ── 📸 Captura de CoinGlass → niveles (Claude lee la imagen en el server) ───
+const BTC_SHOT_KEY = 'scalp_btc_cgshot';
+const BTC_SHOT_TTL = 12 * 3600_000;
+let _btcShotMsg = '';
+let _btcShotBusy = false;
+let _btcShotInput = null;
+let _btcShotMsgTimer = null;
+
+function btcShotGet() {
+  try {
+    const s = JSON.parse(localStorage.getItem(BTC_SHOT_KEY) || 'null');
+    return s && Date.now() - s.ts < BTC_SHOT_TTL && Array.isArray(s.levels) ? s : null;
+  } catch (_) { return null; }
+}
+function btcShotLevels() {
+  const s = btcShotGet();
+  return s ? s.levels.map(l => ({ price: l.price, intensity: l.intensity, label: `${l.side === 'above' ? 'arriba' : 'abajo'} · intensidad ${Math.round((l.intensity || 0) * 100)}%` })) : [];
+}
+function btcShotClear() {
+  try { localStorage.removeItem(BTC_SHOT_KEY); } catch (_) { /* nada */ }
+  if (activeTab === 'btc') renderBTC();
+}
+function btcShotPick() {
+  if (!_btcShotInput) {
+    _btcShotInput = document.createElement('input');
+    _btcShotInput.type = 'file'; _btcShotInput.accept = 'image/*'; _btcShotInput.style.display = 'none';
+    _btcShotInput.onchange = () => { const f = _btcShotInput.files?.[0]; if (f) btcShotSend(f); _btcShotInput.value = ''; };
+    document.body.appendChild(_btcShotInput);
+  }
+  _btcShotInput.click();
+}
+document.addEventListener('paste', e => {
+  if (typeof activeTab === 'undefined' || activeTab !== 'btc') return;
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (!item) return;
+  e.preventDefault();
+  btcShotSend(item.getAsFile());
+});
+document.addEventListener('dragover', e => {
+  if (typeof activeTab !== 'undefined' && activeTab === 'btc' && [...(e.dataTransfer?.items || [])].some(i => i.kind === 'file')) e.preventDefault();
+});
+document.addEventListener('drop', e => {
+  if (typeof activeTab === 'undefined' || activeTab !== 'btc') return;
+  const f = [...(e.dataTransfer?.files || [])].find(x => x.type.startsWith('image/'));
+  if (!f) return;
+  e.preventDefault();
+  btcShotSend(f);
+});
+
+// Reduce la imagen a ≤1568 px por lado (lo que Claude usa de todas formas) en JPEG
+async function _btcShotEncode(file) {
+  const bmp = await createImageBitmap(file);
+  const sc = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(bmp.width * sc); cv.height = Math.round(bmp.height * sc);
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  const url = cv.toDataURL('image/jpeg', 0.9);
+  return { data: url.slice(url.indexOf(',') + 1), mediaType: 'image/jpeg' };
+}
+
+function _btcShotSetMsg(msg, ttl) {
+  _btcShotMsg = msg;
+  clearTimeout(_btcShotMsgTimer);
+  if (ttl) _btcShotMsgTimer = setTimeout(() => { _btcShotMsg = ''; if (activeTab === 'btc') renderBTC(); }, ttl);
+  if (activeTab === 'btc') renderBTC();
+}
+
+async function btcShotSend(file) {
+  if (_btcShotBusy || !file) return;
+  _btcShotBusy = true;
+  _btcShotSetMsg('📸 Leyendo la captura de CoinGlass con Claude… (puede tardar 10–40 s)');
+  try {
+    const { data, mediaType } = await _btcShotEncode(file);
+    const row = allRows.find(r => r.symbol === 'BTC');
+    const price = row?.price || null;
+    const r = await fetch('/api/vision/cg', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: data, mediaType, price }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+    if (!j.is_liquidity_chart) throw new Error('no parece un heatmap o mapa de liquidaciones' + (j.notes ? ` (${j.notes})` : ''));
+    const levels = (j.levels || [])
+      .filter(l => Number.isFinite(+l.price) && +l.price > 0 && (!price || Math.abs(+l.price - price) / price < 0.2))
+      .map(l => ({ price: +l.price, intensity: Math.max(0, Math.min(1, +l.intensity || 0)), side: l.side }))
+      .sort((a, b) => b.intensity - a.intensity)
+      .slice(0, 10);
+    if (!levels.length) throw new Error('no se encontraron niveles legibles en la captura');
+    let warn = '';
+    if (price && j.current_price > 0 && Math.abs(j.current_price - price) / price > 0.015) {
+      warn = ` ⚠ La captura marca el precio en ${fmtPrice(j.current_price)} y ahora está en ${fmtPrice(price)}: ¿es antigua o de otra moneda?`;
+    }
+    const shot = { ts: Date.now(), type: String(j.chart_type || 'CoinGlass').slice(0, 60), levels, notes: String(j.notes || '').slice(0, 300) };
+    try { localStorage.setItem(BTC_SHOT_KEY, JSON.stringify(shot)); } catch (_) { /* sin espacio: queda solo este rato */ }
+    _btcShotSetMsg(`📸 Captura leída: ${levels.length} niveles dibujados en rosa durante 12 h.${_btcEsc(warn)}`, 60_000);
+  } catch (err) {
+    _btcShotSetMsg(`📸 No se pudo leer la captura: ${_btcEsc(err.message)}`, 60_000);
+  } finally {
+    _btcShotBusy = false;
+  }
+}
+
 // ── Hook por ciclo (lo llama load() en main.js) ─────────────────────────────
 // btcFetchOB/btcFetchCG proxean Binance+OKX+CoinGlass A TRAVÉS del server
 // (/api/exch/depth, /api/cg/*) — a diferencia del resto del screener, que va
@@ -1220,11 +1623,18 @@ function drawBTCChart(row) {
 function btcOnCycle() {
   if (document.hidden) return;
   const now = Date.now();
-  if (now - (BTC.ob?.ts   || 0) > 45_000)      btcFetchOB(); // 45s: suficiente para muros, menos tráfico
+  // Order book de 5 libros (≈130 KB por ronda, directo navegador→exchanges, no
+  // pasa por Render): cada 30 s mirando la pestaña ₿, cada 90 s si no — los
+  // muros siguen votando en el sesgo y el historial del mapa de calor se graba.
+  if (now - (BTC.book?.ts || 0) > (activeTab === 'btc' ? 30_000 : 90_000)) btcBookFetch();
+  if (now - (LIQM.ts      || 0) > 5 * 60_000)  btcLiqFetch();  // OI + taker → mapa de liquidaciones
+  if (now - (BTC.htf?.ts  || 0) > 15 * 60_000) btcFetchHTF();  // contexto 4h + PDH/PDL + PWH/PWL
   if (now - (BTC.ls?.ts   || 0) > 60_000)      btcFetchLS();
   if (now - (BTC.mp?.ts   || 0) > 15 * 60_000) btcFetchOptions();
   if (now - (BTC.spot?.ts || 0) > 30_000)      btcFetchSpot();
-  if (now - (BTC.cg?.ts   || 0) > 5 * 60_000)  btcFetchCG(); // CoinGlass (caché 60s en el server)
+  // CoinGlass vía server: si el plan no da NADA (todo "Upgrade plan"), se
+  // reintenta cada 6 h en vez de cada 5 min — no tiene sentido gastar Render.
+  if (now - (BTC.cg?.ts   || 0) > (BTC.cg?.allFail ? 6 * 3600_000 : 5 * 60_000)) btcFetchCG();
   if (now - (BTC.free?.ts || 0) > 60_000)      btcFetchFree(); // respaldo gratuito: top traders, premium, spot/perp
   if (now - (BTC.k15x?.ts || 0) > 5 * 60_000)  btcFetchK15x(); // velas extendidas (~10 días) para el zoom
   btcAccumLiqs(); // acumula liquidaciones de BTC (WS Bybit) por vela 15m — banda del gráfico

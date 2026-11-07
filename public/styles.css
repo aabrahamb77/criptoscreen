@@ -263,6 +263,56 @@ header h1 {
 .btc-sess-row .pos { color: #00c878; }
 .btc-sess-row .neg { color: #ee5555; }
 
+/* ₿ tarjetas: setup SMC · muros del libro · liquidaciones pendientes */
+.btc-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; align-items: start; }
+.btc-card {
+  border: 1px solid #1a2434; border-radius: 10px; padding: 10px 12px; background: #080b11;
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.btc-card-empty { font-size: 10px; color: #8d95a1; line-height: 1.5; padding: 2px 0; }
+.btc-card-empty b { color: #c8d8ff; }
+.btc-card-note { font-size: 9px; color: #8d95a1; line-height: 1.45; margin-top: 4px; }
+.btc-card-sub { font-size: 9px; color: #afb6c0; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; margin-top: 6px; }
+.btc-link { color: #8fb4ff; margin-left: 6px; text-transform: none; font-weight: 600; }
+.btc-shot-msg {
+  font-size: 10.5px; color: #ffd0f0; background: rgba(255,122,217,.08);
+  border: 1px solid rgba(255,122,217,.3); border-radius: 6px; padding: 5px 9px;
+}
+.btc-shot-lvls { font-size: 10.5px; color: #ff9fe3; font-weight: 700; line-height: 1.6; }
+
+.btc-setup { border: 1px solid #1a2434; border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px; }
+.btc-setup.hot { box-shadow: 0 0 0 1px rgba(47,224,138,.25), 0 0 14px rgba(47,224,138,.12); }
+.btc-setup-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.btc-setup-state { font-size: 10px; color: #c8d8ff; font-weight: 700; }
+.btc-setup-rr { margin-left: auto; font-size: 10.5px; color: #e8edf8; font-weight: 800; }
+.btc-setup-steps { font-size: 10px; color: #bbc2cd; line-height: 1.45; }
+.btc-setup-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 10.5px; }
+.btc-setup-grid span { color: #8d95a1; }
+.btc-setup-grid b { color: #e8edf8; font-weight: 700; }
+.btc-setup-grid i { color: #8d95a1; font-style: normal; font-weight: 500; font-size: 9.5px; margin-left: 4px; }
+.btc-setup-checks { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 9.5px; }
+.btc-ck.ok { color: #2fe08a; }
+.btc-ck.no { color: #7d8591; }
+.btc-setup-extra { font-size: 9.5px; color: #e6d48a; line-height: 1.5; }
+.btc-setup-hist { display: flex; gap: 10px; font-size: 9.5px; color: #bbc2cd; padding: 2px 0; border-bottom: 1px solid #0c1119; flex-wrap: wrap; }
+
+.btc-wall { display: grid; grid-template-columns: 112px 1fr 52px 50px; gap: 2px 8px; align-items: center; font-size: 10px; padding: 2px 0; }
+.btc-wall-p { color: #c8d8ff; font-weight: 700; white-space: nowrap; }
+.btc-wall b { text-align: right; color: #e8edf8; }
+.btc-wall-d { text-align: right; color: #a5adb7; font-size: 9.5px; }
+.btc-wall-src { grid-column: 2 / -1; font-size: 8.5px; color: #8d95a1; margin-top: -2px; }
+.btc-wall-bar { height: 6px; background: #0c1119; border-radius: 3px; overflow: hidden; }
+.btc-wall-bar i { display: block; height: 100%; border-radius: 3px; }
+.btc-wall.ask .btc-wall-bar i { background: #ff8866; }
+.btc-wall.bid .btc-wall-bar i { background: #2fd3c8; }
+.btc-wall-bar.liq i { background: linear-gradient(90deg, #2a6fdb, #20c5a0, #f5e663) !important; }
+.btc-wall-now { font-size: 10px; color: #e8edf8; padding: 4px 6px; margin: 2px 0; background: rgba(200,216,255,.05); border-radius: 5px; }
+.btc-wall-ev { font-size: 9.5px; color: #e6d48a; line-height: 1.45; }
+@media (max-width: 520px) {
+  .btc-cards { grid-template-columns: 1fr; }
+  .btc-wall { grid-template-columns: 96px 1fr 48px 46px; }
+}
+
 /* ── Radar: expectativa histórica + niveles en cada tarjeta ── */
 .cc-exp { font-size: 9.5px; font-weight: 700; margin: 4px 0 2px; }
 .cc-lvls { font-size: 9px; color: #bbc2cd; margin-bottom: 3px; }
@@ -1428,3 +1478,4 @@ details.lab-plegable > div.lab-replay { display: flex; align-items: center; flex
 .quad-flt-btn[data-quad="SHORT"].active  { color: #ff8888; border-color: #aa2020; background: #1a0000; }
 .quad-flt-btn[data-quad="SQUEEZE"].active{ color: #88ccff; border-color: #2080c0; background: #001020; }
 .quad-flt-btn[data-quad="LIQ"].active    { color: #cc8888; border-color: #882020; background: #100000; }
+.btc-wall.weak { opacity: .62; }
