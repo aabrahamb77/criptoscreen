@@ -7,7 +7,7 @@
 // ── Navegación ──────────────────────────────────────────────────────────────
 // Una sección a la vez, y cada pestaña ya dice cómo va: se puede ver el estado de todo
 // sin moverse de donde se esté.
-const LAB_VISTAS = ['wm', 'macd', 'senales', 'comparador'];
+const LAB_VISTAS = ['wm', 'spot', 'macd', 'senales', 'comparador'];
 let labVista = (() => {
   try { const v = localStorage.getItem('scalp_lab_vista'); return LAB_VISTAS.includes(v) ? v : 'wm'; } catch (_) { return 'wm'; }
 })();
@@ -28,6 +28,7 @@ function setLabVista(v) {
   labVista = v;
   safeSetItem('scalp_lab_vista', v);
   _labAplicarVista();
+  if (v === 'spot' && typeof renderSpotPanel === 'function') renderSpotPanel();
   const caja = document.getElementById('lab-tab');
   if (caja) caja.scrollTop = 0;
 }
@@ -45,6 +46,10 @@ function renderLabResumen() {
   if (_labWM) {
     const { neto, n, abiertas } = _labWM;
     pon('wm', neto == null ? 'Sin datos' : `${signo(neto, 2)}% por operación`, `de precio · ${n} terminadas · ${abiertas} abiertas`, neto == null ? '' : colorDe(neto));
+  }
+  if (typeof spotResumen === 'function') {
+    const r = spotResumen();
+    pon('spot', r.valor == null ? 'Sin datos' : `${signo(r.valor, 2)}% por op.`, r.sub, r.valor == null ? '' : colorDe(r.valor));
   }
   if (typeof _macdStore !== 'undefined' && _macdStore.variantes) {
     const vs = _macdStore.variantes;

@@ -19,6 +19,7 @@ function switchTab(tab) {
   if (tab === 'strategy' && allRows.length) renderStrategy();
   if (tab === 'lab'      && allRows.length) renderLab();
   if (tab === 'lab') renderMacdPanel();
+  if (tab === 'lab' && typeof renderSpotPanel === 'function') renderSpotPanel();
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────

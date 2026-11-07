@@ -6,7 +6,7 @@
 <title>Scalp Screener</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css?v=49">
+<link rel="stylesheet" href="/styles.css?v=50">
 
 </head>
 <body>
@@ -201,6 +201,11 @@
       <b class="ln-dato" id="ln-wm-dato">—</b>
       <span class="ln-sub" id="ln-wm-sub">Calculando…</span>
     </button>
+    <button id="lab-nav-spot" class="lab-nav-btn" role="tab" onclick="setLabVista('spot')">
+      <span class="ln-nombre">🪙 Spot W/M 4h</span>
+      <b class="ln-dato" id="ln-spot-dato">—</b>
+      <span class="ln-sub" id="ln-spot-sub">Calculando…</span>
+    </button>
     <button id="lab-nav-macd" class="lab-nav-btn" role="tab" onclick="setLabVista('macd')">
       <span class="ln-nombre">🧪 MACD</span>
       <b class="ln-dato" id="ln-macd-dato">—</b>
@@ -286,6 +291,19 @@
     </details>
   </section>
 
+  <section id="lab-sec-spot" class="lab-sec" role="tabpanel">
+    <div id="lab-spot" class="lab-panel">
+      <div class="pt-header">
+        <span class="pt-title">Spot W/M en 4h: compras de verdad, sin apalancamiento</span>
+        <span id="sp-estado" class="lab-texto"></span>
+        <button class="pt-btn lab-a-la-derecha" onclick="spotExportar()" title="Descargar resultados, reglas y operaciones en JSON">Exportar JSON</button>
+        <button class="pt-btn pt-btn-danger" onclick="spotReiniciar()">Empezar de cero</button>
+      </div>
+      <div id="sp-cuerpo"><div class="sp-vacio">Esperando la primera descarga de velas de spot…</div></div>
+      <div id="sp-grafico" hidden></div>
+    </div>
+  </section>
+
   <section id="lab-sec-macd" class="lab-sec" role="tabpanel">
     <div id="lab-macd" class="lab-panel">
       <div class="pt-header">
@@ -365,14 +383,15 @@
 <script src="/detail.js?v=25"></script>
 <script src="/smc.js?v=6"></script>
 <script src="/btc.js?v=29"></script>
-<script src="/lab.js?v=28"></script>
+<script src="/lab.js?v=29"></script>
 <script src="/track.js?v=19"></script>
 <script src="/backtest.js?v=9"></script>
 <script src="/macd.js?v=9"></script>
 <script src="/macdpaper.js?v=2"></script>
+<script src="/spotwm.js?v=1"></script>
 <script src="/calc.js?v=1"></script>
 <script src="/olas.js?v=3"></script>
 <script src="/brief.js?v=6"></script>
-<script src="/main.js?v=19"></script>
+<script src="/main.js?v=20"></script>
 </body>
 </html>
